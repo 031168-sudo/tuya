@@ -41,12 +41,12 @@ data class DeviceUi(
     /** Время активации, секунды Unix. */
     val activeTime: Long = 0,
 ) {
-    /** Устройство со счётчиком энергии. */
+    /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
     val hasEnergy: Boolean
-        get() = ENERGY_CODES.any { it in status || it in spec }
+        get() = productName.contains(ENERGY_PRODUCT, ignoreCase = true)
 
     companion object {
-        val ENERGY_CODES = listOf("add_ele", "total_forward_energy", "forward_energy_total")
+        const val ENERGY_PRODUCT = "WiFi开关电表"
     }
 }
 
