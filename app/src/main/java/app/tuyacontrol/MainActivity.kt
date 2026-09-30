@@ -31,6 +31,7 @@ import app.tuyacontrol.ui.AppTheme
 import app.tuyacontrol.ui.DevicesScreen
 import app.tuyacontrol.ui.LogScreen
 import app.tuyacontrol.ui.SetupScreen
+import app.tuyacontrol.ui.LocalScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -118,6 +119,12 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
             onClear = viewModel::clearCredentials,
             onBack = { viewModel.back() },
             onOpenLog = { viewModel.open(Screen.Log) },
+            onOpenLocal = { viewModel.open(Screen.Local) },
+        )
+        Screen.Local -> LocalScreen(
+            state = state,
+            onBack = { viewModel.open(Screen.Setup) },
+            onScan = viewModel::scanLocal,
         )
         Screen.Devices -> DevicesScreen(
             state = state,

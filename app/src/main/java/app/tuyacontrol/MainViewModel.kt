@@ -10,6 +10,8 @@ import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.Credentials
 import app.tuyacontrol.data.CredentialsStore
+import app.tuyacontrol.local.LocalAnnounce
+import app.tuyacontrol.local.LocalDiscovery
 import app.tuyacontrol.data.Category
 import app.tuyacontrol.data.CategoryStore
 import app.tuyacontrol.data.DevicePref
@@ -29,7 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local }
 
 data class DeviceUi(
     val id: String,
@@ -45,6 +47,8 @@ data class DeviceUi(
     val thingModel: Boolean = false,
     /** Время активации, секунды Unix. */
     val activeTime: Long = 0,
+    /** Локальный ключ устройства (для управления по Wi-Fi); в интерфейсе не показывается. */
+    val localKey: String = "",
     /** Когда устройство последний раз присылало данные, мс (0 — неизвестно). */
     val lastDataTime: Long = 0,
 ) {
@@ -120,6 +124,10 @@ data class UiState(
     val lastUpdated: Long? = null,
     val categories: List<Category> = emptyList(),
     val devicePrefs: Map<String, DevicePref> = emptyMap(),
+    /** Результат поиска в локальной сети: id устройства -> объявление. */
+    val localFound: Map<String, LocalAnnounce> = emptyMap(),
+    val localScanning: Boolean = false,
+    val localScannedAt: Long? = null,
     /** Открытая категория (экран CategoryDevices). */
     val categoryId: String? = null,
 )
@@ -164,6 +172,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun messageShown() = _state.update { it.copy(message = null) }
+
+    // ---------- Локальная сеть ----------
+
+    fun scanLocal() {
+        if (_state.value.localScanning) return
+        viewModelScope.launch {
+            _state.update { it.copy(localScanning = true) }
+            val found = runCatching { LocalDiscovery.scan(getApplication()) }
+                .onFailure { AppLog.e("Поиск в локальной сети", it) }
+                .getOrDefault(emptyMap())
+            _state.update {
+                it.copy(localFound = found, localScanning = false, localScannedAt = System.currentTimeMillis())
+            }
+        }
+    }
 
     // ---------- Категории и иконки ----------
 
@@ -316,6 +339,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             thingModel = useThingModel,
                             activeTime = d.activeTime,
                             lastDataTime = lastDataTime(c, d),
+                            localKey = d.localKey,
                         )
                     }
                 }

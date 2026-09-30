@@ -66,6 +66,7 @@ fun SetupScreen(
     onClear: () -> Unit,
     onBack: () -> Unit,
     onOpenLog: () -> Unit,
+    onOpenLocal: () -> Unit = {},
 ) {
     val saved = state.credentials
     var accessId by rememberSaveable { mutableStateOf(saved?.accessId.orEmpty()) }
@@ -166,6 +167,9 @@ fun SetupScreen(
             }
 
             if (saved != null) {
+                OutlinedButton(onClick = onOpenLocal, modifier = Modifier.fillMaxWidth()) {
+                    Text("Устройства в локальной сети (Wi-Fi)")
+                }
                 BackgroundSyncSection()
                 OutlinedButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) {
                     Text("Удалить ключи с телефона")
