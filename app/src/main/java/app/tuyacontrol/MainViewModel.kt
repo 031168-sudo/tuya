@@ -40,7 +40,7 @@ data class DeviceUi(
     val thingModel: Boolean = false,
     /** Время активации, секунды Unix. */
     val activeTime: Long = 0,
-    /** Для устройства не в сети: когда оно последний раз присылало данные, мс (0 — неизвестно). */
+    /** Когда устройство последний раз присылало данные, мс (0 — неизвестно). */
     val lastDataTime: Long = 0,
 ) {
     /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
@@ -208,14 +208,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             spec = spec,
                             thingModel = useThingModel,
                             activeTime = d.activeTime,
-                            lastDataTime = if (d.online) 0 else lastDataTime(c, d),
+                            lastDataTime = lastDataTime(c, d),
                         )
                     }
                 }
             }.awaitAll()
         }
 
-    /** Когда устройство не в сети последний раз присылало данные: shadow, иначе время обновления в облаке. */
+    /** Когда устройство последний раз присылало данные: shadow, иначе время обновления в облаке. */
     private suspend fun lastDataTime(c: TuyaCloudClient, d: CloudDevice): Long =
         runCatching { c.getLastReportTime(d.id) }.getOrDefault(0L).takeIf { it > 0 } ?: d.updateTime
 

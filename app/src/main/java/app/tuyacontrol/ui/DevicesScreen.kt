@@ -179,14 +179,23 @@ private fun DeviceCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (!device.online) {
+                        // Нет связи — изменения до облака не доходят, значения могут быть неверными
                         Text(
                             if (device.lastDataTime > 0) {
-                                "Показания устарели: данные от " + staleFormat(device.lastDataTime)
+                                "Показания устарели: данные от " + staleFormat(device.lastDataTime) +
+                                    " (" + ageText(device.lastDataTime) + ")"
                             } else {
                                 "Показания устарели: время последних данных неизвестно"
                             },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
+                        )
+                    } else if (device.lastDataTime > 0) {
+                        // В сети — устройство сообщает только об изменениях, молчание значит «без изменений»
+                        Text(
+                            "данные от " + staleFormat(device.lastDataTime) + " (" + ageText(device.lastDataTime) + ")",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -315,6 +324,17 @@ private fun IntegerStepper(spec: DpSpec, raw: Long, enabled: Boolean, onChange: 
             contentPadding = PaddingValues(0.dp),
             modifier = Modifier.size(36.dp),
         ) { Text("+") }
+    }
+}
+
+/** «только что», «12 мин назад», «3 ч назад», «5 дн назад». */
+private fun ageText(ms: Long): String {
+    val minutes = (System.currentTimeMillis() - ms) / 60_000
+    return when {
+        minutes < 1 -> "только что"
+        minutes < 60 -> "$minutes мин назад"
+        minutes < 48 * 60 -> "${minutes / 60} ч назад"
+        else -> "${minutes / 1440} дн назад"
     }
 }
 
