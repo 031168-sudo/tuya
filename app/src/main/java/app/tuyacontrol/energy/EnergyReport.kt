@@ -139,7 +139,8 @@ object EnergyReports {
                     cost = (price ?: 0.0) * kwh,
                     zone = zone,
                     missing = price == null,
-                    estimated = exact == null,
+                    // При одной зоне на весь день разбивка по часам на стоимость не влияет
+                    estimated = exact == null && (tariff?.zones?.size ?: 0) > 1,
                 )
             }
         }

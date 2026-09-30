@@ -198,6 +198,9 @@ class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
         db.beginTransaction()
         try {
             for (day in days) {
+                if (state == DayEnergy.HOURLY_NONE) {
+                    db.delete("energy_hourly", "device_id = ? AND day = ?", arrayOf(deviceId, day.toString()))
+                }
                 db.execSQL(
                     "UPDATE energy_daily SET hourly = ? WHERE device_id = ? AND day = ?",
                     arrayOf<Any>(state, deviceId, day.toString()),
