@@ -52,7 +52,7 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel) {
 
     // Устройства со счётчиком энергии передаём на экран «Энергия»
     val energyDevices = remember(state.devices) {
-        state.devices.filter { it.hasEnergy }.map { EnergyDevice(it.id, it.name, it.activeTime) }
+        state.devices.filter { it.hasEnergy }.map { EnergyDevice(it.id, it.name, it.activeTime, it.status.keys + it.spec.keys, it.thingModel) }
     }
     LaunchedEffect(energyDevices, state.screen) {
         if (state.screen == Screen.Energy || state.screen == Screen.Tariffs) {

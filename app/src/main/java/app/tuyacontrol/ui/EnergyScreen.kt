@@ -226,8 +226,8 @@ fun EnergyScreen(
                         "Статистика Tuya" +
                             (m.syncedUntil?.let { ", загружено по ${it.format(DATE)}" } ?: "") +
                             (m.total?.let { ", всего по Tuya ${EnergyReports.kwh(it)}" } ?: "")
-                    else -> "Журнал устройства (облако хранит 7 дней): история копится, пока вы открываете приложение. " +
-                        "Для полной истории подключите сервис Data Statistics в проекте Tuya."
+                    else -> "Журнал устройства${m.code?.let { " (DP $it)" } ?: ""}: облако хранит 7 дней, " +
+                        "история копится, пока вы открываете приложение. Статистика Tuya за всё время недоступна."
                 }
                 Column {
                     Text(d.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)

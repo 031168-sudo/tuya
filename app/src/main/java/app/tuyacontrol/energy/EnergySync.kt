@@ -16,7 +16,31 @@ import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 
 /** Устройство, для которого собираем историю энергии. */
-data class EnergyDevice(val id: String, val name: String, val activeTime: Long)
+data class EnergyDevice(
+    val id: String,
+    val name: String,
+    val activeTime: Long,
+    /** Коды DP, которые есть у устройства. */
+    val codes: Set<String> = emptySet(),
+    /** Устройство работает через Things Data Model (v2). */
+    val thingModel: Boolean = false,
+) {
+    /** DP, из которого считаем энергию. */
+    val energyCode: String?
+        get() = ENERGY_CODES.firstOrNull { it in codes }
+            ?: codes.firstOrNull { c -> ENERGY_HINTS.any { it in c.lowercase() } }
+
+    companion object {
+        /** Приращение энергии за период (суммируется). */
+        val INCREMENTAL = setOf("add_ele", "ele_add", "add_energy")
+        val ENERGY_CODES = listOf(
+            "add_ele", "total_forward_energy", "forward_energy_total", "total_energy",
+            "energy", "ele", "electricity", "power_consumption",
+        )
+        private val ENERGY_HINTS = listOf("energy", "ele", "kwh", "consum")
+        fun isIncremental(code: String) = code in INCREMENTAL || code.startsWith("add_")
+    }
+}
 
 /**
  * Загрузка суточного потребления в локальную БД.
@@ -61,7 +85,15 @@ class EnergySync(private val db: EnergyDb) {
             meta = if (code != null) {
                 meta.copy(code = code, mode = EnergyDb.SOURCE_STATS, syncedUntil = null, lastError = null)
             } else {
-                meta.copy(code = "add_ele", mode = EnergyDb.SOURCE_LOGS)
+                val logCode = device.energyCode
+                    ?: throw IllegalStateException(
+                        "у устройства нет DP энергии; есть: ${device.codes.sorted().joinToString()}",
+                    ).also {
+                        AppLog.e("${device.name}: DP энергии не найден, коды: ${device.codes.sorted()}")
+                        withContext(Dispatchers.IO) { db.saveMeta(meta.copy(lastError = it.message)) }
+                    }
+                AppLog.i("${device.name}: журнал по DP $logCode")
+                meta.copy(code = logCode, mode = EnergyDb.SOURCE_LOGS)
             }
         }
 
@@ -70,7 +102,7 @@ class EnergySync(private val db: EnergyDb) {
                 meta = syncStats(client, meta, today, progress)
                 meta = syncHours(client, meta, progress)
             } else {
-                meta = syncLogs(client, meta, today, progress)
+                meta = syncLogs(client, device, meta, today, progress)
             }
             meta = meta.copy(updatedAt = System.currentTimeMillis())
         } catch (e: Exception) {
@@ -133,16 +165,31 @@ class EnergySync(private val db: EnergyDb) {
 
     private suspend fun syncLogs(
         client: TuyaCloudClient,
+        device: EnergyDevice,
         start: EnergyMeta,
         today: LocalDate,
         progress: (String) -> Unit,
     ): EnergyMeta {
         progress("${start.name}: журнал за 7 дней")
-        val scale = energyScale(client, start.deviceId)
+        val code = start.code ?: "add_ele"
+        val scale = energyScale(client, start.deviceId, code)
         val now = System.currentTimeMillis()
         val windowStart = now - 7L * 24 * 3600 * 1000 + 60_000
-        val logs = client.getDeviceLogs(start.deviceId, "add_ele", windowStart, now)
-        AppLog.i("${start.name}: отчётов add_ele за 7 дней: ${logs.size}, множитель 10^-$scale")
+        val logs = if (device.thingModel) {
+            client.getReportLogsV2(start.deviceId, code, windowStart, now)
+        } else {
+            try {
+                client.getDeviceLogs(start.deviceId, code, windowStart, now)
+            } catch (e: TuyaApiException) {
+                AppLog.e("${start.name}: журнал v1 недоступен, пробую v2", e)
+                client.getReportLogsV2(start.deviceId, code, windowStart, now)
+            }
+        }.filter { it.code == code }.sortedBy { it.time }
+        val incremental = EnergyDevice.isIncremental(code)
+        AppLog.i(
+            "${start.name}: отчётов $code за 7 дней: ${logs.size}, множитель 10^-$scale, " +
+                if (incremental) "приращения" else "накопительный счётчик",
+        )
 
         // Первый день окна неполный — его не пишем
         val firstFullDay = Instant.ofEpochMilli(windowStart).atZone(zone).toLocalDate().plusDays(1)
@@ -158,13 +205,22 @@ class EnergySync(private val db: EnergyDb) {
             if (earliest != null) sums.keys.removeAll { !it.isAfter(earliest) }
         }
         val hours = HashMap<LocalDate, HashMap<Int, Double>>()
+        var previous: Double? = null
         for (entry in logs) {
-            if (entry.code != "add_ele") continue
             val time = Instant.ofEpochMilli(entry.time).atZone(zone)
             val day = time.toLocalDate()
-            if (day !in sums) continue
             val raw = entry.value.toDoubleOrNull() ?: continue
-            val kwh = BigDecimal.valueOf(raw).movePointLeft(scale).toDouble()
+            val value = BigDecimal.valueOf(raw).movePointLeft(scale).toDouble()
+            // Накопительный счётчик: расход = разница соседних показаний (сброс счётчика пропускаем)
+            val kwh = if (incremental) {
+                value
+            } else {
+                val prev = previous
+                previous = value
+                if (prev == null || value < prev) continue
+                value - prev
+            }
+            if (day !in sums) continue
             sums[day] = (sums[day] ?: 0.0) + kwh
             val h = hours.getOrPut(day) { HashMap() }
             h[time.hour] = (h[time.hour] ?: 0.0) + kwh
@@ -242,10 +298,10 @@ class EnergySync(private val db: EnergyDb) {
     private fun earlier(a: LocalDate, b: LocalDate): LocalDate = if (a.isBefore(b)) a else b
 
     /** Множитель add_ele из спецификации (обычно 3: значение 12 = 0,012 кВт·ч). */
-    private suspend fun energyScale(client: TuyaCloudClient, deviceId: String): Int {
+    private suspend fun energyScale(client: TuyaCloudClient, deviceId: String, code: String): Int {
         val spec = runCatching { client.getSpecification(deviceId) }.getOrNull()
-            ?.takeIf { "add_ele" in it }
+            ?.takeIf { code in it }
             ?: runCatching { client.getThingModel(deviceId) }.getOrNull()
-        return spec?.get("add_ele")?.scale ?: 3
+        return spec?.get(code)?.scale ?: 3
     }
 }

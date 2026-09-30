@@ -243,6 +243,38 @@ class TuyaCloudClient(private val credentials: Credentials) {
         return entries
     }
 
+    /** Отчёты устройства через Things Data Model (для устройств без стандартного набора команд). */
+    suspend fun getReportLogsV2(
+        deviceId: String,
+        codes: String,
+        startMs: Long,
+        endMs: Long,
+        maxPages: Int = 50,
+    ): List<LogEntry> {
+        val entries = mutableListOf<LogEntry>()
+        var rowKey = ""
+        var page = 0
+        while (page < maxPages) {
+            val query = mutableMapOf(
+                "codes" to codes,
+                "start_time" to startMs.toString(),
+                "end_time" to endMs.toString(),
+                "size" to "100",
+            )
+            if (rowKey.isNotEmpty()) query["last_row_key"] = rowKey
+            val result = get("/v2.0/cloud/thing/$deviceId/report-logs", query) as? JSONObject ?: break
+            val logs = result.optJSONArray("logs") ?: JSONArray()
+            for (i in 0 until logs.length()) {
+                val o = logs.optJSONObject(i) ?: continue
+                entries += LogEntry(o.optString("code"), o.optString("value"), o.optLong("event_time"))
+            }
+            rowKey = result.optString("last_row_key", "")
+            if (!result.optBoolean("has_more", false) || rowKey.isEmpty()) break
+            page++
+        }
+        return entries
+    }
+
     // ---------- Списки устройств ----------
 
     private suspend fun listAssociatedUserDevices(): List<CloudDevice> {
