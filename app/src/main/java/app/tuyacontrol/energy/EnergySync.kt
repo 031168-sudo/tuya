@@ -181,14 +181,15 @@ class EnergySync(private val db: EnergyDb) {
         val windowStart = now - 7L * 24 * 3600 * 1000 + 60_000
         // Мощность отчитывается часто — разрешаем больше страниц журнала
         val maxPages = if (power) 300 else 50
+        val onPage: (Int) -> Unit = { n -> progress("${start.name}: журнал, страница $n") }
         val logs = if (device.thingModel) {
-            client.getReportLogsV2(start.deviceId, code, windowStart, now, maxPages)
+            client.getReportLogsV2(start.deviceId, code, windowStart, now, maxPages, onPage)
         } else {
             try {
-                client.getDeviceLogs(start.deviceId, code, windowStart, now, maxPages)
+                client.getDeviceLogs(start.deviceId, code, windowStart, now, maxPages, onPage)
             } catch (e: TuyaApiException) {
                 AppLog.e("${start.name}: журнал v1 недоступен, пробую v2", e)
-                client.getReportLogsV2(start.deviceId, code, windowStart, now, maxPages)
+                client.getReportLogsV2(start.deviceId, code, windowStart, now, maxPages, onPage)
             }
         }.filter { it.code == code }.sortedBy { it.time }
         val incremental = EnergyDevice.isIncremental(code)

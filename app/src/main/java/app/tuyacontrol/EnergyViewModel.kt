@@ -17,6 +17,7 @@ import app.tuyacontrol.energy.PeriodType
 import app.tuyacontrol.energy.Tariff
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -125,7 +126,9 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _state.update { it.copy(syncing = true, progress = "Загрузка истории…") }
             val errors = mutableListOf<String>()
-            for (d in devices) {
+            for ((index, d) in devices.withIndex()) {
+                // Пауза между счётчиками, чтобы не упираться в лимит частоты запросов журнала Tuya
+                if (index > 0) delay(3_000)
                 try {
                     sync.sync(client, d) { p -> _state.update { it.copy(progress = p) } }
                 } catch (e: Exception) {

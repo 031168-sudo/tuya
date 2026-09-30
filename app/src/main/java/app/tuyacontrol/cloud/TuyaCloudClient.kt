@@ -3,6 +3,7 @@ package app.tuyacontrol.cloud
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.Credentials
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -217,6 +218,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
         startMs: Long,
         endMs: Long,
         maxPages: Int = 50,
+        onPage: (Int) -> Unit = {},
     ): List<LogEntry> {
         val entries = mutableListOf<LogEntry>()
         var rowKey = ""
@@ -230,7 +232,9 @@ class TuyaCloudClient(private val credentials: Credentials) {
                 "size" to "100",
             )
             if (rowKey.isNotEmpty()) query["start_row_key"] = rowKey
-            val result = get("/v1.0/devices/$deviceId/logs", query) as? JSONObject ?: break
+            if (page > 0) delay(LOG_PAGE_DELAY_MS)
+            onPage(page + 1)
+            val result = logRequest { get("/v1.0/devices/$deviceId/logs", query) } as? JSONObject ?: break
             val logs = result.optJSONArray("logs") ?: JSONArray()
             for (i in 0 until logs.length()) {
                 val o = logs.optJSONObject(i) ?: continue
@@ -250,6 +254,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
         startMs: Long,
         endMs: Long,
         maxPages: Int = 50,
+        onPage: (Int) -> Unit = {},
     ): List<LogEntry> {
         val entries = mutableListOf<LogEntry>()
         var rowKey = ""
@@ -262,7 +267,9 @@ class TuyaCloudClient(private val credentials: Credentials) {
                 "size" to "100",
             )
             if (rowKey.isNotEmpty()) query["last_row_key"] = rowKey
-            val result = get("/v2.0/cloud/thing/$deviceId/report-logs", query) as? JSONObject ?: break
+            if (page > 0) delay(LOG_PAGE_DELAY_MS)
+            onPage(page + 1)
+            val result = logRequest { get("/v2.0/cloud/thing/$deviceId/report-logs", query) } as? JSONObject ?: break
             val logs = result.optJSONArray("logs") ?: JSONArray()
             for (i in 0 until logs.length()) {
                 val o = logs.optJSONObject(i) ?: continue
@@ -273,6 +280,23 @@ class TuyaCloudClient(private val credentials: Credentials) {
             page++
         }
         return entries
+    }
+
+    /** Tuya ограничивает частоту запросов журнала: при «too frequent» ждём и повторяем. */
+    private suspend fun <T> logRequest(block: suspend () -> T): T {
+        var wait = 5_000L
+        repeat(4) { attempt ->
+            try {
+                return block()
+            } catch (e: TuyaApiException) {
+                val tooFrequent = "frequent" in (e.message ?: "").lowercase() || e.code == 40000309
+                if (!tooFrequent || attempt == 3) throw e
+                AppLog.i("Журнал: слишком частые запросы, жду ${wait / 1000} с")
+                delay(wait)
+                wait *= 2
+            }
+        }
+        error("unreachable")
     }
 
     // ---------- Списки устройств ----------
@@ -460,6 +484,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
 
     private companion object {
         val JSON_MEDIA = "application/json".toMediaType()
+        const val LOG_PAGE_DELAY_MS = 1_200L
         val DAY_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd")
 
         /** 1010 token invalid, 1011 token status invalid, 1012 token expired */
