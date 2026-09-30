@@ -176,6 +176,14 @@ private fun DeviceCard(
                 }
             }
 
+            if (device.status.isEmpty()) {
+                Spacer(Modifier.size(6.dp))
+                Text(
+                    "Облако не вернуло данных",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (primary.isNotEmpty()) Spacer(Modifier.size(6.dp))
             primary.forEach { (code, value) ->
                 DpRow(device, code, value, onCommand)

@@ -87,6 +87,68 @@ class TuyaCloudClient(private val credentials: Credentials) {
         post("/v1.0/iot-03/devices/$deviceId/commands", JSONObject().put("commands", arr))
     }
 
+    // ---------- Things Data Model (для устройств без стандартного набора команд) ----------
+
+    /** Все DP устройства «как есть»: /v2.0/cloud/thing/{id}/shadow/properties. */
+    suspend fun getShadowProperties(deviceId: String): Map<String, Any?> {
+        val result = get("/v2.0/cloud/thing/$deviceId/shadow/properties") as? JSONObject
+            ?: return emptyMap()
+        return parseStatus(result.optJSONArray("properties"))
+    }
+
+    /** Модель устройства: типы, единицы, множители, права доступа DP. */
+    suspend fun getThingModel(deviceId: String): Map<String, DpSpec> {
+        val result = get("/v2.0/cloud/thing/$deviceId/model") as? JSONObject ?: return emptyMap()
+        val model = try {
+            JSONObject(result.optString("model", "{}"))
+        } catch (e: Exception) {
+            return emptyMap()
+        }
+        val specs = LinkedHashMap<String, DpSpec>()
+        val services = model.optJSONArray("services") ?: return specs
+        for (s in 0 until services.length()) {
+            val props = services.optJSONObject(s)?.optJSONArray("properties") ?: continue
+            for (p in 0 until props.length()) {
+                val prop = props.optJSONObject(p) ?: continue
+                val code = prop.optString("code")
+                if (code.isEmpty()) continue
+                val ts = prop.optJSONObject("typeSpec") ?: JSONObject()
+                val type = when (ts.optString("type")) {
+                    "bool" -> "Boolean"
+                    "value" -> "Integer"
+                    "enum" -> "Enum"
+                    "bitmap" -> "Bitmap"
+                    "raw" -> "Raw"
+                    else -> "String"
+                }
+                val range = ts.optJSONArray("range")?.let { r -> (0 until r.length()).map { r.optString(it) } }
+                    ?: emptyList()
+                specs[code] = DpSpec(
+                    code = code,
+                    type = type,
+                    unit = ts.optString("unit"),
+                    scale = ts.optInt("scale", 0),
+                    min = if (ts.has("min")) ts.optLong("min") else null,
+                    max = if (ts.has("max")) ts.optLong("max") else null,
+                    step = ts.optLong("step", 1).coerceAtLeast(1),
+                    range = range,
+                    writable = prop.optString("accessMode").contains("w"),
+                )
+            }
+        }
+        return specs
+    }
+
+    /** Команда через Things Data Model: {"properties":"{\"switch_1\":true}"}. */
+    suspend fun sendProperties(deviceId: String, properties: List<Pair<String, Any?>>) {
+        val props = JSONObject()
+        properties.forEach { (code, value) -> props.put(code, value ?: JSONObject.NULL) }
+        post(
+            "/v2.0/cloud/thing/$deviceId/shadow/properties/issue",
+            JSONObject().put("properties", props.toString()),
+        )
+    }
+
     // ---------- Списки устройств ----------
 
     private suspend fun listAssociatedUserDevices(): List<CloudDevice> {

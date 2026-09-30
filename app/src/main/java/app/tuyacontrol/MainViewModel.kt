@@ -36,6 +36,8 @@ data class DeviceUi(
     val spec: Map<String, DpSpec>,
     /** Коды, по которым команда отправлена и ещё не подтверждена. */
     val pending: Set<String> = emptySet(),
+    /** true — устройство работает через Things Data Model (v2.0 shadow). */
+    val thingModel: Boolean = false,
 )
 
 data class UiState(
@@ -53,7 +55,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = CredentialsStore(application)
     private var client: TuyaCloudClient? = null
-    private val specCache = mutableMapOf<String, Map<String, DpSpec>>()
+    private val specCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, DpSpec>>()
+    private val thingModelDevices: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var autoRefreshJob: Job? = null
 
     private val _state = MutableStateFlow(UiState())
@@ -99,6 +102,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 store.save(creds)
                 client = newClient
                 specCache.clear()
+        thingModelDevices.clear()
                 _state.update {
                     it.copy(
                         setupInProgress = false,
@@ -119,6 +123,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         store.clear()
         client = null
         specCache.clear()
+        thingModelDevices.clear()
         _state.value = UiState(screen = Screen.Setup)
     }
 
@@ -153,10 +158,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             list.map { d ->
                 async {
                     limit.withPermit {
-                        val status = d.status ?: runCatching { c.getStatus(d.id) }
-                            .onFailure { AppLog.e("Статус ${d.name}", it) }
-                            .getOrDefault(emptyMap())
-                        val spec = specCache[d.id] ?: runCatching { c.getSpecification(d.id) }
+                        var status = d.status?.takeIf { it.isNotEmpty() }
+                            ?: runCatching { c.getStatus(d.id) }
+                                .onFailure { AppLog.e("Статус ${d.name}", it) }
+                                .getOrDefault(emptyMap())
+                        var useThingModel = d.id in thingModelDevices
+
+                        // Нет стандартного набора команд -> берём DP через Things Data Model
+                        if (status.isEmpty() || useThingModel) {
+                            val shadow = runCatching { c.getShadowProperties(d.id) }
+                                .onFailure { AppLog.e("Shadow ${d.name}", it) }
+                                .getOrDefault(emptyMap())
+                            if (shadow.isNotEmpty()) {
+                                if (!useThingModel) AppLog.i("${d.name}: использую Things Data Model (${shadow.size} DP)")
+                                status = shadow
+                                useThingModel = true
+                                thingModelDevices += d.id
+                            }
+                        }
+
+                        val spec = specCache[d.id] ?: runCatching {
+                            if (useThingModel) c.getThingModel(d.id) else c.getSpecification(d.id)
+                        }
                             .onFailure { AppLog.e("Спецификация ${d.name}", it) }
                             .getOrNull()
                             ?.also { specCache[d.id] = it }
@@ -169,6 +192,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             category = d.category,
                             status = status,
                             spec = spec,
+                            thingModel = useThingModel,
                         )
                     }
                 }
@@ -186,9 +210,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             try {
-                c.sendCommands(deviceId, listOf(code to value))
+                if (before.thingModel) {
+                    c.sendProperties(deviceId, listOf(code to value))
+                } else {
+                    c.sendCommands(deviceId, listOf(code to value))
+                }
                 delay(1500)
-                val fresh = runCatching { c.getStatus(deviceId) }.getOrNull()
+                val fresh = runCatching {
+                    if (before.thingModel) c.getShadowProperties(deviceId) else c.getStatus(deviceId)
+                }.getOrNull()?.takeIf { it.isNotEmpty() }
                 updateDevice(deviceId) {
                     it.copy(status = fresh ?: it.status, pending = it.pending - code)
                 }
