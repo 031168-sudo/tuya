@@ -282,19 +282,25 @@ class TuyaCloudClient(private val credentials: Credentials) {
         return entries
     }
 
-    /** Tuya ограничивает частоту запросов журнала: при «too frequent» ждём и повторяем. */
+    /**
+     * Повтор запроса журнала: Tuya ограничивает частоту («too frequent»), а мобильная сеть
+     * может ненадолго пропасть (нет DNS, таймаут). В обоих случаях ждём и пробуем снова.
+     */
     private suspend fun <T> logRequest(block: suspend () -> T): T {
         var wait = 5_000L
-        repeat(4) { attempt ->
+        repeat(5) { attempt ->
             try {
                 return block()
             } catch (e: TuyaApiException) {
                 val tooFrequent = "frequent" in (e.message ?: "").lowercase() || e.code == 40000309
-                if (!tooFrequent || attempt == 3) throw e
+                if (!tooFrequent || attempt == 4) throw e
                 AppLog.i("Журнал: слишком частые запросы, жду ${wait / 1000} с")
-                delay(wait)
-                wait *= 2
+            } catch (e: java.io.IOException) {
+                if (attempt == 4) throw e
+                AppLog.i("Журнал: нет связи (${e.javaClass.simpleName}), жду ${wait / 1000} с")
             }
+            delay(wait)
+            wait = (wait * 2).coerceAtMost(40_000L)
         }
         error("unreachable")
     }
