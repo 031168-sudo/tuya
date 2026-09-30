@@ -90,9 +90,13 @@ data class EnergyMeta(
     val updatedAt: Long,
     /** Дни раньше этой даты Tuya почасово не отдаёт. */
     val hourlyFloor: LocalDate? = null,
+    /** До какого момента (мс) журнал мощности уже обработан. */
+    val logCursor: Long? = null,
+    /** Последняя известная мощность, Вт (действует с logCursor). */
+    val lastPower: Double? = null,
 )
 
-class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, "energy.db", null, 2) {
+class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, "energy.db", null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -109,7 +113,7 @@ class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
             "CREATE TABLE energy_meta (" +
                 "device_id TEXT PRIMARY KEY, name TEXT NOT NULL, code TEXT, mode TEXT, active_day TEXT, " +
                 "synced_until TEXT, total REAL, last_error TEXT, updated_at INTEGER NOT NULL DEFAULT 0, " +
-                "hourly_floor TEXT)",
+                "hourly_floor TEXT, log_cursor INTEGER, last_power REAL)",
         )
         createHourly(db)
     }
@@ -121,6 +125,10 @@ class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
             db.execSQL("ALTER TABLE tariffs ADD COLUMN zones TEXT")
             db.execSQL("ALTER TABLE energy_meta ADD COLUMN hourly_floor TEXT")
             createHourly(db)
+        }
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE energy_meta ADD COLUMN log_cursor INTEGER")
+            db.execSQL("ALTER TABLE energy_meta ADD COLUMN last_power REAL")
         }
     }
 
@@ -205,6 +213,68 @@ class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
                     "UPDATE energy_daily SET hourly = ? WHERE device_id = ? AND day = ?",
                     arrayOf<Any>(state, deviceId, day.toString()),
                 )
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Удаляет накопленные из журнала данные начиная с дня (данные статистики Tuya не трогает). */
+    fun clearLogs(deviceId: String, fromDay: LocalDate) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.execSQL(
+                "DELETE FROM energy_hourly WHERE device_id = ? AND day >= ? AND day IN " +
+                    "(SELECT day FROM energy_daily WHERE device_id = ? AND source = ?)",
+                arrayOf<Any>(deviceId, fromDay.toString(), deviceId, SOURCE_LOGS),
+            )
+            db.execSQL(
+                "DELETE FROM energy_daily WHERE device_id = ? AND day >= ? AND source = ?",
+                arrayOf<Any>(deviceId, fromDay.toString(), SOURCE_LOGS),
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /**
+     * Прибавляет расход (день -> 24 значения по часам) к уже накопленному.
+     * Дни, по которым есть статистика Tuya, не трогает.
+     */
+    fun addEnergy(deviceId: String, hours: Map<LocalDate, DoubleArray>) {
+        if (hours.isEmpty()) return
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            for ((day, arr) in hours) {
+                val d = day.toString()
+                val existing = db.rawQuery(
+                    "SELECT source, kwh FROM energy_daily WHERE device_id = ? AND day = ?",
+                    arrayOf(deviceId, d),
+                ).use { c -> if (c.moveToFirst()) c.getString(0) to c.getDouble(1) else null }
+                if (existing?.first == SOURCE_STATS) continue
+                val values = ContentValues().apply {
+                    put("device_id", deviceId)
+                    put("day", d)
+                    put("kwh", (existing?.second ?: 0.0) + arr.sum())
+                    put("source", SOURCE_LOGS)
+                    put("hourly", DayEnergy.HOURLY_PRESENT)
+                }
+                db.insertWithOnConflict("energy_daily", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+                for (h in 0 until 24) {
+                    if (arr[h] <= 0.0) continue
+                    db.execSQL(
+                        "INSERT OR IGNORE INTO energy_hourly (device_id, day, hour, kwh) VALUES (?, ?, ?, 0)",
+                        arrayOf<Any>(deviceId, d, h),
+                    )
+                    db.execSQL(
+                        "UPDATE energy_hourly SET kwh = kwh + ? WHERE device_id = ? AND day = ? AND hour = ?",
+                        arrayOf<Any>(arr[h], deviceId, d, h),
+                    )
+                }
             }
             db.setTransactionSuccessful()
         } finally {
@@ -348,7 +418,8 @@ class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
     // ---------- Состояние синхронизации ----------
 
     fun meta(deviceId: String): EnergyMeta? = readableDatabase.rawQuery(
-        "SELECT device_id, name, code, mode, active_day, synced_until, total, last_error, updated_at, hourly_floor " +
+        "SELECT device_id, name, code, mode, active_day, synced_until, total, last_error, updated_at, hourly_floor, " +
+            "log_cursor, last_power " +
             "FROM energy_meta WHERE device_id = ?",
         arrayOf(deviceId),
     ).use { c ->
@@ -364,6 +435,8 @@ class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
             lastError = if (c.isNull(7)) null else c.getString(7),
             updatedAt = c.getLong(8),
             hourlyFloor = if (c.isNull(9)) null else LocalDate.parse(c.getString(9)),
+            logCursor = if (c.isNull(10)) null else c.getLong(10),
+            lastPower = if (c.isNull(11)) null else c.getDouble(11),
         )
     }
 
@@ -379,6 +452,8 @@ class EnergyDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
             if (m.lastError == null) putNull("last_error") else put("last_error", m.lastError)
             put("updated_at", m.updatedAt)
             if (m.hourlyFloor == null) putNull("hourly_floor") else put("hourly_floor", m.hourlyFloor.toString())
+            if (m.logCursor == null) putNull("log_cursor") else put("log_cursor", m.logCursor)
+            if (m.lastPower == null) putNull("last_power") else put("last_power", m.lastPower)
         }
         writableDatabase.insertWithOnConflict("energy_meta", null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }

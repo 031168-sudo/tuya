@@ -1,5 +1,6 @@
 package app.tuyacontrol.energy
 
+import app.tuyacontrol.cloud.LogEntry
 import app.tuyacontrol.cloud.TuyaApiException
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
@@ -56,6 +57,8 @@ data class EnergyDevice(
 class EnergySync(private val db: EnergyDb) {
 
     private val SHOW_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+    private val SHOW_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
+    private val CHUNK_MS = 12L * 3600 * 1000
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
@@ -104,13 +107,17 @@ class EnergySync(private val db: EnergyDb) {
             if (meta.mode == EnergyDb.SOURCE_STATS) {
                 meta = syncStats(client, meta, today, progress)
                 meta = syncHours(client, meta, progress)
+            } else if (meta.code == EnergyDevice.POWER_CODE) {
+                meta = syncPower(client, device, meta, progress)
             } else {
                 meta = syncLogs(client, device, meta, today, progress)
             }
             meta = meta.copy(updatedAt = System.currentTimeMillis())
         } catch (e: Exception) {
             AppLog.e("${device.name}: ошибка загрузки истории", e)
-            meta = meta.copy(lastError = e.message ?: e.javaClass.simpleName)
+            // Берём сохранённое состояние: загрузка могла успеть продвинуться до ошибки
+            val saved = withContext(Dispatchers.IO) { db.meta(device.id) }
+            meta = (saved ?: meta).copy(lastError = e.message ?: e.javaClass.simpleName)
             withContext(Dispatchers.IO) { db.saveMeta(meta) }
             throw e
         }
@@ -329,6 +336,103 @@ class EnergySync(private val db: EnergyDb) {
 
     private fun Set<LocalDate>.minOrNullDay(): LocalDate =
         fold(LocalDate.now(zone)) { acc, d -> if (d.isBefore(acc)) d else acc }
+
+    /**
+     * Расход по журналу мощности, инкрементально: читаем журнал с места, где остановились
+     * (logCursor), кусками по 12 часов; каждый кусок сразу прибавляется к БД. Обрыв связи
+     * не теряет уже загруженное, а следующие обновления читают только новые записи.
+     * Энергия = мощность × время, пока мощность держится (до следующего отчёта).
+     */
+    private suspend fun syncPower(
+        client: TuyaCloudClient,
+        device: EnergyDevice,
+        start: EnergyMeta,
+        progress: (String) -> Unit,
+    ): EnergyMeta {
+        var meta = start
+        val code = EnergyDevice.POWER_CODE
+        val scale = energyScale(client, meta.deviceId, code)
+        val now = System.currentTimeMillis()
+        val windowStart = now - 7L * 24 * 3600 * 1000 + 60_000
+
+        var cursor = meta.logCursor?.takeIf { it >= windowStart }
+        var power = if (cursor != null) meta.lastPower else null
+        val countFrom: Long
+        if (cursor == null) {
+            // Первый запуск или перерыв больше 7 дней: начинаем с ближайшей полуночи в окне журнала,
+            // а отчёты до неё нужны только чтобы узнать мощность на начало суток
+            val firstDay = Instant.ofEpochMilli(windowStart).atZone(zone).toLocalDate().plusDays(1)
+            countFrom = firstDay.atStartOfDay(zone).toInstant().toEpochMilli()
+            if (meta.logCursor != null) AppLog.i("${meta.name}: перерыв больше 7 дней, часть истории потеряна")
+            withContext(Dispatchers.IO) { db.clearLogs(meta.deviceId, firstDay) }
+            cursor = windowStart
+        } else {
+            countFrom = cursor
+        }
+        AppLog.i("${meta.name}: мощность с ${Instant.ofEpochMilli(cursor).atZone(zone).toLocalDateTime()}, множитель 10^-$scale")
+
+        var chunkStart: Long = cursor
+        var total = 0
+        while (chunkStart < now) {
+            val chunkEnd = minOf(chunkStart + CHUNK_MS, now)
+            val label = Instant.ofEpochMilli(chunkStart).atZone(zone).toLocalDateTime().format(SHOW_TIME)
+            val onPage: (Int) -> Unit = { n -> progress("${meta.name}: журнал с $label, стр. $n") }
+            val logs = fetchLogs(client, device, code, chunkStart, chunkEnd, onPage)
+                .filter { it.code == code && it.time in chunkStart until chunkEnd }
+                .sortedBy { it.time }
+            total += logs.size
+
+            val acc = HashMap<LocalDate, DoubleArray>()
+            var t = chunkStart
+            for (e in logs) {
+                integrate(t, e.time, power, countFrom, acc)
+                t = e.time
+                e.value.toDoubleOrNull()?.let { power = BigDecimal.valueOf(it).movePointLeft(scale).toDouble() }
+            }
+            integrate(t, chunkEnd, power, countFrom, acc)
+
+            meta = meta.copy(logCursor = chunkEnd, lastPower = power)
+            val saveMeta = meta
+            withContext(Dispatchers.IO) {
+                db.addEnergy(saveMeta.deviceId, acc)
+                db.saveMeta(saveMeta)
+            }
+            chunkStart = chunkEnd
+        }
+        AppLog.i("${meta.name}: обработано отчётов мощности: $total")
+        return meta.copy(syncedUntil = LocalDate.now(zone), lastError = null)
+    }
+
+    private suspend fun fetchLogs(
+        client: TuyaCloudClient,
+        device: EnergyDevice,
+        code: String,
+        from: Long,
+        to: Long,
+        onPage: (Int) -> Unit,
+    ): List<LogEntry> = if (device.thingModel) {
+        client.getReportLogsV2(device.id, code, from, to, 100, onPage)
+    } else {
+        try {
+            client.getDeviceLogs(device.id, code, from, to, 100, onPage)
+        } catch (e: TuyaApiException) {
+            AppLog.e("${device.name}: журнал v1 недоступен, пробую v2", e)
+            client.getReportLogsV2(device.id, code, from, to, 100, onPage)
+        }
+    }
+
+    /** Добавляет энергию мощности [watts] на отрезке [from, to) с разбивкой по часам. */
+    private fun integrate(from: Long, to: Long, watts: Double?, countFrom: Long, acc: HashMap<LocalDate, DoubleArray>) {
+        if (watts == null || watts <= 0.0) return
+        var cursor = maxOf(from, countFrom)
+        while (cursor < to) {
+            val t = Instant.ofEpochMilli(cursor).atZone(zone)
+            val hourEnd = t.truncatedTo(ChronoUnit.HOURS).plusHours(1).toInstant().toEpochMilli()
+            val segEnd = minOf(hourEnd, to)
+            acc.getOrPut(t.toLocalDate()) { DoubleArray(24) }[t.hour] += watts * (segEnd - cursor) / 3_600_000.0 / 1000.0
+            cursor = segEnd
+        }
+    }
 
     private fun earlier(a: LocalDate, b: LocalDate): LocalDate = if (a.isBefore(b)) a else b
 

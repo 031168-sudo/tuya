@@ -423,7 +423,8 @@ class TuyaCloudClient(private val credentials: Credentials) {
     private suspend fun ensureToken(): String = tokenMutex.withLock {
         val now = System.currentTimeMillis()
         val current = accessToken
-        if (current != null && now < tokenExpiresAt - 60_000) return@withLock current
+        // Tuya возвращает тот же токен с остатком срока (бывает 30–40 с), поэтому запас небольшой
+        if (current != null && now < tokenExpiresAt - 5_000) return@withLock current
 
         val result = execute("GET", "/v1.0/token", mapOf("grant_type" to "1"), null, null)
             as? JSONObject ?: throw TuyaApiException(-1, "Пустой ответ при получении токена")
