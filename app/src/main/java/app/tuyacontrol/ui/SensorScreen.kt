@@ -201,20 +201,20 @@ private fun SeriesCard(s: SeriesUi, period: PeriodType, onShift: (Long) -> Unit)
     val ch = s.channel
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.Bottom) {
+            // Название в одну строку, мин/ср/макс — отдельной строкой под ним
+            Text(
+                channelTitle(ch),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+            s.stats?.let {
                 Text(
-                    channelTitle(ch),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
+                    "мин ${formatValue(it.min, ch)} · ср ${formatValue(it.avg, ch)} · макс ${formatValue(it.max, ch)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                 )
-                s.stats?.let {
-                    Text(
-                        "мин ${formatValue(it.min, ch)} · ср ${formatValue(it.avg, ch)} · макс ${formatValue(it.max, ch)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
             }
             Spacer(Modifier.height(8.dp))
             if (s.points.isEmpty()) {
@@ -295,11 +295,13 @@ private fun LineChart(s: SeriesUi, period: PeriodType, color: Color, onShift: (L
                     drawLine(gridColor, Offset(0f, gy), Offset(w, gy), strokeWidth = 1f)
                 }
 
-                // Участки без пропусков: разрыв, если между точками больше двух интервалов
+                // Разрыв линии только при реальном пропуске данных: датчик шлёт показания
+                // при изменении, поэтому паузы до 3 часов (или до трёх интервалов) соединяем
+                val maxGap = maxOf(s.bucketMs * 3, 3L * 3600_000)
                 val segments = mutableListOf<MutableList<SeriesPoint>>()
                 for (p in s.points) {
                     val last = segments.lastOrNull()?.lastOrNull()
-                    if (last == null || p.time - last.time > s.bucketMs * 2) segments += mutableListOf(p) else segments.last() += p
+                    if (last == null || p.time - last.time > maxGap) segments += mutableListOf(p) else segments.last() += p
                 }
                 for (seg in segments) {
                     val mid = { p: SeriesPoint -> x(p.time + s.bucketMs / 2) }
