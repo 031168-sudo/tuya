@@ -10,6 +10,9 @@ import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.Credentials
 import app.tuyacontrol.data.CredentialsStore
+import app.tuyacontrol.data.Category
+import app.tuyacontrol.data.CategoryStore
+import app.tuyacontrol.data.DevicePref
 import app.tuyacontrol.sensor.SensorChannel
 import app.tuyacontrol.sensor.SensorDevice
 import kotlinx.coroutines.Job
@@ -26,7 +29,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices }
 
 data class DeviceUi(
     val id: String,
@@ -76,6 +79,18 @@ data class DeviceUi(
             return SensorDevice(id, name, thingModel, temperature, humidity)
         }
 
+    /** Иконка по умолчанию, если пользователь не выбрал свою. */
+    val defaultIcon: String
+        get() = when {
+            isSensor -> "sensors"
+            hasEnergy -> "electric_meter"
+            "temp_set" in status || productName.contains("温控") -> "device_thermostat"
+            "switch_led" in status || category == "dj" -> "lightbulb"
+            category == "cz" || productName.contains("socket", true) || productName.contains("plug", true) -> "outlet"
+            sensorDevice != null -> "thermostat"
+            else -> "devices_other"
+        }
+
     /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
     val hasEnergy: Boolean
         get() = productName.contains(ENERGY_PRODUCT, ignoreCase = true)
@@ -99,11 +114,16 @@ data class UiState(
     val setupError: String? = null,
     val message: String? = null,
     val lastUpdated: Long? = null,
+    val categories: List<Category> = emptyList(),
+    val devicePrefs: Map<String, DevicePref> = emptyMap(),
+    /** Открытая категория (экран CategoryDevices). */
+    val categoryId: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = CredentialsStore(application)
+    private val categoryStore = CategoryStore(application)
     private var client: TuyaCloudClient? = null
     private val specCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, DpSpec>>()
     private val thingModelDevices: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -113,6 +133,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
+        _state.update { it.copy(categories = categoryStore.categories(), devicePrefs = categoryStore.devicePrefs()) }
         val saved = store.load()
         if (saved != null) {
             client = TuyaCloudClient(saved)
@@ -129,6 +150,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val s = _state.value
         return if (s.screen == Screen.Tariffs) {
             open(Screen.Energy); true
+        } else if (s.screen == Screen.CategoryDevices) {
+            open(Screen.Categories); true
         } else if (s.screen != Screen.Devices && s.credentials != null) {
             open(Screen.Devices); true
         } else {
@@ -137,6 +160,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun messageShown() = _state.update { it.copy(message = null) }
+
+    // ---------- Категории и иконки ----------
+
+    fun openCategory(id: String) = _state.update { it.copy(screen = Screen.CategoryDevices, categoryId = id) }
+
+    fun saveCategory(category: Category) {
+        val list = _state.value.categories
+        val updated = if (list.any { it.id == category.id }) {
+            list.map { if (it.id == category.id) category else it }
+        } else {
+            list + category
+        }
+        categoryStore.saveCategories(updated)
+        _state.update { it.copy(categories = updated) }
+    }
+
+    /** Удаление категории: её устройства остаются без категории. */
+    fun deleteCategory(id: String) {
+        val updated = _state.value.categories.filter { it.id != id }
+        val prefs = _state.value.devicePrefs.mapValues { (_, p) ->
+            if (p.categoryId == id) p.copy(categoryId = null) else p
+        }
+        categoryStore.saveCategories(updated)
+        categoryStore.saveDevicePrefs(prefs)
+        _state.update {
+            it.copy(
+                categories = updated,
+                devicePrefs = prefs,
+                screen = if (it.categoryId == id && it.screen == Screen.CategoryDevices) Screen.Categories else it.screen,
+            )
+        }
+    }
+
+    fun setDevicePref(deviceId: String, pref: DevicePref) {
+        val prefs = _state.value.devicePrefs + (deviceId to pref)
+        categoryStore.saveDevicePrefs(prefs)
+        _state.update { it.copy(devicePrefs = prefs) }
+    }
 
     // ---------- Настройка ключей ----------
 
@@ -176,7 +237,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         client = null
         specCache.clear()
         thingModelDevices.clear()
-        _state.value = UiState(screen = Screen.Setup)
+        _state.value = UiState(
+            screen = Screen.Setup,
+            categories = _state.value.categories,
+            devicePrefs = _state.value.devicePrefs,
+        )
     }
 
     // ---------- Устройства ----------

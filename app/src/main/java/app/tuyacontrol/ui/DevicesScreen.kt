@@ -48,6 +48,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.tuyacontrol.DeviceUi
+import app.tuyacontrol.data.Category
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.CardDefaults
 import app.tuyacontrol.sensor.SensorDevice
 import androidx.compose.foundation.clickable
 import app.tuyacontrol.UiState
@@ -69,8 +73,14 @@ fun DevicesScreen(
     onMessageShown: () -> Unit,
     onOpenEnergy: (deviceId: String?) -> Unit,
     onOpenSensor: (SensorDevice) -> Unit,
+    onEditDevice: (DeviceUi) -> Unit,
+    title: String = "Устройства",
+    devices: List<DeviceUi> = state.devices,
+    onBack: (() -> Unit)? = null,
+    bottomBar: @Composable () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
+    val categories = state.categories.associateBy { it.id }
     LaunchedEffect(state.message) {
         state.message?.let {
             snackbar.showSnackbar(it)
@@ -83,7 +93,7 @@ fun DevicesScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("Устройства")
+                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         state.lastUpdated?.let {
                             Text(
                                 "обновлено " + SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(it)),
@@ -93,8 +103,15 @@ fun DevicesScreen(
                         }
                     }
                 },
+                navigationIcon = {
+                    if (onBack != null) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                        }
+                    }
+                },
                 actions = {
-                    if (state.devices.any { it.hasEnergy }) {
+                    if (devices.any { it.hasEnergy }) {
                         TextButton(onClick = { onOpenEnergy(null) }) { Text("₽") }
                     }
                     IconButton(onClick = onRefresh) {
@@ -110,6 +127,7 @@ fun DevicesScreen(
             )
         },
         snackbarHost = { SnackbarHost(snackbar) },
+        bottomBar = bottomBar,
     ) { padding ->
         PullToRefreshBox(
             isRefreshing = state.loading,
@@ -118,13 +136,13 @@ fun DevicesScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            if (state.devices.isEmpty()) {
+            if (devices.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     if (state.loading) {
                         CircularProgressIndicator()
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Устройств нет")
+                            Text(if (state.devices.isEmpty()) "Устройств нет" else "В этой категории пока нет устройств")
                             TextButton(onClick = onRefresh) { Text("Обновить") }
                             TextButton(onClick = onOpenLog) { Text("Открыть логи") }
                         }
@@ -136,9 +154,13 @@ fun DevicesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(state.devices, key = { it.id }) { device ->
+                    items(devices, key = { it.id }) { device ->
+                        val pref = state.devicePrefs[device.id]
                         DeviceCard(
                             device = device,
+                            category = pref?.categoryId?.let { categories[it] },
+                            icon = pref?.icon ?: device.defaultIcon,
+                            onEdit = { onEditDevice(device) },
                             onCommand = onCommand,
                             onOpenEnergy = { onOpenEnergy(device.id) },
                             onOpenSensor = onOpenSensor,
@@ -153,6 +175,9 @@ fun DevicesScreen(
 @Composable
 private fun DeviceCard(
     device: DeviceUi,
+    category: Category?,
+    icon: String,
+    onEdit: () -> Unit,
     onCommand: (deviceId: String, code: String, value: Any) -> Unit,
     onOpenEnergy: () -> Unit,
     onOpenSensor: (SensorDevice) -> Unit,
@@ -170,15 +195,35 @@ private fun DeviceCard(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (sensor != null) Modifier.clickable { onOpenSensor(sensor) } else Modifier),
+        colors = CardDefaults.cardColors(containerColor = Pastel.container(category?.color)),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(10.dp)
-                        .background(if (device.online) OnlineColor else OfflineColor, CircleShape),
-                )
-                Spacer(Modifier.width(10.dp))
+                // Иконка устройства в цветном круге, точка статуса в углу
+                Box(Modifier.size(48.dp)) {
+                    Box(
+                        Modifier
+                            .size(44.dp)
+                            .background(Pastel.accent(category?.color), CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            DeviceIcons.vector(icon),
+                            contentDescription = DeviceIcons.label(icon),
+                            modifier = Modifier.size(26.dp),
+                            tint = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(14.dp)
+                            .background(Pastel.container(category?.color), CircleShape)
+                            .padding(2.dp)
+                            .background(if (device.online) OnlineColor else OfflineColor, CircleShape),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         device.name,
@@ -186,6 +231,24 @@ private fun DeviceCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (category != null) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                DeviceIcons.vector(category.icon),
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                category.name,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     Text(
                         (if (device.online) "онлайн" else "не в сети") +
                             if (device.productName.isNotEmpty()) " · ${device.productName}" else "",
@@ -219,6 +282,9 @@ private fun DeviceCard(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "Иконка и категория")
                 }
             }
 

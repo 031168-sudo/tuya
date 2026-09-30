@@ -11,6 +11,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import app.tuyacontrol.sensor.SensorDevice
+import app.tuyacontrol.ui.AppBottomBar
+import app.tuyacontrol.ui.CategoriesScreen
+import app.tuyacontrol.ui.DeviceSettingsDialog
 import app.tuyacontrol.energy.EnergyDevice
 import app.tuyacontrol.ui.EnergyScreen
 import app.tuyacontrol.ui.TariffsScreen
@@ -67,6 +73,23 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
         viewModel.back()
     }
 
+    var editDevice by remember { mutableStateOf<DeviceUi?>(null) }
+    val openEnergy: (String?) -> Unit = { deviceId ->
+        energyViewModel.select(deviceId)
+        viewModel.open(Screen.Energy)
+    }
+    val openSensor: (SensorDevice) -> Unit = { device ->
+        sensorViewModel.open(device)
+        viewModel.open(Screen.Sensor)
+    }
+    val bottomBar: @Composable (Boolean) -> Unit = { categoriesSelected ->
+        AppBottomBar(
+            categoriesSelected = categoriesSelected,
+            onDevices = { viewModel.open(Screen.Devices) },
+            onCategories = { viewModel.open(Screen.Categories) },
+        )
+    }
+
     when (state.screen) {
         Screen.Setup -> SetupScreen(
             state = state,
@@ -82,15 +105,38 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
             onOpenSettings = { viewModel.open(Screen.Setup) },
             onOpenLog = { viewModel.open(Screen.Log) },
             onMessageShown = viewModel::messageShown,
-            onOpenEnergy = { deviceId ->
-                energyViewModel.select(deviceId)
-                viewModel.open(Screen.Energy)
-            },
-            onOpenSensor = { device ->
-                sensorViewModel.open(device)
-                viewModel.open(Screen.Sensor)
-            },
+            onOpenEnergy = openEnergy,
+            onOpenSensor = openSensor,
+            onEditDevice = { editDevice = it },
+            bottomBar = { bottomBar(false) },
         )
+        Screen.Categories -> CategoriesScreen(
+            categories = state.categories,
+            devices = state.devices,
+            prefs = state.devicePrefs,
+            onOpen = viewModel::openCategory,
+            onSave = viewModel::saveCategory,
+            onDelete = viewModel::deleteCategory,
+            bottomBar = { bottomBar(true) },
+        )
+        Screen.CategoryDevices -> {
+            val category = state.categories.firstOrNull { it.id == state.categoryId }
+            DevicesScreen(
+                state = state,
+                onRefresh = { viewModel.refresh() },
+                onCommand = viewModel::sendCommand,
+                onOpenSettings = { viewModel.open(Screen.Setup) },
+                onOpenLog = { viewModel.open(Screen.Log) },
+                onMessageShown = viewModel::messageShown,
+                onOpenEnergy = openEnergy,
+                onOpenSensor = openSensor,
+                onEditDevice = { editDevice = it },
+                title = category?.name ?: "Категория",
+                devices = state.devices.filter { state.devicePrefs[it.id]?.categoryId == state.categoryId },
+                onBack = { viewModel.back() },
+                bottomBar = { bottomBar(true) },
+            )
+        }
         Screen.Sensor -> SensorScreen(
             state = sensor,
             onBack = { viewModel.back() },
@@ -123,6 +169,19 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
         Screen.Log -> LogScreen(
             onBack = {
                 if (!viewModel.back()) viewModel.open(Screen.Setup)
+            },
+        )
+    }
+
+    editDevice?.let { d ->
+        DeviceSettingsDialog(
+            device = d,
+            pref = state.devicePrefs[d.id],
+            categories = state.categories,
+            onDismiss = { editDevice = null },
+            onSave = {
+                viewModel.setDevicePref(d.id, it)
+                editDevice = null
             },
         )
     }
