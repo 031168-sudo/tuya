@@ -49,10 +49,18 @@ data class DeviceUi(
      */
     val switchedOff: Boolean
         get() {
-            if (!online || productName.contains(ALWAYS_ON_PRODUCT)) return false
+            if (!online || isSensor || productName.contains(ALWAYS_ON_PRODUCT)) return false
             val main = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
             return main == false
         }
+
+    /**
+     * Датчик температуры/влажности: питается от блока питания, выключателя нет.
+     * В сети — всегда включён; переключатели на его карточке не показываем.
+     */
+    val isSensor: Boolean
+        get() = category == SENSOR_CATEGORY ||
+            SENSOR_HINTS.any { productName.contains(it, ignoreCase = true) || name.contains(it, ignoreCase = true) }
 
     /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
     val hasEnergy: Boolean
@@ -61,6 +69,9 @@ data class DeviceUi(
     companion object {
         const val ENERGY_PRODUCT = "WiFi开关电表"
         const val ALWAYS_ON_PRODUCT = "温控仪"
+        /** Категория Tuya «датчик температуры и влажности». */
+        const val SENSOR_CATEGORY = "wsdcg"
+        val SENSOR_HINTS = listOf("Temperature and Humidity", "Датчик температуры")
         val MAIN_SWITCHES = listOf("switch", "switch_1", "power")
     }
 }

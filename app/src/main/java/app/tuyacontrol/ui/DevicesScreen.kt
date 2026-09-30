@@ -150,7 +150,8 @@ private fun DeviceCard(
 ) {
     var expanded by rememberSaveable(device.id) { mutableStateOf(false) }
 
-    val entries = device.status.entries.toList()
+    // У датчика температуры нет выключателя — логические DP (вкл/выкл) не показываем
+    val entries = device.status.entries.toList().filter { !(device.isSensor && it.value is Boolean) }
     val primary = entries.filter { DpLabels.isPrimary(it.key, device.spec[it.key]) || isFallbackSwitch(it, device) }
     val secondary = entries - primary.toSet()
 
