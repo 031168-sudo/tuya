@@ -30,7 +30,9 @@ class EnergySync(private val db: EnergyDb) {
         val today = LocalDate.now(zone)
         val old = withContext(Dispatchers.IO) { db.meta(device.id) }
         val activeDay = if (device.activeTime > 0) {
-            Instant.ofEpochSecond(device.activeTime).atZone(zone).toLocalDate()
+            // Обычно секунды; на случай миллисекунд в v2-ответе
+            val t = device.activeTime
+            (if (t > 100_000_000_000L) Instant.ofEpochMilli(t) else Instant.ofEpochSecond(t)).atZone(zone).toLocalDate()
         } else {
             old?.activeDay
         }
@@ -142,6 +144,11 @@ class EnergySync(private val db: EnergyDb) {
         while (!d.isAfter(today)) {
             sums[d] = 0.0
             d = d.plusDays(1)
+        }
+        // Если журнал обрезан по лимиту страниц, дни до самого раннего отчёта неполные — не пишем их
+        if (logs.size >= 5000) {
+            val earliest = logs.minOfOrNull { it.time }?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
+            if (earliest != null) sums.keys.removeAll { !it.isAfter(earliest) }
         }
         for (entry in logs) {
             if (entry.code != "add_ele") continue

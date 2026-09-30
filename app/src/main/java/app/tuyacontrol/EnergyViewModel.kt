@@ -15,6 +15,7 @@ import app.tuyacontrol.energy.EnergySync
 import app.tuyacontrol.energy.PeriodType
 import app.tuyacontrol.energy.Tariff
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -134,8 +135,12 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var reloadJob: Job? = null
+
     fun reload() {
-        viewModelScope.launch {
+        // Более ранняя загрузка могла закончиться позже и показать устаревшие данные
+        reloadJob?.cancel()
+        reloadJob = viewModelScope.launch {
             val s = _state.value
             val ids = s.selected?.let { listOf(it) } ?: s.devices.map { it.id }
             val (from, to) = EnergyReports.range(s.period, s.anchor)
