@@ -4,11 +4,15 @@ import app.tuyacontrol.cloud.TuyaApiException
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.time.temporal.TemporalAdjusters
 
 /** Устройство, для которого собираем историю энергии. */
@@ -23,6 +27,8 @@ data class EnergyDevice(val id: String, val name: String, val activeTime: Long)
  *    (дольше облако не хранит), история копится при каждом открытии приложения.
  */
 class EnergySync(private val db: EnergyDb) {
+
+    private val SHOW_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
@@ -62,6 +68,7 @@ class EnergySync(private val db: EnergyDb) {
         try {
             if (meta.mode == EnergyDb.SOURCE_STATS) {
                 meta = syncStats(client, meta, today, progress)
+                meta = syncHours(client, meta, progress)
             } else {
                 meta = syncLogs(client, meta, today, progress)
             }
@@ -150,17 +157,87 @@ class EnergySync(private val db: EnergyDb) {
             val earliest = logs.minOfOrNull { it.time }?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
             if (earliest != null) sums.keys.removeAll { !it.isAfter(earliest) }
         }
+        val hours = HashMap<LocalDate, HashMap<Int, Double>>()
         for (entry in logs) {
             if (entry.code != "add_ele") continue
-            val day = Instant.ofEpochMilli(entry.time).atZone(zone).toLocalDate()
+            val time = Instant.ofEpochMilli(entry.time).atZone(zone)
+            val day = time.toLocalDate()
             if (day !in sums) continue
             val raw = entry.value.toDoubleOrNull() ?: continue
             val kwh = BigDecimal.valueOf(raw).movePointLeft(scale).toDouble()
             sums[day] = (sums[day] ?: 0.0) + kwh
+            val h = hours.getOrPut(day) { HashMap() }
+            h[time.hour] = (h[time.hour] ?: 0.0) + kwh
         }
-        withContext(Dispatchers.IO) { db.upsertDays(start.deviceId, sums, EnergyDb.SOURCE_LOGS) }
+        withContext(Dispatchers.IO) {
+            db.upsertDays(start.deviceId, sums, EnergyDb.SOURCE_LOGS)
+            // Почасовые данные из журнала пишем, только если день не перекрыт статистикой Tuya
+            val stored = db.getDays(listOf(start.deviceId), sums.keys.minOrNullDay(), today)
+                .associateBy { it.day }
+            for (day in sums.keys) {
+                if (stored[day]?.source == EnergyDb.SOURCE_LOGS) db.saveHours(start.deviceId, day, hours[day].orEmpty())
+            }
+        }
         return start.copy(syncedUntil = today, lastError = null)
     }
+
+    /**
+     * Почасовые данные для дней с потреблением (нужны для зонных тарифов).
+     * Tuya отдаёт один день за запрос, поэтому качаем по 4 дня параллельно, от новых к старым.
+     * Если 14 дней подряд почасовых данных нет — считаем, что дальше в прошлое их нет вовсе.
+     */
+    private suspend fun syncHours(
+        client: TuyaCloudClient,
+        start: EnergyMeta,
+        progress: (String) -> Unit,
+    ): EnergyMeta {
+        var meta = start
+        val code = meta.code ?: "add_ele"
+        val days = withContext(Dispatchers.IO) { db.daysNeedingHourly(meta.deviceId, meta.hourlyFloor) }
+        if (days.isEmpty()) return meta
+        AppLog.i("${meta.name}: почасовые данные нужны для ${days.size} дн.")
+        var emptyStreak = 0
+        var done = 0
+        for (chunk in days.chunked(4)) {
+            progress("${meta.name}: по часам ${chunk.first().format(SHOW_DATE)} (осталось ${days.size - done})")
+            val results = try {
+                coroutineScope {
+                    chunk.map { day -> async { day to client.getStatisticsHours(meta.deviceId, code, day) } }.awaitAll()
+                }
+            } catch (e: TuyaApiException) {
+                // Суточные данные уже сохранены; почасовые докачаем при следующем обновлении
+                AppLog.e("${meta.name}: почасовые данные недоступны", e)
+                return meta.copy(lastError = "почасовые данные: ${e.message} (${e.code})")
+            }
+            val none = mutableListOf<LocalDate>()
+            for ((day, hours) in results) {
+                if (hours.values.sum() > 0.0) {
+                    withContext(Dispatchers.IO) { db.saveHours(meta.deviceId, day, hours) }
+                    emptyStreak = 0
+                } else {
+                    none += day
+                    emptyStreak++
+                }
+            }
+            if (none.isNotEmpty()) {
+                withContext(Dispatchers.IO) { db.setHourlyState(meta.deviceId, none, DayEnergy.HOURLY_NONE) }
+            }
+            done += chunk.size
+            if (emptyStreak >= 14) {
+                val floor = chunk.last()
+                AppLog.i("${meta.name}: почасовых данных раньше ${floor.format(SHOW_DATE)} нет")
+                meta = meta.copy(hourlyFloor = floor)
+                withContext(Dispatchers.IO) {
+                    db.setHourlyState(meta.deviceId, days.filter { it.isBefore(floor) }, DayEnergy.HOURLY_NONE)
+                }
+                break
+            }
+        }
+        return meta
+    }
+
+    private fun Set<LocalDate>.minOrNullDay(): LocalDate =
+        fold(LocalDate.now(zone)) { acc, d -> if (d.isBefore(acc)) d else acc }
 
     private fun earlier(a: LocalDate, b: LocalDate): LocalDate = if (a.isBefore(b)) a else b
 

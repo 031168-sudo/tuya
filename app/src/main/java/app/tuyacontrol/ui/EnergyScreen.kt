@@ -193,8 +193,17 @@ fun EnergyScreen(
                 }
 
                 if (report.buckets.isNotEmpty()) {
-                    item { SectionTitle(if (state.period == PeriodType.YEAR) "По месяцам" else "По дням") }
-                    items(report.buckets.reversed()) { b ->
+                    item {
+                        SectionTitle(
+                            when (state.period) {
+                                PeriodType.YEAR -> "По месяцам"
+                                PeriodType.DAY -> "По часам"
+                                else -> "По дням"
+                            },
+                        )
+                    }
+                    val rows = if (state.period == PeriodType.DAY) report.buckets else report.buckets.reversed()
+                    items(rows) { b ->
                         BucketRow(
                             b,
                             onClick = if (b.drillType != null && b.drillDate != null) {
@@ -249,7 +258,8 @@ private fun SummaryCard(report: EnergyReport, noTariffs: Boolean, onOpenTariffs:
                 Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                     Text("Стоимость", style = MaterialTheme.typography.bodySmall)
                     Text(
-                        EnergyReports.rub(report.cost) + if (report.missingTariff) "*" else "",
+                        (if (report.estimated) "≈ " else "") + EnergyReports.rub(report.cost) +
+                            if (report.missingTariff) "*" else "",
                         style = MaterialTheme.typography.headlineSmall,
                     )
                 }
@@ -262,10 +272,35 @@ private fun SummaryCard(report: EnergyReport, noTariffs: Boolean, onOpenTariffs:
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (report.zones.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                report.zones.forEach { z ->
+                    Row {
+                        Text(
+                            EnergyReports.zoneName(z.index),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.width(36.dp),
+                        )
+                        Text(EnergyReports.kwh(z.kwh), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Text(EnergyReports.rub(z.cost), style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            if (report.estimated) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "≈ За часть дней Tuya не отдаёт почасовые данные — их расход разнесён по зонам " +
+                        "по среднему суточному профилю счётчика.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (report.missingTariff) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    if (noTariffs) "* Тарифы не заданы — стоимость не посчитана." else "* На часть дней нет тарифа — они посчитаны как 0 ₽.",
+                    if (noTariffs) "* Тарифы не заданы — стоимость не посчитана."
+                    else "* На часть дней или часов нет тарифа — они посчитаны как 0 ₽.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -282,6 +317,7 @@ private fun BarChart(buckets: List<Bucket>) {
     val labelEvery = when {
         buckets.size <= 12 -> 1
         buckets.size <= 16 -> 2
+        buckets.size == 24 -> 3
         else -> 5
     }
     Card(Modifier.fillMaxWidth()) {
@@ -328,6 +364,7 @@ private fun BarChart(buckets: List<Bucket>) {
 /** «05.03, пн» → «05» (для месяца) / «пн» (для недели); «Январь» → «янв». */
 private fun shortLabel(label: String, count: Int): String = when {
     count == 12 -> label.take(3).lowercase()
+    count == 24 -> label.substringBefore(":")
     count == 7 -> label.substringAfter(", ", label)
     else -> label.substringBefore(".")
 }
@@ -357,7 +394,7 @@ private fun BucketRow(b: Bucket, onClick: (() -> Unit)?) {
                 textAlign = TextAlign.End,
             )
             Text(
-                EnergyReports.rub(b.cost) + if (b.missingTariff) "*" else "",
+                (if (b.estimated) "≈" else "") + EnergyReports.rub(b.cost) + if (b.missingTariff) "*" else "",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.width(100.dp),

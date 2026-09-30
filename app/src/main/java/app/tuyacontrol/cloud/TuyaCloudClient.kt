@@ -187,6 +187,24 @@ class TuyaCloudClient(private val credentials: Credentials) {
         return map
     }
 
+    /** Почасовые суммы DP за один день: час (0..23) -> значение. Tuya разрешает только один день за запрос. */
+    suspend fun getStatisticsHours(deviceId: String, code: String, day: LocalDate): Map<Int, Double> {
+        val d = day.format(DAY_FORMAT)
+        val result = get(
+            "/v1.0/devices/$deviceId/statistics/hours",
+            mapOf("code" to code, "start_hour" to "${d}00", "end_hour" to "${d}23", "stat_type" to "sum"),
+        ) as? JSONObject ?: return emptyMap()
+        val hours = result.optJSONObject("hours") ?: return emptyMap()
+        val map = HashMap<Int, Double>()
+        hours.keys().forEach { key ->
+            if (key.length != 10 || !key.startsWith(d)) return@forEach
+            val hour = key.substring(8).toIntOrNull() ?: return@forEach
+            val value = hours.optString(key).toDoubleOrNull() ?: return@forEach
+            if (hour in 0..23) map[hour] = value
+        }
+        return map
+    }
+
     suspend fun getStatisticsTotal(deviceId: String, code: String): Double? {
         val result = get("/v1.0/devices/$deviceId/statistics/total", mapOf("code" to code)) as? JSONObject
         return result?.optString("total")?.toDoubleOrNull()

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.CredentialsStore
+import app.tuyacontrol.energy.DayEnergy
 import app.tuyacontrol.energy.EnergyDb
 import app.tuyacontrol.energy.EnergyDevice
 import app.tuyacontrol.energy.EnergyMeta
@@ -36,6 +37,14 @@ data class EnergyUiState(
     val syncing: Boolean = false,
     val progress: String? = null,
     val message: String? = null,
+)
+
+private class Loaded(
+    val days: List<DayEnergy>,
+    val hourly: Map<Pair<String, LocalDate>, DoubleArray>,
+    val profiles: Map<String, DoubleArray>,
+    val tariffs: List<Tariff>,
+    val meta: Map<String, EnergyMeta>,
 )
 
 class EnergyViewModel(application: Application) : AndroidViewModel(application) {
@@ -145,14 +154,22 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
             val ids = s.selected?.let { listOf(it) } ?: s.devices.map { it.id }
             val (from, to) = EnergyReports.range(s.period, s.anchor)
             val loaded = withContext(Dispatchers.IO) {
-                val days = db.getDays(ids, from, to)
-                val tariffs = db.tariffs()
-                val meta = s.devices.mapNotNull { d -> db.meta(d.id)?.let { d.id to it } }.toMap()
-                Triple(days, tariffs, meta)
+                Loaded(
+                    days = db.getDays(ids, from, to),
+                    hourly = db.getHours(ids, from, to),
+                    profiles = db.hourlyProfile(ids),
+                    tariffs = db.tariffs(),
+                    meta = s.devices.mapNotNull { d -> db.meta(d.id)?.let { d.id to it } }.toMap(),
+                )
             }
-            val (days, tariffs, meta) = loaded
+            val tariffs = loaded.tariffs
+            val meta = loaded.meta
             val names = s.devices.associate { it.id to it.name }
-            val report = EnergyReports.build(s.period, s.anchor, days, tariffs, names, LocalDate.now())
+            val report = withContext(Dispatchers.Default) {
+                EnergyReports.build(
+                    s.period, s.anchor, loaded.days, loaded.hourly, loaded.profiles, tariffs, names, LocalDate.now(),
+                )
+            }
             _state.update {
                 // Пока грузили, пользователь мог сменить период — применяем только актуальный отчёт
                 if (it.period == s.period && it.anchor == s.anchor && it.selected == s.selected) {
