@@ -37,7 +37,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +44,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -233,13 +236,12 @@ private fun SeriesCard(s: SeriesUi, period: PeriodType, onShift: (Long) -> Unit)
 
 /**
  * График: линия — среднее по интервалу, полоса — от минимума до максимума.
- * Касание показывает значение в точке, свайп влево/вправо листает периоды.
+ * Касание или ведение пальцем показывает курсор с датой, временем и значением.
  */
 @Composable
 private fun LineChart(s: SeriesUi, period: PeriodType, color: Color, onShift: (Long) -> Unit) {
     val ch = s.channel
     var selected by remember(s) { mutableStateOf<SeriesPoint?>(null) }
-    val shift by rememberUpdatedState(onShift)
     val gridColor = MaterialTheme.colorScheme.outlineVariant
 
     val lo = s.points.minOf { it.min }
@@ -248,12 +250,23 @@ private fun LineChart(s: SeriesUi, period: PeriodType, color: Color, onShift: (L
     val yMin = lo - pad
     val yMax = hi + pad
     val span = (s.to - s.from).toFloat()
+    val textMeasurer = rememberTextMeasurer()
+    val tooltipBg = MaterialTheme.colorScheme.inverseSurface
+    val tooltipFg = MaterialTheme.colorScheme.inverseOnSurface
+    val tooltipTitle = MaterialTheme.typography.labelSmall.copy(color = tooltipFg)
+    val tooltipValue = MaterialTheme.typography.labelLarge.copy(color = tooltipFg, fontWeight = FontWeight.SemiBold)
+
+    /** Ближайшая точка к доле ширины графика (0..1). */
+    fun nearest(fraction: Float): SeriesPoint? {
+        val t = s.from + fraction.coerceIn(0f, 1f) * span
+        return s.points.minByOrNull { kotlin.math.abs(it.time + s.bucketMs / 2 - t) }
+    }
 
     Column {
         Text(
-            selected?.let { p -> timeLabel(p.time, period, detailed = true) + ": " + formatValue(p.avg, ch) +
+            selected?.let { p -> pointTime(p, s.bucketMs, period) + ": " + formatValue(p.avg, ch) +
                 if (p.max - p.min > 0.05) " (${formatValue(p.min, ch)} … ${formatValue(p.max, ch)})" else "" }
-                ?: "Коснитесь графика, чтобы увидеть значение",
+                ?: "Коснитесь графика или ведите по нему пальцем",
             style = MaterialTheme.typography.labelMedium,
             color = if (selected != null) color else MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -268,20 +281,18 @@ private fun LineChart(s: SeriesUi, period: PeriodType, color: Color, onShift: (L
                 Modifier
                     .weight(1f)
                     .height(170.dp)
+                    // Касание — значение в точке; ведение пальцем вдоль графика — курсор следует за пальцем.
+                    // Вертикальная прокрутка экрана при этом продолжает работать.
                     .pointerInput(s) {
-                        detectTapGestures { offset ->
-                            val t = s.from + (offset.x / size.width) * span
-                            selected = s.points.minByOrNull { kotlin.math.abs(it.time + s.bucketMs / 2 - t) }
-                        }
+                        detectTapGestures { offset -> selected = nearest(offset.x / size.width) }
                     }
                     .pointerInput(s) {
-                        var total = 0f
                         detectHorizontalDragGestures(
-                            onDragStart = { total = 0f },
-                            onDragEnd = {
-                                if (total > 120f) shift(-1) else if (total < -120f) shift(1)
-                            },
-                        ) { _, dx -> total += dx }
+                            onDragStart = { offset -> selected = nearest(offset.x / size.width) },
+                        ) { change, _ ->
+                            change.consume()
+                            selected = nearest(change.position.x / size.width)
+                        }
                     },
             ) {
                 val w = size.width
@@ -326,8 +337,29 @@ private fun LineChart(s: SeriesUi, period: PeriodType, color: Color, onShift: (L
 
                 selected?.let { p ->
                     val px = x(p.time + s.bucketMs / 2)
+                    val py = y(p.avg)
                     drawLine(color.copy(alpha = 0.6f), Offset(px, 0f), Offset(px, h), strokeWidth = 1.dp.toPx())
-                    drawCircle(color, 4.dp.toPx(), Offset(px, y(p.avg)))
+                    drawCircle(tooltipFg, 6.dp.toPx(), Offset(px, py))
+                    drawCircle(color, 4.dp.toPx(), Offset(px, py))
+
+                    // Подсказка: дата и время, значение
+                    val title = textMeasurer.measure(pointTime(p, s.bucketMs, period), tooltipTitle)
+                    val value = textMeasurer.measure(formatValue(p.avg, ch), tooltipValue)
+                    val padH = 8.dp.toPx()
+                    val padV = 5.dp.toPx()
+                    val boxW = maxOf(title.size.width, value.size.width) + padH * 2
+                    val boxH = title.size.height + value.size.height + padV * 2
+                    // Справа от курсора, у правого края — слева; по высоте — над точкой, если есть место
+                    val bx = if (px + 10.dp.toPx() + boxW <= w) px + 10.dp.toPx() else (px - 10.dp.toPx() - boxW).coerceAtLeast(0f)
+                    val by = (py - boxH - 8.dp.toPx()).let { if (it < 0f) (py + 8.dp.toPx()).coerceAtMost(h - boxH) else it }
+                    drawRoundRect(
+                        tooltipBg,
+                        topLeft = Offset(bx, by),
+                        size = Size(boxW, boxH),
+                        cornerRadius = CornerRadius(8.dp.toPx()),
+                    )
+                    drawText(title, topLeft = Offset(bx + padH, by + padV))
+                    drawText(value, topLeft = Offset(bx + padH, by + padV + title.size.height))
                 }
             }
         }
@@ -338,6 +370,19 @@ private fun LineChart(s: SeriesUi, period: PeriodType, color: Color, onShift: (L
                 Text(timeLabel(t, period, detailed = false), style = MaterialTheme.typography.labelSmall)
             }
         }
+    }
+}
+
+/** Дата и время точки графика; для интервалов в несколько часов — «с–по». */
+private fun pointTime(p: SeriesPoint, bucketMs: Long, period: PeriodType): String {
+    val zone = ZoneId.systemDefault()
+    val start = Instant.ofEpochMilli(p.time).atZone(zone)
+    return when (period) {
+        PeriodType.DAY -> start.format(DateTimeFormatter.ofPattern("d MMM, HH:mm", RU))
+        PeriodType.WEEK -> start.format(DateTimeFormatter.ofPattern("EE, d MMM, HH:mm", RU))
+        PeriodType.MONTH -> start.format(DateTimeFormatter.ofPattern("d MMM, HH:mm", RU)) + "–" +
+            Instant.ofEpochMilli(p.time + bucketMs).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm", RU))
+        PeriodType.YEAR -> start.format(DateTimeFormatter.ofPattern("d MMMM yyyy", RU))
     }
 }
 
