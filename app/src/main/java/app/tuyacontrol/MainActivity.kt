@@ -32,12 +32,14 @@ import app.tuyacontrol.ui.DevicesScreen
 import app.tuyacontrol.ui.LogScreen
 import app.tuyacontrol.ui.SetupScreen
 import app.tuyacontrol.ui.LocalScreen
+import app.tuyacontrol.ui.HeatingScreen
 
 class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private val energyViewModel: EnergyViewModel by viewModels()
     private val sensorViewModel: SensorViewModel by viewModels()
+    private val heatingViewModel: HeatingViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,7 +54,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             AppTheme {
-                App(viewModel, energyViewModel, sensorViewModel)
+                App(viewModel, energyViewModel, sensorViewModel, heatingViewModel)
             }
         }
     }
@@ -69,10 +71,16 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sensorViewModel: SensorViewModel) {
+private fun App(
+    viewModel: MainViewModel,
+    energyViewModel: EnergyViewModel,
+    sensorViewModel: SensorViewModel,
+    heatingViewModel: HeatingViewModel,
+) {
     val state by viewModel.state.collectAsState()
     val energy by energyViewModel.state.collectAsState()
     val sensor by sensorViewModel.state.collectAsState()
+    val heating by heatingViewModel.state.collectAsState()
 
     // Устройства со счётчиком энергии передаём на экран «Энергия»
     val energyDevices = remember(state.devices) {
@@ -84,6 +92,10 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
         if (state.devices.isNotEmpty()) {
             SyncTargets(context).save(energyDevices, state.devices.mapNotNull { it.sensorDevice })
         }
+    }
+    // Термостаты для экрана «Отопление»
+    LaunchedEffect(state.devices) {
+        if (state.devices.isNotEmpty()) heatingViewModel.setDevices(state.devices)
     }
     LaunchedEffect(energyDevices, state.screen) {
         if (state.screen == Screen.Energy || state.screen == Screen.Tariffs) {
@@ -104,11 +116,12 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
         sensorViewModel.open(device)
         viewModel.open(Screen.Sensor)
     }
-    val bottomBar: @Composable (Boolean) -> Unit = { categoriesSelected ->
+    val bottomBar: @Composable (Int) -> Unit = { selected ->
         AppBottomBar(
-            categoriesSelected = categoriesSelected,
+            selected = selected,
             onDevices = { viewModel.open(Screen.Devices) },
             onCategories = { viewModel.open(Screen.Categories) },
+            onHeating = { viewModel.open(Screen.Heating) },
         )
     }
 
@@ -136,7 +149,7 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
             onOpenEnergy = openEnergy,
             onOpenSensor = openSensor,
             onEditDevice = { editDevice = it },
-            bottomBar = { bottomBar(false) },
+            bottomBar = { bottomBar(0) },
             onModeChange = viewModel::setMode,
         )
         Screen.Categories -> CategoriesScreen(
@@ -146,7 +159,7 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
             onOpen = viewModel::openCategory,
             onSave = viewModel::saveCategory,
             onDelete = viewModel::deleteCategory,
-            bottomBar = { bottomBar(true) },
+            bottomBar = { bottomBar(1) },
         )
         Screen.CategoryDevices -> {
             val category = state.categories.firstOrNull { it.id == state.categoryId }
@@ -163,10 +176,21 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
                 title = category?.name ?: "Категория",
                 devices = state.devices.filter { state.devicePrefs[it.id]?.categoryId == state.categoryId },
                 onBack = { viewModel.back() },
-                bottomBar = { bottomBar(true) },
+                bottomBar = { bottomBar(1) },
                 onModeChange = viewModel::setMode,
             )
         }
+        Screen.Heating -> HeatingScreen(
+            state = heating,
+            onRecompute = heatingViewModel::recompute,
+            onAutopilot = heatingViewModel::setAutopilot,
+            onDeploy = heatingViewModel::deploy,
+            onSaveZone = heatingViewModel::saveZone,
+            onDeleteZone = heatingViewModel::deleteZone,
+            onLocation = heatingViewModel::setLocation,
+            onMessageShown = heatingViewModel::messageShown,
+            bottomBar = { bottomBar(2) },
+        )
         Screen.Sensor -> SensorScreen(
             state = sensor,
             onBack = { viewModel.back() },

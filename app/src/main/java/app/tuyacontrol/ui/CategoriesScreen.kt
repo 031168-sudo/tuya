@@ -61,19 +61,30 @@ import app.tuyacontrol.data.DevicePref
 
 /** Нижняя панель: «Устройства» и «Категории». */
 @Composable
-fun AppBottomBar(categoriesSelected: Boolean, onDevices: () -> Unit, onCategories: () -> Unit) {
+fun AppBottomBar(
+    selected: Int,
+    onDevices: () -> Unit,
+    onCategories: () -> Unit,
+    onHeating: () -> Unit,
+) {
     NavigationBar {
         NavigationBarItem(
-            selected = !categoriesSelected,
+            selected = selected == 0,
             onClick = onDevices,
             icon = { Icon(DeviceIcons.vector("devices_other"), contentDescription = null) },
             label = { Text("Устройства") },
         )
         NavigationBarItem(
-            selected = categoriesSelected,
+            selected = selected == 1,
             onClick = onCategories,
             icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
             label = { Text("Категории") },
+        )
+        NavigationBarItem(
+            selected = selected == 2,
+            onClick = onHeating,
+            icon = { Icon(DeviceIcons.vector("whatshot"), contentDescription = null) },
+            label = { Text("Отопление") },
         )
     }
 }

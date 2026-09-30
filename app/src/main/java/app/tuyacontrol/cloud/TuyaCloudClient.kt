@@ -90,6 +90,63 @@ class TuyaCloudClient(private val credentials: Credentials) {
         post("/v1.0/iot-03/devices/$deviceId/commands", JSONObject().put("commands", arr))
     }
 
+    // ---------- Облачное расписание (то же, что «Расписание» в приложении Tuya) ----------
+
+    /**
+     * Заменить таймеры устройства в своей категории: удалить старые и записать новые.
+     * Таймеры выполняет облако Tuya каждый день (loops = 1111111), телефон для этого не нужен.
+     * @param instructs время «HH:mm» -> команды
+     */
+    suspend fun replaceDailyTimers(
+        deviceId: String,
+        category: String,
+        instructs: List<Pair<String, List<Pair<String, Any?>>>>,
+        alias: String,
+    ) {
+        deleteTimers(deviceId, category)
+        if (instructs.isEmpty()) return
+        val zone = java.time.ZoneId.systemDefault()
+        val offset = zone.rules.getOffset(java.time.Instant.now()).id.let { if (it == "Z") "+00:00" else it }
+        val arr = JSONArray()
+        instructs.forEach { (time, commands) ->
+            val fns = JSONArray()
+            commands.forEach { (code, value) ->
+                fns.put(JSONObject().put("code", code).put("value", value ?: JSONObject.NULL))
+            }
+            arr.put(JSONObject().put("time", time).put("functions", fns))
+        }
+        val body = JSONObject()
+            .put("category", category)
+            .put("loops", "1111111")
+            .put("time_zone", offset)
+            .put("timezone_id", zone.id)
+            .put("alias_name", alias)
+            .put("instruct", arr)
+        post("/v1.0/devices/$deviceId/timers", body)
+    }
+
+    /** Удалить таймеры устройства в категории (если их нет — не ошибка). */
+    suspend fun deleteTimers(deviceId: String, category: String) {
+        try {
+            request("DELETE", "/v1.0/devices/$deviceId/timers/categories/$category", emptyMap(), null)
+        } catch (e: TuyaApiException) {
+            if (e.code in NOT_SUBSCRIBED_CODES) throw e
+            AppLog.i("Таймеры $category не удалены (${e.code} ${e.message}) — вероятно, их не было")
+        }
+    }
+
+    /** Сколько таймеров записано в категории. */
+    suspend fun countTimers(deviceId: String, category: String): Int {
+        val result = get("/v1.0/devices/$deviceId/timers/categories/$category")
+        val arr = result as? JSONArray ?: return 0
+        var n = 0
+        for (i in 0 until arr.length()) {
+            val groups = arr.optJSONObject(i)?.optJSONArray("groups") ?: continue
+            for (g in 0 until groups.length()) n += groups.optJSONObject(g)?.optJSONArray("timers")?.length() ?: 0
+        }
+        return n
+    }
+
     // ---------- Things Data Model (для устройств без стандартного набора команд) ----------
 
     /** Все DP устройства «как есть»: /v2.0/cloud/thing/{id}/shadow/properties. */
@@ -518,6 +575,8 @@ class TuyaCloudClient(private val credentials: Credentials) {
 
         /** 1010 token invalid, 1011 token status invalid, 1012 token expired */
         val TOKEN_ERROR_CODES = setOf(1010, 1011, 1012)
+        /** «No permissions. This API is not subscribed» и истёкшая подписка. */
+        val NOT_SUBSCRIBED_CODES = setOf(1106, 28841101, 28841002)
 
         fun sha256Hex(text: String): String =
             MessageDigest.getInstance("SHA-256")

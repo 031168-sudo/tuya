@@ -29,6 +29,7 @@ import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.CredentialsStore
 import app.tuyacontrol.energy.EnergyDb
 import app.tuyacontrol.energy.EnergySync
+import app.tuyacontrol.heating.HeatingEngine
 import app.tuyacontrol.sensor.SensorDb
 import app.tuyacontrol.sensor.SensorSync
 import kotlinx.coroutines.delay
@@ -60,6 +61,14 @@ class HistorySyncWorker(context: Context, params: WorkerParameters) : CoroutineW
             targets.lastResult = "Нет ключей Tuya"
             return Result.success()
         }
+        // Автопилот отопления: пересчитать план по свежему прогнозу и перезаписать расписание
+        val heating = HeatingEngine(ctx)
+        val heatingSettings = heating.store.load()
+        if (heatingSettings.autopilot) {
+            runCatching { heating.deploy(TuyaCloudClient(creds), heatingSettings) }
+                .onFailure { AppLog.e("Фон: план отопления не обновлён", it) }
+        }
+
         val energy = targets.energy()
         val sensors = targets.sensors()
         if (energy.isEmpty() && sensors.isEmpty()) {

@@ -1,0 +1,91 @@
+package app.tuyacontrol.heating
+
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
+
+/** Настройки отопления и сведения о последней записи плана в облако. */
+class HeatingStore(context: Context) {
+
+    private val prefs = context.applicationContext.getSharedPreferences("heating", Context.MODE_PRIVATE)
+
+    fun load(): HeatingSettings {
+        val text = prefs.getString(KEY_SETTINGS, null) ?: return HeatingSettings.defaults()
+        return try {
+            parse(JSONObject(text))
+        } catch (e: Exception) {
+            HeatingSettings.defaults()
+        }
+    }
+
+    fun save(s: HeatingSettings) {
+        prefs.edit().putString(KEY_SETTINGS, toJson(s).toString()).apply()
+    }
+
+    /** Когда план последний раз записан в расписание Tuya (мс) и итог записи. */
+    var deployedAt: Long
+        get() = prefs.getLong("deployed_at", 0)
+        set(v) = prefs.edit().putLong("deployed_at", v).apply()
+
+    var deployResult: String?
+        get() = prefs.getString("deploy_result", null)
+        set(v) = prefs.edit().putString("deploy_result", v).apply()
+
+    private fun toJson(s: HeatingSettings) = JSONObject()
+        .put("lat", s.latitude)
+        .put("lon", s.longitude)
+        .put("autopilot", s.autopilot)
+        .put("zones", JSONArray().apply {
+            s.zones.forEach { z ->
+                put(JSONObject()
+                    .put("id", z.id)
+                    .put("name", z.name)
+                    .put("device", z.deviceId ?: JSONObject.NULL)
+                    .put("base", z.baseTemp)
+                    .put("drop", z.peakDrop)
+                    .put("max", z.maxTemp)
+                    .put("power", z.powerKw)
+                    .put("heat", z.heatRate)
+                    .put("loss", z.lossRate)
+                    .put("windows", JSONArray().apply {
+                        z.windows.forEach { w ->
+                            put(JSONObject().put("from", w.from).put("to", w.to).put("temp", w.temp))
+                        }
+                    }))
+            }
+        })
+
+    private fun parse(o: JSONObject): HeatingSettings {
+        val zones = mutableListOf<HeatZone>()
+        val arr = o.optJSONArray("zones") ?: JSONArray()
+        for (i in 0 until arr.length()) {
+            val z = arr.optJSONObject(i) ?: continue
+            val wa = z.optJSONArray("windows") ?: JSONArray()
+            val windows = (0 until wa.length()).mapNotNull { j ->
+                wa.optJSONObject(j)?.let { ComfortWindow(it.optInt("from"), it.optInt("to"), it.optDouble("temp", 20.0)) }
+            }
+            zones += HeatZone(
+                id = z.optString("id"),
+                name = z.optString("name"),
+                deviceId = if (z.isNull("device")) null else z.optString("device").ifEmpty { null },
+                windows = windows,
+                baseTemp = z.optDouble("base", 16.0),
+                peakDrop = z.optDouble("drop", 1.0),
+                maxTemp = z.optDouble("max", 25.0),
+                powerKw = z.optDouble("power", 1.5),
+                heatRate = z.optDouble("heat", 2.0),
+                lossRate = z.optDouble("loss", 0.03),
+            )
+        }
+        return HeatingSettings(
+            zones = zones,
+            latitude = o.optDouble("lat", 55.75),
+            longitude = o.optDouble("lon", 37.62),
+            autopilot = o.optBoolean("autopilot", false),
+        )
+    }
+
+    private companion object {
+        const val KEY_SETTINGS = "settings"
+    }
+}
