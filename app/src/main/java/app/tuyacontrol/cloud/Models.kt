@@ -13,6 +13,8 @@ data class DpSpec(
     val range: List<String> = emptyList(),
     /** true, если код есть среди functions — значит, им можно управлять. */
     val writable: Boolean = false,
+    /** Номер DP для локального протокола (из модели устройства); null — неизвестен. */
+    val dpId: Int? = null,
 )
 
 /** Устройство из облака. */

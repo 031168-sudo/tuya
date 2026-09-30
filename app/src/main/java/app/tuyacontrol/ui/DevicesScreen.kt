@@ -48,6 +48,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.tuyacontrol.DeviceUi
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.border
+import androidx.compose.material3.FilterChip
+import app.tuyacontrol.ControlMode
 import app.tuyacontrol.data.Category
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -78,6 +82,7 @@ fun DevicesScreen(
     devices: List<DeviceUi> = state.devices,
     onBack: (() -> Unit)? = null,
     bottomBar: @Composable () -> Unit = {},
+    onModeChange: (ControlMode) -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val categories = state.categories.associateBy { it.id }
@@ -154,6 +159,9 @@ fun DevicesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    item(key = "mode") {
+                        ModeBar(state, devices, onModeChange)
+                    }
                     items(devices, key = { it.id }) { device ->
                         val pref = state.devicePrefs[device.id]
                         DeviceCard(
@@ -249,6 +257,9 @@ private fun DeviceCard(
                             )
                         }
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        ConnectionBadge(device)
+                        Spacer(Modifier.width(6.dp))
                     Text(
                         (if (device.online) "онлайн" else "не в сети") +
                             if (device.productName.isNotEmpty()) " · ${device.productName}" else "",
@@ -257,6 +268,7 @@ private fun DeviceCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    }
                     val since = if (device.lastDataTime > 0) {
                         "данные от " + staleFormat(device.lastDataTime) + " (" + ageText(device.lastDataTime) + ")"
                     } else {
@@ -441,4 +453,45 @@ private fun staleFormat(ms: Long): String {
     val today = java.time.LocalDate.now(zone)
     val pattern = if (t.toLocalDate() == today) "HH:mm" else if (t.year == today.year) "dd.MM HH:mm" else "dd.MM.yyyy HH:mm"
     return t.format(java.time.format.DateTimeFormatter.ofPattern(pattern))
+}
+
+/** Переключатель режима управления и сводка подключений по Wi-Fi. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModeBar(state: UiState, devices: List<DeviceUi>, onModeChange: (ControlMode) -> Unit) {
+    Column {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ControlMode.entries.forEach { m ->
+                FilterChip(
+                    selected = state.mode == m,
+                    onClick = { onModeChange(m) },
+                    label = { Text(m.title) },
+                )
+            }
+        }
+        val viaWifi = devices.count { it.viaLocal }
+        Text(
+            when (state.mode) {
+                ControlMode.CLOUD -> "Управление через облако Tuya"
+                ControlMode.LOCAL -> "Только по Wi-Fi, без интернета: подключено $viaWifi из ${devices.size}"
+                ControlMode.AUTO -> if (viaWifi > 0) "По Wi-Fi: $viaWifi, остальные — через облако" else "Через облако (устройств в этой Wi-Fi сети не найдено)"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Маленькая метка: как сейчас идёт связь с устройством. */
+@Composable
+private fun ConnectionBadge(device: DeviceUi) {
+    val (text, color) = if (device.viaLocal) "Wi-Fi" to OnlineColor else "облако" to MaterialTheme.colorScheme.outline
+    Text(
+        text,
+        style = MaterialTheme.typography.labelSmall,
+        color = color,
+        modifier = Modifier
+            .border(1.dp, color, RoundedCornerShape(6.dp))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    )
 }

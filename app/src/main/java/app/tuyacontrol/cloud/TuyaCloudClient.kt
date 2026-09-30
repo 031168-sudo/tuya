@@ -148,6 +148,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
                     step = ts.optLong("step", 1).coerceAtLeast(1),
                     range = range,
                     writable = prop.optString("accessMode").contains("w"),
+                    dpId = if (prop.has("abilityId")) prop.optInt("abilityId") else null,
                 )
             }
         }

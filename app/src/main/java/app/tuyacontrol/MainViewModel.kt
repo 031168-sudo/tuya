@@ -12,6 +12,10 @@ import app.tuyacontrol.data.Credentials
 import app.tuyacontrol.data.CredentialsStore
 import app.tuyacontrol.local.LocalAnnounce
 import app.tuyacontrol.local.LocalDiscovery
+import app.tuyacontrol.local.LocalManager
+import app.tuyacontrol.local.LocalState
+import app.tuyacontrol.local.LocalTarget
+import app.tuyacontrol.data.DeviceCache
 import app.tuyacontrol.data.Category
 import app.tuyacontrol.data.CategoryStore
 import app.tuyacontrol.data.DevicePref
@@ -51,6 +55,10 @@ data class DeviceUi(
     val localKey: String = "",
     /** Когда устройство последний раз присылало данные, мс (0 — неизвестно). */
     val lastDataTime: Long = 0,
+    /** Код DP -> номер DP для локального протокола. */
+    val dpIds: Map<String, Int> = emptyMap(),
+    /** Данные пришли по Wi-Fi напрямую от устройства. */
+    val viaLocal: Boolean = false,
 ) {
     /**
      * Устройство в сети, но выключено главным переключателем — его показания могут не обновляться.
@@ -113,6 +121,16 @@ data class DeviceUi(
     }
 }
 
+/** Как управлять устройствами. */
+enum class ControlMode(val title: String) {
+    /** По Wi-Fi, если устройство доступно в сети, иначе через облако. */
+    AUTO("Авто"),
+    /** Только напрямую по Wi-Fi, без интернета. */
+    LOCAL("Wi-Fi"),
+    /** Только через облако Tuya. */
+    CLOUD("Облако"),
+}
+
 data class UiState(
     val screen: Screen = Screen.Setup,
     val credentials: Credentials? = null,
@@ -130,6 +148,9 @@ data class UiState(
     val localScannedAt: Long? = null,
     /** Открытая категория (экран CategoryDevices). */
     val categoryId: String? = null,
+    val mode: ControlMode = ControlMode.AUTO,
+    /** Состояние локальных подключений по устройствам. */
+    val local: Map<String, LocalState> = emptyMap(),
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -140,17 +161,95 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val specCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, DpSpec>>()
     private val thingModelDevices: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var autoRefreshJob: Job? = null
+    private val deviceCache = DeviceCache(application)
+    private val settings = application.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+    private val localManager = LocalManager(viewModelScope)
+    private val dpIdCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, Int>>()
+    /** Устройства по данным облака (или кэша); на экран идут с наложением локальных данных. */
+    private var baseDevices: List<DeviceUi> = emptyList()
+    private var foreground = false
+    private var localStartJob: Job? = null
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
-        _state.update { it.copy(categories = categoryStore.categories(), devicePrefs = categoryStore.devicePrefs()) }
+        val mode = runCatching { ControlMode.valueOf(settings.getString("mode", "AUTO")!!) }.getOrDefault(ControlMode.AUTO)
+        _state.update {
+            it.copy(categories = categoryStore.categories(), devicePrefs = categoryStore.devicePrefs(), mode = mode)
+        }
+        // Локальные данные сразу накладываем на список устройств
+        viewModelScope.launch {
+            localManager.states.collect { local ->
+                _state.update { it.copy(local = local) }
+                publish()
+            }
+        }
         val saved = store.load()
         if (saved != null) {
             client = TuyaCloudClient(saved)
+            // Последний известный список — сразу на экран (и для работы без интернета)
+            baseDevices = deviceCache.load().sortedBy { it.name.lowercase() }
+            baseDevices.forEach { d -> if (d.dpIds.isNotEmpty()) dpIdCache[d.id] = d.dpIds }
             _state.update { it.copy(screen = Screen.Devices, credentials = saved) }
+            publish()
             refresh()
+        }
+    }
+
+    // ---------- Режим управления: Авто / Wi-Fi / Облако ----------
+
+    fun setMode(mode: ControlMode) {
+        settings.edit().putString("mode", mode.name).apply()
+        _state.update { it.copy(mode = mode) }
+        AppLog.i("Режим управления: ${mode.title}")
+        if (mode == ControlMode.CLOUD) localManager.stopAll() else ensureLocal()
+        publish()
+        if (mode != ControlMode.LOCAL && baseDevices.isEmpty()) refresh()
+    }
+
+    /** Список для экрана: данные облака + свежие данные по Wi-Fi. */
+    private fun publish() {
+        val s = _state.value
+        val shown = baseDevices.map { d ->
+            val ls = s.local[d.id]
+            when {
+                s.mode != ControlMode.CLOUD && ls != null && ls.connected -> {
+                    val byNumber = d.dpIds.entries.associate { (code, n) -> n.toString() to code }
+                    val mapped = ls.dps.mapNotNull { (n, v) -> byNumber[n]?.let { it to v } }.toMap()
+                    d.copy(
+                        status = d.status + mapped,
+                        online = true,
+                        viaLocal = true,
+                        lastDataTime = maxOf(d.lastDataTime, ls.updatedAt),
+                    )
+                }
+                // Только Wi-Fi: что не подключено по сети — недоступно
+                s.mode == ControlMode.LOCAL -> d.copy(online = false, viaLocal = false)
+                else -> d
+            }
+        }
+        _state.update { it.copy(devices = shown) }
+    }
+
+    /** Поиск в сети (если давно не искали) и подключение ко всем найденным устройствам с ключом. */
+    private fun ensureLocal(forceScan: Boolean = false) {
+        if (!foreground || _state.value.mode == ControlMode.CLOUD) {
+            localManager.stopAll()
+            return
+        }
+        if (localStartJob?.isActive == true) return
+        localStartJob = viewModelScope.launch {
+            val s = _state.value
+            val stale = s.localScannedAt == null || System.currentTimeMillis() - s.localScannedAt > 10 * 60_000L
+            val found = if (forceScan || stale || s.localFound.isEmpty()) doScan() else s.localFound
+            val targets = baseDevices.mapNotNull { d ->
+                val a = found[d.id] ?: return@mapNotNull null
+                if (d.localKey.length != 16) return@mapNotNull null
+                LocalTarget(d.id, d.name, a.ip, a.version, d.localKey, d.dpIds.values.sorted())
+            }
+            AppLog.i("Wi-Fi: подключаюсь к ${targets.size} устройствам")
+            localManager.start(targets)
         }
     }
 
@@ -178,14 +277,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun scanLocal() {
         if (_state.value.localScanning) return
         viewModelScope.launch {
-            _state.update { it.copy(localScanning = true) }
-            val found = runCatching { LocalDiscovery.scan(getApplication()) }
-                .onFailure { AppLog.e("Поиск в локальной сети", it) }
-                .getOrDefault(emptyMap())
-            _state.update {
-                it.copy(localFound = found, localScanning = false, localScannedAt = System.currentTimeMillis())
-            }
+            doScan()
+            ensureLocal()
         }
+    }
+
+    private suspend fun doScan(): Map<String, LocalAnnounce> {
+        _state.update { it.copy(localScanning = true) }
+        val found = runCatching { LocalDiscovery.scan(getApplication()) }
+            .onFailure { AppLog.e("Поиск в локальной сети", it) }
+            .getOrDefault(emptyMap())
+        _state.update {
+            it.copy(localFound = found, localScanning = false, localScannedAt = System.currentTimeMillis())
+        }
+        return found
     }
 
     // ---------- Категории и иконки ----------
@@ -261,6 +366,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearCredentials() {
         store.clear()
+        localManager.stopAll()
+        deviceCache.clear()
+        baseDevices = emptyList()
         client = null
         specCache.clear()
         thingModelDevices.clear()
@@ -274,6 +382,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ---------- Устройства ----------
 
     fun refresh(silent: Boolean = false) {
+        // Режим «только Wi-Fi»: облако не трогаем, обновляем локальные данные
+        if (_state.value.mode == ControlMode.LOCAL) {
+            if (!silent) viewModelScope.launch { localManager.queryAll() }
+            ensureLocal(forceScan = !silent && _state.value.local.isEmpty())
+            return
+        }
         val c = client ?: return
         if (_state.value.loading) return
         viewModelScope.launch {
@@ -282,13 +396,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val cloudDevices = c.listDevices()
                 AppLog.i("Устройств: ${cloudDevices.size}")
                 val devices = loadDetails(c, cloudDevices)
-                _state.update {
-                    it.copy(
-                        devices = devices.sortedBy { d -> d.name.lowercase() },
-                        loading = false,
-                        lastUpdated = System.currentTimeMillis(),
-                    )
-                }
+                baseDevices = devices.sortedBy { d -> d.name.lowercase() }
+                deviceCache.save(baseDevices)
+                _state.update { it.copy(loading = false, lastUpdated = System.currentTimeMillis()) }
+                publish()
+                ensureLocal()
             } catch (e: Exception) {
                 AppLog.e("Не удалось обновить список", e)
                 _state.update { it.copy(loading = false, message = describe(e)) }
@@ -340,11 +452,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             activeTime = d.activeTime,
                             lastDataTime = lastDataTime(c, d),
                             localKey = d.localKey,
+                            dpIds = dpIds(c, d, spec),
                         )
                     }
                 }
             }.awaitAll()
         }
+
+    /** Номера DP для локального протокола: из модели устройства (один раз, потом из кэша). */
+    private suspend fun dpIds(c: TuyaCloudClient, d: CloudDevice, spec: Map<String, DpSpec>): Map<String, Int> {
+        dpIdCache[d.id]?.let { return it }
+        if (d.localKey.isEmpty()) return emptyMap()
+        val fromSpec = spec.mapNotNull { (code, s) -> s.dpId?.let { code to it } }.toMap()
+        val ids = fromSpec.ifEmpty {
+            runCatching { c.getThingModel(d.id) }
+                .onFailure { AppLog.e("Номера DP ${d.name}", it) }
+                .getOrNull()
+                ?.mapNotNull { (code, s) -> s.dpId?.let { code to it } }?.toMap()
+                .orEmpty()
+        }
+        if (ids.isNotEmpty()) dpIdCache[d.id] = ids
+        return ids
+    }
 
     /** Когда устройство последний раз присылало данные: shadow, иначе время обновления в облаке. */
     private suspend fun lastDataTime(c: TuyaCloudClient, d: CloudDevice): Long =
@@ -352,14 +481,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Отправка одной команды, например switch_1 = true или temp_set = 220. */
     fun sendCommand(deviceId: String, code: String, value: Any) {
-        val c = client ?: return
         val before = _state.value.devices.find { it.id == deviceId } ?: return
         val oldValue = before.status[code]
+        val mode = _state.value.mode
+        val dpId = before.dpIds[code]
+        val local = mode != ControlMode.CLOUD && dpId != null && localManager.isConnected(deviceId)
+
+        if (!local && mode == ControlMode.LOCAL) {
+            _state.update { it.copy(message = "${before.name}: нет связи по Wi-Fi") }
+            return
+        }
 
         // Оптимистично показываем новое значение
         updateDevice(deviceId) { it.copy(status = it.status + (code to value), pending = it.pending + code) }
 
-        viewModelScope.launch {
+        if (local) {
+            viewModelScope.launch {
+                if (localManager.send(deviceId, mapOf(dpId.toString() to value))) {
+                    AppLog.i("Wi-Fi: ${before.name} $code=$value")
+                    // Устройство само пришлёт новое состояние; снимаем «ожидание»
+                    delay(1200)
+                    updateDevice(deviceId) { it.copy(pending = it.pending - code) }
+                } else if (mode == ControlMode.LOCAL) {
+                    updateDevice(deviceId) { it.copy(status = it.status + (code to oldValue), pending = it.pending - code) }
+                    _state.update { it.copy(message = "${before.name}: команда по Wi-Fi не прошла") }
+                } else {
+                    AppLog.i("Wi-Fi не ответил, отправляю ${before.name} через облако")
+                    sendViaCloud(before, code, value, oldValue)
+                }
+            }
+            return
+        }
+        viewModelScope.launch { sendViaCloud(before, code, value, oldValue) }
+    }
+
+    private suspend fun sendViaCloud(before: DeviceUi, code: String, value: Any, oldValue: Any?) {
+        val deviceId = before.id
+        val c = client ?: run {
+            updateDevice(deviceId) { it.copy(status = it.status + (code to oldValue), pending = it.pending - code) }
+            return
+        }
+        run {
             try {
                 if (before.thingModel) {
                     c.sendProperties(deviceId, listOf(code to value))
@@ -384,14 +546,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun updateDevice(id: String, transform: (DeviceUi) -> DeviceUi) {
-        _state.update { s -> s.copy(devices = s.devices.map { if (it.id == id) transform(it) else it }) }
+        baseDevices = baseDevices.map { if (it.id == id) transform(it) else it }
+        publish()
     }
 
     // ---------- Автообновление, пока приложение на экране ----------
 
     fun setForeground(foreground: Boolean) {
+        this.foreground = foreground
         autoRefreshJob?.cancel()
         autoRefreshJob = null
+        // Соединения по Wi-Fi держим, только пока приложение на экране
+        if (foreground) ensureLocal() else localManager.stopAll()
         if (!foreground || client == null) return
         autoRefreshJob = viewModelScope.launch {
             // Сразу обновляем при возврате в приложение, если данные старше 30 секунд

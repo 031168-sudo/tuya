@@ -137,6 +137,7 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
             onOpenSensor = openSensor,
             onEditDevice = { editDevice = it },
             bottomBar = { bottomBar(false) },
+            onModeChange = viewModel::setMode,
         )
         Screen.Categories -> CategoriesScreen(
             categories = state.categories,
@@ -163,6 +164,7 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
                 devices = state.devices.filter { state.devicePrefs[it.id]?.categoryId == state.categoryId },
                 onBack = { viewModel.back() },
                 bottomBar = { bottomBar(true) },
+                onModeChange = viewModel::setMode,
             )
         }
         Screen.Sensor -> SensorScreen(
