@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Детский рисунок домика с солнышком (оригинальный рисунок для иконки «Мой дом») -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group android:translateX="-3" android:translateY="3">
+    <!-- Солнышко: лучики -->
+    <path android:strokeColor="#E9A23B" android:strokeWidth="2.2" android:strokeLineCap="round"
+        android:pathData="M72,17 L72,21 M72,39 L72,43 M59,30 L63,30 M81,30 L85,30 M63,21 L66,24 M78,36 L81,39 M81,21 L78,24 M63,39 L66,36" />
+    <!-- Солнышко: круг -->
+    <path android:fillColor="#FFD98A" android:strokeColor="#E9A23B" android:strokeWidth="2.2"
+        android:pathData="M72,24 a6,6 0 1,0 0.01,0 z" />
+    <!-- улыбка солнышка -->
+    <path android:strokeColor="#C9822A" android:strokeWidth="1.3" android:strokeLineCap="round"
+        android:pathData="M69.5,31 Q72,33.5 74.5,31" />
+    </group>
+
+    <!-- Труба -->
+    <path android:fillColor="#F4A9A8" android:strokeColor="#6B5B73" android:strokeWidth="2.4"
+        android:strokeLineJoin="round"
+        android:pathData="M59,47 L59.5,37.5 L65,37.8 L65.2,51 Z" />
+
+    <!-- Стены (чуть неровные, как от руки) -->
+    <path android:fillColor="#FCE6CC" android:strokeColor="#6B5B73" android:strokeWidth="2.6"
+        android:strokeLineJoin="round"
+        android:pathData="M33,55 Q32.4,68 33.2,81.5 Q51,82.6 69.6,81.4 Q70.4,68 69.4,54.6 Z" />
+
+    <!-- Крыша -->
+    <path android:fillColor="#F4A9A8" android:strokeColor="#6B5B73" android:strokeWidth="2.6"
+        android:strokeLineJoin="round"
+        android:pathData="M28.5,56 Q39,45 51.2,33.5 Q62.5,44.5 74.2,55.4 Q51,56.8 28.5,56 Z" />
+    <!-- чердачное окошко -->
+    <path android:fillColor="#FFF4E0" android:strokeColor="#6B5B73" android:strokeWidth="2"
+        android:pathData="M51.2,41 a3.2,3.2 0 1,0 0.01,0 z" />
+
+    <!-- Дверь -->
+    <path android:fillColor="#C7B8EE" android:strokeColor="#6B5B73" android:strokeWidth="2.4"
+        android:strokeLineJoin="round"
+        android:pathData="M40.5,81.8 L40.6,68.5 Q44.6,63.8 48.6,68.5 L48.7,81.8" />
+    <path android:fillColor="#6B5B73" android:pathData="M46.2,75 a1,1 0 1,0 0.01,0 z" />
+
+    <!-- Окно -->
+    <path android:fillColor="#A8D8EA" android:strokeColor="#6B5B73" android:strokeWidth="2.4"
+        android:strokeLineJoin="round"
+        android:pathData="M55.5,62 L64.5,61.8 L64.7,70.8 L55.6,71 Z" />
+    <path android:strokeColor="#6B5B73" android:strokeWidth="1.6" android:strokeLineCap="round"
+        android:pathData="M60.1,62 L60.1,70.9 M55.6,66.4 L64.6,66.3" />
+
+    <!-- Цветочек у дома -->
+    <path android:strokeColor="#7FB069" android:strokeWidth="1.8" android:strokeLineCap="round"
+        android:pathData="M27,82 L27,75" />
+    <path android:fillColor="#F2B8C6" android:strokeColor="#6B5B73" android:strokeWidth="1.2"
+        android:pathData="M27,71 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path android:fillColor="#FFD98A" android:pathData="M27,71 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0" />
+</vector>
