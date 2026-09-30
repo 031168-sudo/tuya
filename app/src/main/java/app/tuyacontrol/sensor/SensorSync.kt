@@ -4,7 +4,9 @@ import app.tuyacontrol.cloud.LogEntry
 import app.tuyacontrol.cloud.TuyaApiException
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
+import app.tuyacontrol.background.SyncLock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.math.BigDecimal
 import java.time.Instant
@@ -40,7 +42,11 @@ class SensorSync(private val db: SensorDb) {
     private val zone: ZoneId = ZoneId.systemDefault()
     private val showTime: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
 
-    suspend fun sync(client: TuyaCloudClient, device: SensorDevice, progress: (String) -> Unit) {
+    /** Загрузка под общим замком: приложение и фоновая задача не качают один журнал одновременно. */
+    suspend fun sync(client: TuyaCloudClient, device: SensorDevice, progress: (String) -> Unit) =
+        SyncLock.mutex.withLock { syncLocked(client, device, progress) }
+
+    private suspend fun syncLocked(client: TuyaCloudClient, device: SensorDevice, progress: (String) -> Unit) {
         val channels = device.channels.associateBy { it.code }
         if (channels.isEmpty()) return
         val codes = channels.keys.joinToString(",")

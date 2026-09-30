@@ -1,6 +1,12 @@
 package app.tuyacontrol
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.compose.ui.platform.LocalContext
+import app.tuyacontrol.background.HistorySyncWorker
+import app.tuyacontrol.background.SyncTargets
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -35,6 +41,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Ежедневная фоновая загрузка истории (~3:00)
+        HistorySyncWorker.schedule(this)
+        // Уведомление «история давно не обновлялась» на Android 13+ требует разрешения
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
         setContent {
             AppTheme {
                 App(viewModel, energyViewModel, sensorViewModel)
@@ -62,6 +76,13 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sens
     // Устройства со счётчиком энергии передаём на экран «Энергия»
     val energyDevices = remember(state.devices) {
         state.devices.filter { it.hasEnergy }.map { EnergyDevice(it.id, it.name, it.activeTime, it.status.keys + it.spec.keys, it.thingModel) }
+    }
+    // Для фоновой загрузки запоминаем, какие счётчики и датчики качать
+    val context = LocalContext.current
+    LaunchedEffect(state.devices) {
+        if (state.devices.isNotEmpty()) {
+            SyncTargets(context).save(energyDevices, state.devices.mapNotNull { it.sensorDevice })
+        }
     }
     LaunchedEffect(energyDevices, state.screen) {
         if (state.screen == Screen.Energy || state.screen == Screen.Tariffs) {

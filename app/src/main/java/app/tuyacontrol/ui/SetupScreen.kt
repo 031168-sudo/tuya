@@ -1,5 +1,22 @@
 package app.tuyacontrol.ui
 
+import java.util.Locale
+import java.util.Date
+import java.text.SimpleDateFormat
+import app.tuyacontrol.background.SyncTargets
+import app.tuyacontrol.background.HistorySyncWorker
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.Card
+import androidx.compose.foundation.layout.PaddingValues
+import android.widget.Toast
+import android.provider.Settings
+import android.os.PowerManager
+import android.net.Uri
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -149,10 +166,88 @@ fun SetupScreen(
             }
 
             if (saved != null) {
+                BackgroundSyncSection()
                 OutlinedButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) {
                     Text("Удалить ключи с телефона")
                 }
             }
+        }
+    }
+}
+
+/** Фоновая загрузка истории: состояние, запуск вручную, разрешение работать в фоне. */
+@Composable
+private fun BackgroundSyncSection() {
+    val context = LocalContext.current
+    val targets = remember { SyncTargets(context) }
+    var tick by remember { mutableStateOf(0) }
+    // Обновляем показания раз в 5 секунд, пока экран открыт
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(5_000)
+            tick++
+        }
+    }
+    val power = context.getSystemService(PowerManager::class.java)
+    val unrestricted = remember(tick) { power?.isIgnoringBatteryOptimizations(context.packageName) == true }
+    val fmt = remember { SimpleDateFormat("dd.MM HH:mm", Locale.US) }
+    fun time(ms: Long) = if (ms > 0) fmt.format(Date(ms)) else "ещё не было"
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Фоновая загрузка истории", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "Каждую ночь около 3:00, при любом интернете и заряде от 50%, приложение само докачивает " +
+                    "журналы счётчиков и датчиков — чтобы в истории не было дыр (Tuya хранит журнал 7 дней).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            key(tick) {
+                Text("Последний запуск: ${time(targets.lastRun)}", style = MaterialTheme.typography.bodySmall)
+                Text("Последняя успешная загрузка: ${time(targets.lastSuccess)}", style = MaterialTheme.typography.bodySmall)
+                if (targets.lastResult.isNotEmpty()) {
+                    Text("Результат: ${targets.lastResult}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            OutlinedButton(
+                onClick = {
+                    HistorySyncWorker.runNow(context)
+                    Toast.makeText(context, "Загрузка запущена в фоне", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Загрузить сейчас") }
+
+            if (unrestricted) {
+                Text(
+                    "✓ Работа в фоне разрешена",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnlineColor,
+                )
+            } else {
+                Text(
+                    "Телефон может усыплять фоновую загрузку. Разрешите приложению работать в фоне без ограничений.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Button(
+                    onClick = {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                            .setData(Uri.parse("package:" + context.packageName))
+                        runCatching { context.startActivity(intent) }
+                            .onFailure { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Разрешить работу в фоне") }
+            }
+            TextButton(
+                onClick = {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                            .setData(Uri.parse("package:" + context.packageName)),
+                    )
+                },
+                contentPadding = PaddingValues(0.dp),
+            ) { Text("Настройки приложения: автозапуск и батарея →") }
         }
     }
 }

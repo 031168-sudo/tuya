@@ -4,7 +4,9 @@ import app.tuyacontrol.cloud.LogEntry
 import app.tuyacontrol.cloud.TuyaApiException
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
+import app.tuyacontrol.background.SyncLock
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -64,7 +66,11 @@ class EnergySync(private val db: EnergyDb) {
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
-    suspend fun sync(client: TuyaCloudClient, device: EnergyDevice, progress: (String) -> Unit) {
+    /** Загрузка под общим замком: приложение и фоновая задача не качают один журнал одновременно. */
+    suspend fun sync(client: TuyaCloudClient, device: EnergyDevice, progress: (String) -> Unit) =
+        SyncLock.mutex.withLock { syncLocked(client, device, progress) }
+
+    private suspend fun syncLocked(client: TuyaCloudClient, device: EnergyDevice, progress: (String) -> Unit) {
         val today = LocalDate.now(zone)
         val old = withContext(Dispatchers.IO) { db.meta(device.id) }
         val activeDay = if (device.activeTime > 0) {
