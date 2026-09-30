@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import app.tuyacontrol.energy.EnergyDevice
 import app.tuyacontrol.ui.EnergyScreen
 import app.tuyacontrol.ui.TariffsScreen
+import app.tuyacontrol.ui.SensorScreen
 import app.tuyacontrol.ui.AppTheme
 import app.tuyacontrol.ui.DevicesScreen
 import app.tuyacontrol.ui.LogScreen
@@ -23,13 +24,14 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: MainViewModel by viewModels()
     private val energyViewModel: EnergyViewModel by viewModels()
+    private val sensorViewModel: SensorViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             AppTheme {
-                App(viewModel, energyViewModel)
+                App(viewModel, energyViewModel, sensorViewModel)
             }
         }
     }
@@ -46,9 +48,10 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel) {
+private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel, sensorViewModel: SensorViewModel) {
     val state by viewModel.state.collectAsState()
     val energy by energyViewModel.state.collectAsState()
+    val sensor by sensorViewModel.state.collectAsState()
 
     // Устройства со счётчиком энергии передаём на экран «Энергия»
     val energyDevices = remember(state.devices) {
@@ -83,6 +86,19 @@ private fun App(viewModel: MainViewModel, energyViewModel: EnergyViewModel) {
                 energyViewModel.select(deviceId)
                 viewModel.open(Screen.Energy)
             },
+            onOpenSensor = { device ->
+                sensorViewModel.open(device)
+                viewModel.open(Screen.Sensor)
+            },
+        )
+        Screen.Sensor -> SensorScreen(
+            state = sensor,
+            onBack = { viewModel.back() },
+            onRefresh = sensorViewModel::refresh,
+            onPeriod = { sensorViewModel.setPeriod(it) },
+            onShift = sensorViewModel::shift,
+            onToday = sensorViewModel::today,
+            onMessageShown = sensorViewModel::messageShown,
         )
         Screen.Energy -> EnergyScreen(
             state = energy,

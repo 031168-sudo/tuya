@@ -10,6 +10,8 @@ import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.Credentials
 import app.tuyacontrol.data.CredentialsStore
+import app.tuyacontrol.sensor.SensorChannel
+import app.tuyacontrol.sensor.SensorDevice
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -24,7 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor }
 
 data class DeviceUi(
     val id: String,
@@ -61,6 +63,18 @@ data class DeviceUi(
     val isSensor: Boolean
         get() = category == SENSOR_CATEGORY ||
             SENSOR_HINTS.any { productName.contains(it, ignoreCase = true) || name.contains(it, ignoreCase = true) }
+
+    /** Температура/влажность для экрана истории датчика (null — у устройства таких DP нет). */
+    val sensorDevice: SensorDevice?
+        get() {
+            fun channel(codes: List<String>) = codes.firstOrNull { it in status }?.let { code ->
+                SensorChannel(code, spec[code]?.scale ?: 0, spec[code]?.unit.orEmpty())
+            }
+            val temperature = channel(SensorDevice.TEMPERATURE_CODES)
+            val humidity = channel(SensorDevice.HUMIDITY_CODES)
+            if (temperature == null && humidity == null) return null
+            return SensorDevice(id, name, thingModel, temperature, humidity)
+        }
 
     /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
     val hasEnergy: Boolean

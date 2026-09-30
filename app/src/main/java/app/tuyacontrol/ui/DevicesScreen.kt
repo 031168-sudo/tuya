@@ -48,6 +48,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.tuyacontrol.DeviceUi
+import app.tuyacontrol.sensor.SensorDevice
+import androidx.compose.foundation.clickable
 import app.tuyacontrol.UiState
 import app.tuyacontrol.cloud.DpSpec
 import app.tuyacontrol.data.DpFormat
@@ -66,6 +68,7 @@ fun DevicesScreen(
     onOpenLog: () -> Unit,
     onMessageShown: () -> Unit,
     onOpenEnergy: (deviceId: String?) -> Unit,
+    onOpenSensor: (SensorDevice) -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.message) {
@@ -134,7 +137,12 @@ fun DevicesScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     items(state.devices, key = { it.id }) { device ->
-                        DeviceCard(device = device, onCommand = onCommand, onOpenEnergy = { onOpenEnergy(device.id) })
+                        DeviceCard(
+                            device = device,
+                            onCommand = onCommand,
+                            onOpenEnergy = { onOpenEnergy(device.id) },
+                            onOpenSensor = onOpenSensor,
+                        )
                     }
                 }
             }
@@ -147,7 +155,9 @@ private fun DeviceCard(
     device: DeviceUi,
     onCommand: (deviceId: String, code: String, value: Any) -> Unit,
     onOpenEnergy: () -> Unit,
+    onOpenSensor: (SensorDevice) -> Unit,
 ) {
+    val sensor = device.sensorDevice
     var expanded by rememberSaveable(device.id) { mutableStateOf(false) }
 
     // У датчика температуры нет выключателя — логические DP (вкл/выкл) не показываем
@@ -155,7 +165,12 @@ private fun DeviceCard(
     val primary = entries.filter { DpLabels.isPrimary(it.key, device.spec[it.key]) || isFallbackSwitch(it, device) }
     val secondary = entries - primary.toSet()
 
-    Card(modifier = Modifier.fillMaxWidth()) {
+    // Карточку с температурой/влажностью можно нажать — откроется история показаний
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (sensor != null) Modifier.clickable { onOpenSensor(sensor) } else Modifier),
+    ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
@@ -218,6 +233,15 @@ private fun DeviceCard(
             if (primary.isNotEmpty()) Spacer(Modifier.size(6.dp))
             primary.forEach { (code, value) ->
                 DpRow(device, code, value, onCommand)
+            }
+
+            if (sensor != null) {
+                TextButton(onClick = { onOpenSensor(sensor) }, contentPadding = PaddingValues(0.dp)) {
+                    Text(
+                        if (sensor.humidity != null && sensor.temperature != null) "История температуры и влажности →"
+                        else if (sensor.humidity != null) "История влажности →" else "История температуры →",
+                    )
+                }
             }
 
             if (device.hasEnergy) {
