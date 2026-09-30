@@ -43,12 +43,25 @@ data class DeviceUi(
     /** Когда устройство последний раз присылало данные, мс (0 — неизвестно). */
     val lastDataTime: Long = 0,
 ) {
+    /**
+     * Устройство в сети, но выключено главным переключателем — его показания могут не обновляться.
+     * Термостаты «温控仪» (S1TW, батарея в ванной) включены всегда: их switch — реле нагрева.
+     */
+    val switchedOff: Boolean
+        get() {
+            if (!online || productName.contains(ALWAYS_ON_PRODUCT)) return false
+            val main = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
+            return main == false
+        }
+
     /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
     val hasEnergy: Boolean
         get() = productName.contains(ENERGY_PRODUCT, ignoreCase = true)
 
     companion object {
         const val ENERGY_PRODUCT = "WiFi开关电表"
+        const val ALWAYS_ON_PRODUCT = "温控仪"
+        val MAIN_SWITCHES = listOf("switch", "switch_1", "power")
     }
 }
 

@@ -13,6 +13,7 @@ import androidx.compose.ui.platform.LocalContext
 
 val OnlineColor = Color(0xFF2E9E5B)
 val OfflineColor = Color(0xFF9E9E9E)
+val SwitchedOffColor = Color(0xFFE08A00)
 
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {

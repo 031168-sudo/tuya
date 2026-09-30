@@ -178,23 +178,28 @@ private fun DeviceCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    if (!device.online) {
+                    val since = if (device.lastDataTime > 0) {
+                        "данные от " + staleFormat(device.lastDataTime) + " (" + ageText(device.lastDataTime) + ")"
+                    } else {
+                        "время последних данных неизвестно"
+                    }
+                    when {
                         // Нет связи — изменения до облака не доходят, значения могут быть неверными
-                        Text(
-                            if (device.lastDataTime > 0) {
-                                "Показания устарели: данные от " + staleFormat(device.lastDataTime) +
-                                    " (" + ageText(device.lastDataTime) + ")"
-                            } else {
-                                "Показания устарели: время последних данных неизвестно"
-                            },
+                        !device.online -> Text(
+                            "Показания устарели: $since",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
-                    } else if (device.lastDataTime > 0) {
-                        // В сети — устройство сообщает только об изменениях, молчание значит «без изменений»
-                        Text(
-                            "данные от " + staleFormat(device.lastDataTime) + " (" + ageText(device.lastDataTime) + ")",
+                        // Выключено — показания могут не обновляться
+                        device.switchedOff -> Text(
+                            "Выключено, $since",
                             style = MaterialTheme.typography.bodySmall,
+                            color = SwitchedOffColor,
+                        )
+                        // В сети и включено — устройство сообщает только об изменениях
+                        device.lastDataTime > 0 -> Text(
+                            since,
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -289,7 +294,7 @@ private fun DpRow(
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 // Устройство не в сети — значения последние известные, показываем приглушённо
-                color = if (device.online) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                color = if (device.online && !device.switchedOff) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
