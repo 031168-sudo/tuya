@@ -13,6 +13,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
 /** Устройство, для которого собираем историю энергии. */
@@ -25,10 +26,11 @@ data class EnergyDevice(
     /** Устройство работает через Things Data Model (v2). */
     val thingModel: Boolean = false,
 ) {
-    /** DP, из которого считаем энергию. */
+    /** DP, из которого считаем энергию; если счётчика энергии нет — мощность (интегрируем по времени). */
     val energyCode: String?
         get() = ENERGY_CODES.firstOrNull { it in codes }
             ?: codes.firstOrNull { c -> ENERGY_HINTS.any { it in c.lowercase() } }
+            ?: POWER_CODE.takeIf { it in codes }
 
     companion object {
         /** Приращение энергии за период (суммируется). */
@@ -38,6 +40,7 @@ data class EnergyDevice(
             "energy", "ele", "electricity", "power_consumption",
         )
         private val ENERGY_HINTS = listOf("energy", "ele", "kwh", "consum")
+        const val POWER_CODE = "cur_power"
         fun isIncremental(code: String) = code in INCREMENTAL || code.startsWith("add_")
     }
 }
@@ -172,23 +175,30 @@ class EnergySync(private val db: EnergyDb) {
     ): EnergyMeta {
         progress("${start.name}: журнал за 7 дней")
         val code = start.code ?: "add_ele"
+        val power = code == EnergyDevice.POWER_CODE
         val scale = energyScale(client, start.deviceId, code)
         val now = System.currentTimeMillis()
         val windowStart = now - 7L * 24 * 3600 * 1000 + 60_000
+        // Мощность отчитывается часто — разрешаем больше страниц журнала
+        val maxPages = if (power) 300 else 50
         val logs = if (device.thingModel) {
-            client.getReportLogsV2(start.deviceId, code, windowStart, now)
+            client.getReportLogsV2(start.deviceId, code, windowStart, now, maxPages)
         } else {
             try {
-                client.getDeviceLogs(start.deviceId, code, windowStart, now)
+                client.getDeviceLogs(start.deviceId, code, windowStart, now, maxPages)
             } catch (e: TuyaApiException) {
                 AppLog.e("${start.name}: журнал v1 недоступен, пробую v2", e)
-                client.getReportLogsV2(start.deviceId, code, windowStart, now)
+                client.getReportLogsV2(start.deviceId, code, windowStart, now, maxPages)
             }
         }.filter { it.code == code }.sortedBy { it.time }
         val incremental = EnergyDevice.isIncremental(code)
         AppLog.i(
             "${start.name}: отчётов $code за 7 дней: ${logs.size}, множитель 10^-$scale, " +
-                if (incremental) "приращения" else "накопительный счётчик",
+                when {
+                    power -> "расход = мощность × время"
+                    incremental -> "приращения"
+                    else -> "накопительный счётчик"
+                },
         )
 
         // Первый день окна неполный — его не пишем
@@ -199,31 +209,55 @@ class EnergySync(private val db: EnergyDb) {
             sums[d] = 0.0
             d = d.plusDays(1)
         }
-        // Если журнал обрезан по лимиту страниц, дни до самого раннего отчёта неполные — не пишем их
-        if (logs.size >= 5000) {
-            val earliest = logs.minOfOrNull { it.time }?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() }
-            if (earliest != null) sums.keys.removeAll { !it.isAfter(earliest) }
+        val earliestLog = logs.firstOrNull()?.let { Instant.ofEpochMilli(it.time).atZone(zone).toLocalDate() }
+        if (earliestLog != null && (logs.size >= maxPages * 100 || power)) {
+            // Журнал обрезан по лимиту, или для мощности нет отсчёта раньше первого отчёта:
+            // день первого отчёта и более ранние неполные — не пишем их
+            sums.keys.removeAll { !it.isAfter(earliestLog) }
         }
         val hours = HashMap<LocalDate, HashMap<Int, Double>>()
-        var previous: Double? = null
-        for (entry in logs) {
-            val time = Instant.ofEpochMilli(entry.time).atZone(zone)
-            val day = time.toLocalDate()
-            val raw = entry.value.toDoubleOrNull() ?: continue
-            val value = BigDecimal.valueOf(raw).movePointLeft(scale).toDouble()
-            // Накопительный счётчик: расход = разница соседних показаний (сброс счётчика пропускаем)
-            val kwh = if (incremental) {
-                value
-            } else {
-                val prev = previous
-                previous = value
-                if (prev == null || value < prev) continue
-                value - prev
-            }
-            if (day !in sums) continue
+
+        fun add(day: LocalDate, hour: Int, kwh: Double) {
+            if (day !in sums || kwh <= 0.0) return
             sums[day] = (sums[day] ?: 0.0) + kwh
             val h = hours.getOrPut(day) { HashMap() }
-            h[time.hour] = (h[time.hour] ?: 0.0) + kwh
+            h[hour] = (h[hour] ?: 0.0) + kwh
+        }
+
+        if (power) {
+            // Мощность держится до следующего отчёта: энергия = P × Δt, с разбивкой по часам
+            for (i in logs.indices) {
+                val raw = logs[i].value.toDoubleOrNull() ?: continue
+                val watts = BigDecimal.valueOf(raw).movePointLeft(scale).toDouble()
+                if (watts <= 0.0) continue
+                val from = logs[i].time
+                val to = if (i + 1 < logs.size) logs[i + 1].time else now
+                var cursor = from
+                while (cursor < to) {
+                    val t = Instant.ofEpochMilli(cursor).atZone(zone)
+                    val hourEnd = t.truncatedTo(ChronoUnit.HOURS).plusHours(1).toInstant().toEpochMilli()
+                    val segEnd = if (hourEnd < to) hourEnd else to
+                    add(t.toLocalDate(), t.hour, watts * (segEnd - cursor) / 3_600_000.0 / 1000.0)
+                    cursor = segEnd
+                }
+            }
+        } else {
+            var previous: Double? = null
+            for (entry in logs) {
+                val time = Instant.ofEpochMilli(entry.time).atZone(zone)
+                val raw = entry.value.toDoubleOrNull() ?: continue
+                val value = BigDecimal.valueOf(raw).movePointLeft(scale).toDouble()
+                // Накопительный счётчик: расход = разница соседних показаний (сброс счётчика пропускаем)
+                val kwh = if (incremental) {
+                    value
+                } else {
+                    val prev = previous
+                    previous = value
+                    if (prev == null || value < prev) continue
+                    value - prev
+                }
+                add(time.toLocalDate(), time.hour, kwh)
+            }
         }
         withContext(Dispatchers.IO) {
             db.upsertDays(start.deviceId, sums, EnergyDb.SOURCE_LOGS)
