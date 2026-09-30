@@ -178,6 +178,17 @@ private fun DeviceCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (!device.online) {
+                        Text(
+                            if (device.lastDataTime > 0) {
+                                "Показания устарели: данные от " + staleFormat(device.lastDataTime)
+                            } else {
+                                "Показания устарели: время последних данных неизвестно"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             }
 
@@ -268,6 +279,8 @@ private fun DpRow(
                 DpFormat.format(value, spec),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
+                // Устройство не в сети — значения последние известные, показываем приглушённо
+                color = if (device.online) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -303,4 +316,13 @@ private fun IntegerStepper(spec: DpSpec, raw: Long, enabled: Boolean, onChange: 
             modifier = Modifier.size(36.dp),
         ) { Text("+") }
     }
+}
+
+/** «14:32» для сегодняшнего дня, иначе «28.09 14:32». */
+private fun staleFormat(ms: Long): String {
+    val zone = java.time.ZoneId.systemDefault()
+    val t = java.time.Instant.ofEpochMilli(ms).atZone(zone)
+    val today = java.time.LocalDate.now(zone)
+    val pattern = if (t.toLocalDate() == today) "HH:mm" else if (t.year == today.year) "dd.MM HH:mm" else "dd.MM.yyyy HH:mm"
+    return t.format(java.time.format.DateTimeFormatter.ofPattern(pattern))
 }

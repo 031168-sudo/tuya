@@ -59,6 +59,8 @@ class EnergySync(private val db: EnergyDb) {
     private val SHOW_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
     private val SHOW_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("dd.MM HH:mm")
     private val CHUNK_MS = 12L * 3600 * 1000
+    private val EVENT_ONLINE = 1
+    private val EVENT_OFFLINE = 2
 
     private val zone: ZoneId = ZoneId.systemDefault()
 
@@ -373,21 +375,43 @@ class EnergySync(private val db: EnergyDb) {
 
         var chunkStart: Long = cursor
         var total = 0
+        var offlineCount = 0
+        var connectivityAvailable = true
         while (chunkStart < now) {
             val chunkEnd = minOf(chunkStart + CHUNK_MS, now)
             val label = Instant.ofEpochMilli(chunkStart).atZone(zone).toLocalDateTime().format(SHOW_TIME)
             val onPage: (Int) -> Unit = { n -> progress("${meta.name}: журнал с $label, стр. $n") }
-            val logs = fetchLogs(client, device, code, chunkStart, chunkEnd, onPage)
+            val reports = fetchLogs(client, device, code, chunkStart, chunkEnd, onPage)
                 .filter { it.code == code && it.time in chunkStart until chunkEnd }
-                .sortedBy { it.time }
-            total += logs.size
+            total += reports.size
+            val events = if (connectivityAvailable) {
+                try {
+                    client.getDeviceLogs(device.id, "", chunkStart, chunkEnd, 20, type = "1,2")
+                        .filter { (it.eventId == EVENT_ONLINE || it.eventId == EVENT_OFFLINE) && it.time in chunkStart until chunkEnd }
+                } catch (e: TuyaApiException) {
+                    AppLog.e("${meta.name}: журнал подключений недоступен, отключения не учитываются", e)
+                    connectivityAvailable = false
+                    emptyList()
+                }
+            } else {
+                emptyList()
+            }
+            offlineCount += events.count { it.eventId == EVENT_OFFLINE }
+            // При равном времени сначала событие подключения/отключения, потом отчёт мощности
+            val logs = (reports + events).sortedWith(compareBy({ it.time }, { if (it.eventId == 7) 1 else 0 }))
 
             val acc = HashMap<LocalDate, DoubleArray>()
             var t = chunkStart
             for (e in logs) {
                 integrate(t, e.time, power, countFrom, acc)
                 t = e.time
-                e.value.toDoubleOrNull()?.let { power = BigDecimal.valueOf(it).movePointLeft(scale).toDouble() }
+                when (e.eventId) {
+                    // Не в сети — мощность неизвестна, расход не начисляем до следующего отчёта
+                    EVENT_OFFLINE -> power = null
+                    // Снова в сети — ждём свежий отчёт мощности (устройство присылает его при подключении)
+                    EVENT_ONLINE -> power = null
+                    else -> e.value.toDoubleOrNull()?.let { power = BigDecimal.valueOf(it).movePointLeft(scale).toDouble() }
+                }
             }
             integrate(t, chunkEnd, power, countFrom, acc)
 
@@ -399,7 +423,7 @@ class EnergySync(private val db: EnergyDb) {
             }
             chunkStart = chunkEnd
         }
-        AppLog.i("${meta.name}: обработано отчётов мощности: $total")
+        AppLog.i("${meta.name}: обработано отчётов мощности: $total, отключений от сети: $offlineCount")
         return meta.copy(syncedUntil = LocalDate.now(zone), lastError = null)
     }
 

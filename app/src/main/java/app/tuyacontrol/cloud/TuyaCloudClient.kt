@@ -93,6 +93,18 @@ class TuyaCloudClient(private val credentials: Credentials) {
     // ---------- Things Data Model (для устройств без стандартного набора команд) ----------
 
     /** Все DP устройства «как есть»: /v2.0/cloud/thing/{id}/shadow/properties. */
+    /** Время последнего отчёта любого DP (мс) по данным shadow, 0 — неизвестно. */
+    suspend fun getLastReportTime(deviceId: String): Long {
+        val result = get("/v2.0/cloud/thing/$deviceId/shadow/properties") as? JSONObject ?: return 0
+        val arr = result.optJSONArray("properties") ?: return 0
+        var max = 0L
+        for (i in 0 until arr.length()) {
+            val t = arr.optJSONObject(i)?.optLong("time", 0) ?: 0
+            if (t > max) max = t
+        }
+        return max
+    }
+
     suspend fun getShadowProperties(deviceId: String): Map<String, Any?> {
         val result = get("/v2.0/cloud/thing/$deviceId/shadow/properties") as? JSONObject
             ?: return emptyMap()
@@ -219,18 +231,19 @@ class TuyaCloudClient(private val credentials: Credentials) {
         endMs: Long,
         maxPages: Int = 50,
         onPage: (Int) -> Unit = {},
+        type: String = "7",
     ): List<LogEntry> {
         val entries = mutableListOf<LogEntry>()
         var rowKey = ""
         var page = 0
         while (page < maxPages) {
             val query = mutableMapOf(
-                "type" to "7",
-                "codes" to codes,
+                "type" to type,
                 "start_time" to startMs.toString(),
                 "end_time" to endMs.toString(),
                 "size" to "100",
             )
+            if (codes.isNotEmpty()) query["codes"] = codes
             if (rowKey.isNotEmpty()) query["start_row_key"] = rowKey
             if (page > 0) delay(LOG_PAGE_DELAY_MS)
             onPage(page + 1)
@@ -238,7 +251,12 @@ class TuyaCloudClient(private val credentials: Credentials) {
             val logs = result.optJSONArray("logs") ?: JSONArray()
             for (i in 0 until logs.length()) {
                 val o = logs.optJSONObject(i) ?: continue
-                entries += LogEntry(o.optString("code"), o.optString("value"), o.optLong("event_time"))
+                entries += LogEntry(
+                    o.optString("code"),
+                    o.optString("value"),
+                    o.optLong("event_time"),
+                    o.optInt("event_id", 7),
+                )
             }
             rowKey = result.optString("next_row_key", "")
             if (!result.optBoolean("has_next", false) || rowKey.isEmpty()) break
@@ -354,6 +372,9 @@ class TuyaCloudClient(private val credentials: Credentials) {
         ip = o.optString("ip"),
         status = o.optJSONArray("status")?.let { parseStatus(it) },
         activeTime = o.optLong("active_time", 0).takeIf { it > 0 } ?: o.optLong("activeTime", 0),
+        // v1: update_time в секундах; v2: updateTime (секунды или мс)
+        updateTime = (o.optLong("update_time", 0).takeIf { it > 0 } ?: o.optLong("updateTime", 0))
+            .let { if (it in 1 until 100_000_000_000L) it * 1000 else it },
     )
 
     private fun parseStatus(arr: JSONArray?): Map<String, Any?> {
