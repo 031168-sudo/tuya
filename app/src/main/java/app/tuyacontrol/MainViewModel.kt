@@ -73,6 +73,8 @@ data class DeviceUi(
             fun channel(codes: List<String>) = codes.firstOrNull { it in status }?.let { code ->
                 SensorChannel(code, spec[code]?.scale ?: 0, spec[code]?.unit.orEmpty())
             }
+            // Датчик Siren Temperature and Humidity не пишет журнал в облако — истории у него нет
+            if (NO_HISTORY_PRODUCTS.any { productName.contains(it, ignoreCase = true) }) return null
             val temperature = channel(SensorDevice.TEMPERATURE_CODES)
             val humidity = channel(SensorDevice.HUMIDITY_CODES)
             if (temperature == null && humidity == null) return null
@@ -98,6 +100,8 @@ data class DeviceUi(
     companion object {
         const val ENERGY_PRODUCT = "WiFi开关电表"
         const val ALWAYS_ON_PRODUCT = "温控仪"
+        /** Устройства без истории показаний в облаке: у них нет экрана графиков. */
+        val NO_HISTORY_PRODUCTS = listOf("Siren Temperature")
         /** Категория Tuya «датчик температуры и влажности». */
         const val SENSOR_CATEGORY = "wsdcg"
         val SENSOR_HINTS = listOf("Temperature and Humidity", "Датчик температуры")
