@@ -24,7 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs }
 
 data class DeviceUi(
     val id: String,
@@ -38,7 +38,17 @@ data class DeviceUi(
     val pending: Set<String> = emptySet(),
     /** true — устройство работает через Things Data Model (v2.0 shadow). */
     val thingModel: Boolean = false,
-)
+    /** Время активации, секунды Unix. */
+    val activeTime: Long = 0,
+) {
+    /** Устройство со счётчиком энергии. */
+    val hasEnergy: Boolean
+        get() = ENERGY_CODES.any { it in status || it in spec }
+
+    companion object {
+        val ENERGY_CODES = listOf("add_ele", "total_forward_energy", "forward_energy_total")
+    }
+}
 
 data class UiState(
     val screen: Screen = Screen.Setup,
@@ -77,7 +87,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun back(): Boolean {
         val s = _state.value
-        return if (s.screen != Screen.Devices && s.credentials != null) {
+        return if (s.screen == Screen.Tariffs) {
+            open(Screen.Energy); true
+        } else if (s.screen != Screen.Devices && s.credentials != null) {
             open(Screen.Devices); true
         } else {
             false
@@ -193,6 +205,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             status = status,
                             spec = spec,
                             thingModel = useThingModel,
+                            activeTime = d.activeTime,
                         )
                     }
                 }

@@ -65,6 +65,7 @@ fun DevicesScreen(
     onOpenSettings: () -> Unit,
     onOpenLog: () -> Unit,
     onMessageShown: () -> Unit,
+    onOpenEnergy: (deviceId: String?) -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.message) {
@@ -90,6 +91,9 @@ fun DevicesScreen(
                     }
                 },
                 actions = {
+                    if (state.devices.any { it.hasEnergy }) {
+                        TextButton(onClick = { onOpenEnergy(null) }) { Text("₽") }
+                    }
                     IconButton(onClick = onRefresh) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Обновить")
                     }
@@ -130,7 +134,7 @@ fun DevicesScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     items(state.devices, key = { it.id }) { device ->
-                        DeviceCard(device = device, onCommand = onCommand)
+                        DeviceCard(device = device, onCommand = onCommand, onOpenEnergy = { onOpenEnergy(device.id) })
                     }
                 }
             }
@@ -142,6 +146,7 @@ fun DevicesScreen(
 private fun DeviceCard(
     device: DeviceUi,
     onCommand: (deviceId: String, code: String, value: Any) -> Unit,
+    onOpenEnergy: () -> Unit,
 ) {
     var expanded by rememberSaveable(device.id) { mutableStateOf(false) }
 
@@ -187,6 +192,12 @@ private fun DeviceCard(
             if (primary.isNotEmpty()) Spacer(Modifier.size(6.dp))
             primary.forEach { (code, value) ->
                 DpRow(device, code, value, onCommand)
+            }
+
+            if (device.hasEnergy) {
+                TextButton(onClick = onOpenEnergy, contentPadding = PaddingValues(0.dp)) {
+                    Text("История потребления и расходы →")
+                }
             }
 
             if (secondary.isNotEmpty()) {

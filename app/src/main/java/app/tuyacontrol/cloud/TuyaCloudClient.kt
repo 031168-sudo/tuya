@@ -13,6 +13,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -149,6 +151,80 @@ class TuyaCloudClient(private val credentials: Credentials) {
         )
     }
 
+    // ---------- Статистика и журналы (история энергии) ----------
+
+    /** Какие DP облако считает статистику (нужен сервис Data Statistics). */
+    suspend fun getStatisticTypes(deviceId: String): List<StatType> {
+        val arr = get("/v1.0/devices/$deviceId/all-statistic-type") as? JSONArray ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            arr.optJSONObject(i)?.let { StatType(it.optString("code"), it.optString("stat_type")) }
+        }
+    }
+
+    /** Суточные суммы DP за период (включительно). Значения — как их отдаёт Tuya (для энергии — кВт·ч). */
+    suspend fun getStatisticsDays(
+        deviceId: String,
+        code: String,
+        start: LocalDate,
+        end: LocalDate,
+    ): Map<LocalDate, Double> {
+        val result = get(
+            "/v1.0/devices/$deviceId/statistics/days",
+            mapOf(
+                "code" to code,
+                "start_day" to start.format(DAY_FORMAT),
+                "end_day" to end.format(DAY_FORMAT),
+                "stat_type" to "sum",
+            ),
+        ) as? JSONObject ?: return emptyMap()
+        val days = result.optJSONObject("days") ?: return emptyMap()
+        val map = LinkedHashMap<LocalDate, Double>()
+        days.keys().forEach { key ->
+            val day = runCatching { LocalDate.parse(key, DAY_FORMAT) }.getOrNull() ?: return@forEach
+            val value = days.optString(key).toDoubleOrNull() ?: return@forEach
+            map[day] = value
+        }
+        return map
+    }
+
+    suspend fun getStatisticsTotal(deviceId: String, code: String): Double? {
+        val result = get("/v1.0/devices/$deviceId/statistics/total", mapOf("code" to code)) as? JSONObject
+        return result?.optString("total")?.toDoubleOrNull()
+    }
+
+    /** Отчёты устройства (type=7) за период. Облако хранит их ограниченное время (~7 дней). */
+    suspend fun getDeviceLogs(
+        deviceId: String,
+        codes: String,
+        startMs: Long,
+        endMs: Long,
+        maxPages: Int = 50,
+    ): List<LogEntry> {
+        val entries = mutableListOf<LogEntry>()
+        var rowKey = ""
+        var page = 0
+        while (page < maxPages) {
+            val query = mutableMapOf(
+                "type" to "7",
+                "codes" to codes,
+                "start_time" to startMs.toString(),
+                "end_time" to endMs.toString(),
+                "size" to "100",
+            )
+            if (rowKey.isNotEmpty()) query["start_row_key"] = rowKey
+            val result = get("/v1.0/devices/$deviceId/logs", query) as? JSONObject ?: break
+            val logs = result.optJSONArray("logs") ?: JSONArray()
+            for (i in 0 until logs.length()) {
+                val o = logs.optJSONObject(i) ?: continue
+                entries += LogEntry(o.optString("code"), o.optString("value"), o.optLong("event_time"))
+            }
+            rowKey = result.optString("next_row_key", "")
+            if (!result.optBoolean("has_next", false) || rowKey.isEmpty()) break
+            page++
+        }
+        return entries
+    }
+
     // ---------- Списки устройств ----------
 
     private suspend fun listAssociatedUserDevices(): List<CloudDevice> {
@@ -197,6 +273,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
         localKey = o.optString("local_key").ifEmpty { o.optString("localKey") },
         ip = o.optString("ip"),
         status = o.optJSONArray("status")?.let { parseStatus(it) },
+        activeTime = o.optLong("active_time", 0).takeIf { it > 0 } ?: o.optLong("activeTime", 0),
     )
 
     private fun parseStatus(arr: JSONArray?): Map<String, Any?> {
@@ -333,6 +410,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
 
     private companion object {
         val JSON_MEDIA = "application/json".toMediaType()
+        val DAY_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd")
 
         /** 1010 token invalid, 1011 token status invalid, 1012 token expired */
         val TOKEN_ERROR_CODES = setOf(1010, 1011, 1012)

@@ -26,6 +26,12 @@ data class CloudDevice(
     val ip: String,
     /** code -> value; null, если облако не вернуло статус вместе со списком. */
     val status: Map<String, Any?>?,
+    /** Время активации устройства, секунды Unix (0 — неизвестно). */
+    val activeTime: Long = 0,
 )
+
+data class StatType(val code: String, val statType: String)
+
+data class LogEntry(val code: String, val value: String, val time: Long)
 
 class TuyaApiException(val code: Int, message: String) : Exception(message)
