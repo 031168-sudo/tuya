@@ -183,6 +183,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Устройства Rubetek (только облако), показываются вместе с Tuya. */
     private var rubetekDevices: List<DeviceUi> = emptyList()
     private var rubetekJob: Job? = null
+    private var rubetekStateLogged = false
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -593,7 +594,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val hid = h.optString("id")
                     if (hid.isEmpty()) continue
                     if (!h.isNull("deleted_at") && h.optString("deleted_at").isNotEmpty()) continue
-                    rubetek.devices(hid).mapNotNullTo(list) {
+                    val raw = rubetek.devices(hid)
+                    if (!rubetekStateLogged) {
+                        // Один раз за запуск — полное состояние каждого устройства, чтобы разобрать новые типы
+                        rubetekStateLogged = true
+                        raw.forEach { d ->
+                            AppLog.i(
+                                "Rubetek: «${d.optString("name")}» type=${d.optString("type")} " +
+                                    "custom=${d.optJSONObject("custom_data")} state=${d.optJSONObject("state")}"
+                            )
+                        }
+                    }
+                    raw.mapNotNullTo(list) {
                         app.tuyacontrol.rubetek.RubetekMapper.toDevice(hid, h.optString("name"), houses.size > 1, it)
                     }
                 }

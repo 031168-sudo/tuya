@@ -58,6 +58,21 @@ object RubetekMapper {
         num("pwr:Vrms", "cur_voltage", "В", 0)
         num("pwr:Irms", "cur_current", "А", 2)
 
+        // Остальные поля состояния показываем как есть (только чтение): у конвекторов, обогревателей и
+        // других «донглов» Rubetek свой набор ключей, его сопоставим по мере знакомства с устройствами
+        val keys = state.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            if (k in KNOWN || SERVICE_PREFIXES.any { k.startsWith(it) }) continue
+            val v = state.opt(k)
+            when (v) {
+                is Boolean -> { status[k] = v; spec[k] = DpSpec(k, "Boolean") }
+                is Number -> { status[k] = v; spec[k] = DpSpec(k, "Integer") }
+                is String -> if (v.length <= 40) { status[k] = v; spec[k] = DpSpec(k, "String") }
+                else -> {}
+            }
+        }
+
         val online = o.optBoolean("online", true) && (if (state.has("cloud:online")) state.optBoolean("cloud:online") else true)
         val type = state.optString("dev:type").ifEmpty { o.optString("type") }
         val room = o.optString("room")
@@ -92,6 +107,14 @@ object RubetekMapper {
         }
         return null
     }
+
+    private val KNOWN = setOf(
+        "relay:on[0]", "relay:on[1]", "relay:on[2]", "relay:on[3]", "rgb:level[1]", "pwr:Pact", "pwr:Vrms", "pwr:Irms",
+    )
+    private val SERVICE_PREFIXES = listOf(
+        "dev:", "wifi:", "cloud:", "homekit:", "rf868:", "rtc:", "hub:", "health:", "child:", "protect:",
+        "relay:change_src", "relay:off_delay", "relay:on_delay", "relay:state",
+    )
 
     private fun round(v: Double, digits: Int): Double {
         val f = Math.pow(10.0, digits.toDouble())
