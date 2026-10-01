@@ -39,6 +39,19 @@ class HeatingPlannerTest {
     }
 
     @Test
+    fun convectorDoesNotHeatInPeakWhenBanned() {
+        val conv = HeatZone("c", "Конвектор", windows = listOf(ComfortWindow(0, 0, 21.0)), baseTemp = 16.0,
+            maxTemp = 21.0, powerKw = 2.0, heatRate = 3.0, lossRate = 0.04)
+        val p = HeatingPlanner.plan(conv, prices, DoubleArray(48) { 0.0 }, step = 1.0, peakBan = true)
+        for (h in 0 until 24) if (prices.peak[h]) {
+            assertTrue("$h:00 в пик не греем", (0 until 4).all { p.heat[h * 4 + it] == 0.0 })
+        }
+        // Сразу после пика — включение, догрев нехваткой мощности не считается
+        assertTrue(p.heat[21 * 4] > 0.0)
+        assertEquals(0, p.shortSteps)
+    }
+
+    @Test
     fun comfortWindowAcrossMidnight() {
         val w = ComfortWindow(23, 11, 23.0)
         assertTrue(w.covers(23) && w.covers(0) && w.covers(10))

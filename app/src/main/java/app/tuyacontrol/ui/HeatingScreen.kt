@@ -565,6 +565,7 @@ private fun ZoneDialog(
     var power by remember { mutableStateOf(fieldText(initial.powerKw)) }
     var heat by remember { mutableStateOf(fieldText(initial.heatRate)) }
     var loss by remember { mutableStateOf(fieldText(initial.lossRate * 100)) }
+    var peakHeat by remember { mutableStateOf(initial.peakHeat) }
     var advanced by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -586,6 +587,7 @@ private fun ZoneDialog(
             powerKw = (parse(power) ?: return null).coerceIn(0.1, 20.0),
             heatRate = (parse(heat) ?: return null).coerceIn(0.1, 10.0),
             lossRate = ((parse(loss) ?: return null) / 100).coerceIn(0.001, 0.5),
+            peakHeat = peakHeat,
         )
     }
     val result = build()
@@ -654,6 +656,28 @@ private fun ZoneDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 NumberField(max, { max = it }, "Максимум про запас °C", Modifier.fillMaxWidth())
+
+                // Конвектор Rubetek управляется только таймерами вкл/выкл
+                if (device?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { peakHeat = !peakHeat },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Включать в пик", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        Switch(checked = peakHeat, onCheckedChange = { peakHeat = it })
+                    }
+                    Text(
+                        if (peakHeat) {
+                            "Конвектор может включаться в пиковые часы (7–10, 17–21), чтобы комната не остыла " +
+                                "больше чем на «просадку в пик»."
+                        } else {
+                            "В пиковые часы (7–10, 17–21) конвектор не включается. Исключение — комната остыла " +
+                                "ниже дежурной температуры. После пика включается сразу и догревает комнату."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
                 TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Скрыть параметры пола" else "Параметры пола…") }
                 if (advanced) {

@@ -204,10 +204,14 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 s.zones.map { z ->
                     // Rubetek: температура — уставка самого конвектора, план только вкл/выкл
                     val own = _state.value.thermostats.firstOrNull { it.id == z.deviceId }?.setpoint
-                    val planZone = if (own != null && z.deviceId != null && app.tuyacontrol.rubetek.RubetekMapper.isRubetek(z.deviceId)) {
+                    val onOff = z.deviceId != null && app.tuyacontrol.rubetek.RubetekMapper.isRubetek(z.deviceId)
+                    val planZone = if (own != null && onOff) {
                         HeatingEngine.rubetekZone(z, own)
                     } else z
-                    HeatingPlanner.plan(planZone, prices, forecast.temps, steps[z.deviceId] ?: 0.5).withZone(z)
+                    HeatingPlanner.plan(
+                        planZone, prices, forecast.temps, steps[z.deviceId] ?: 0.5,
+                        peakBan = onOff && !z.peakHeat,
+                    ).withZone(z)
                 }
             }
             _state.update {

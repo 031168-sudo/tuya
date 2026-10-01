@@ -114,7 +114,7 @@ class HeatingEngine(context: Context) {
                         ?: throw IllegalStateException("конвектор не найден в Rubetek")
                     val own = (device.status["temp_set"] as? Number)?.toDouble()
                         ?: throw IllegalStateException("неизвестна уставка конвектора")
-                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0)
+                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat)
                     val events = onOffEvents(plan)
                     writeRubetekTimers(rubetek, id, events)
                     schedules.remove(id)

@@ -44,6 +44,9 @@ data class HeatZone(
     val inTotal: Boolean = true,
     /** Управление включено: приложение выставляет устройству уставки по плану. Выключено — не трогает. */
     val control: Boolean = false,
+    /** Конвектор (вкл/выкл): разрешено включать в пиковые часы, чтобы держать комфорт с просадкой.
+     *  Выключено — в пик не включаем, только если комната остыла ниже дежурной. */
+    val peakHeat: Boolean = false,
 ) {
     /** Температура, которую нужно держать в этот час (без поправки на пик). */
     fun targetAt(hour: Int): Double = windows.filter { it.covers(hour) }.maxOfOrNull { it.temp } ?: baseTemp

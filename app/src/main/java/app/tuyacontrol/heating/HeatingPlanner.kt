@@ -50,16 +50,19 @@ object HeatingPlanner {
      * @param prices цены по часам суток (повторяются на вторые сутки)
      * @param outdoor уличная температура по часам, 48 значений (если меньше — последний повторяется)
      * @param step шаг уставки термостата, °C (например, 0.5 или 1)
+     * @param peakBan в пиковые часы не греть совсем (только если комната остыла ниже дежурной) —
+     *   для конвекторов, которыми управляем таймерами вкл/выкл
      */
-    fun plan(zone: HeatZone, prices: HourPrices, outdoor: DoubleArray, step: Double = 0.5): ZonePlan {
+    fun plan(zone: HeatZone, prices: HourPrices, outdoor: DoubleArray, step: Double = 0.5, peakBan: Boolean = false): ZonePlan {
         val price = DoubleArray(N) { prices.price[(it / STEPS_PER_HOUR) % 24] }
         val tout = DoubleArray(N) { outdoor.getOrElse(it / STEPS_PER_HOUR) { outdoor.lastOrNull() ?: 0.0 } }
-        // Граница комфорта в момент k (начало шага k)
+        val peakStep = BooleanArray(N) { prices.peak[(it / STEPS_PER_HOUR) % 24] }
+        // Граница комфорта в момент k (начало шага k): к началу часа комната уже должна быть нужной температуры
         val minT = DoubleArray(N + 1) { k ->
             val h = (k / STEPS_PER_HOUR) % 24
-            zone.minAt(h, prices.peak[h])
+            if (peakBan && prices.peak[h]) minOf(zone.minAt(h, true), zone.baseTemp) else zone.minAt(h, prices.peak[h])
         }
-        val (temps, heat) = solve(zone, price, tout, minT)
+        val (temps, heat) = solve(zone, price, tout, minT, if (peakBan) peakStep else null)
 
         // Уставки: в часы нагрева — температура, до которой греем; иначе — нижняя граница
         val setpoints = DoubleArray(24) { hour ->
@@ -78,13 +81,19 @@ object HeatingPlanner {
         var cost = 0.0
         val byZone = DoubleArray(3)
         var short = 0
+        // После запрещённого пика конвектор догревает комнату — пока догревает, нехваткой мощности не считаем
+        var recovering = false
         for (k in 0 until steps) {
             val e = zone.powerKw * heat[k] * DT
             kwh += e
             cost += e * price[k]
             val z = prices.zone[k / STEPS_PER_HOUR]
             if (z in byZone.indices) byZone[z] += e
-            if (temps[k + 1] < minT[k + 1] - 0.15) short++
+            val h = k / STEPS_PER_HOUR
+            val below = temps[k + 1] < minT[k + 1] - 0.15
+            if (peakBan && prices.peak[h]) recovering = true
+            else if (!below) recovering = false
+            if (below && !recovering) short++
         }
 
         // Для сравнения: тот же комфорт без просадки в пик и без оглядки на тарифы —
@@ -116,7 +125,13 @@ object HeatingPlanner {
     }
 
     /** Динамическое программирование: температуры (первые сутки, 97 точек) и доли нагрева (96). */
-    private fun solve(zone: HeatZone, price: DoubleArray, tout: DoubleArray, minT: DoubleArray): Pair<DoubleArray, DoubleArray> {
+    private fun solve(
+        zone: HeatZone,
+        price: DoubleArray,
+        tout: DoubleArray,
+        minT: DoubleArray,
+        ban: BooleanArray? = null,
+    ): Pair<DoubleArray, DoubleArray> {
         val lo = minOf(minT.min(), zone.baseTemp) - 3.0
         val hi = maxOf(zone.maxTemp, minT.max())
         val states = ((hi - lo) / GRID).roundToInt() + 1
@@ -133,7 +148,9 @@ object HeatingPlanner {
                 val t = lo + i * GRID
                 var best = Double.MAX_VALUE
                 var bestU = 0
-                for (u in LEVELS.indices) {
+                // Запрет на нагрев в пик, пока комната не остыла ниже дежурной
+                val levels = if (ban != null && ban[k] && t >= zone.baseTemp) 1 else LEVELS.size
+                for (u in 0 until levels) {
                     val t2 = (t + DT * (h * LEVELS[u] - a * (t - tout[k]))).coerceIn(lo, hi)
                     val short = (minT[k + 1] - t2).coerceAtLeast(0.0)
                     val v = price[k] * p * LEVELS[u] * DT + short * PENALTY + interp(next, t2, lo, states)
