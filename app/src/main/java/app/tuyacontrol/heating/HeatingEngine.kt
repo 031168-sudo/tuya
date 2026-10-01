@@ -295,6 +295,37 @@ class HeatingEngine(context: Context) {
         }
         rubetek.setState(house, device, state)
         AppLog.i("Отопление: Rubetek ${id.takeLast(6)} таймеры вкл=${ons.map { it / 60 }} выкл=${offs.map { it / 60 }}")
+
+        // Проверка: облако ответило «принято», но дошло ли до модуля? Перечитываем состояние
+        var got: Map<String, Any?> = emptyMap()
+        // Пустой слот модуль может показывать как −1 или вовсе без поля
+        fun same(k: String, v: Any): Boolean {
+            val g = (got[k] as? Number)?.toLong()
+            return g == (v as Number).toLong() || (g == null && v.toLong() == -1L)
+        }
+        for (attempt in 1..4) {
+            kotlinx.coroutines.delay(3000)
+            val all = rubetek.devices(house)
+            if (attempt == 1) {
+                // Для сравнения — таймеры всех конвекторов дома (в т.ч. заведённые в приложении Rubetek)
+                all.forEach { d ->
+                    val st = d.optJSONObject("state") ?: return@forEach
+                    val t = st.keys().asSequence().filter { "tmr" in it || "sched" in it || "timer" in it }
+                        .associateWith { st.opt(it) }
+                    if (t.isNotEmpty()) AppLog.i("Rubetek таймеры «${d.optString("name")}» ${d.optString("id").takeLast(6)}: $t")
+                }
+            }
+            val st = all.firstOrNull { it.optString("id") == device }?.optJSONObject("state") ?: continue
+            got = state.keys.associateWith { k -> st.opt(k) }
+            if (state.all { (k, v) -> same(k, v) }) {
+                AppLog.i("Отопление: Rubetek ${id.takeLast(6)} — модуль подтвердил таймеры (попытка $attempt)")
+                return
+            }
+        }
+        val miss = state.filter { (k, v) -> !same(k, v) }
+            .map { (k, v) -> "$k: нужно $v, в модуле ${got[k]}" }
+        AppLog.i("Отопление: Rubetek ${id.takeLast(6)} — модуль НЕ подтвердил таймеры: $miss")
+        throw IllegalStateException("облако приняло, но модуль таймеры не показал (${miss.size} из ${state.size})")
     }
 
     private fun changes(sp: DoubleArray) = (0 until 24).count { sp[it] != sp[(it + 23) % 24] }
