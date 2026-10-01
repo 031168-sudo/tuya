@@ -361,11 +361,23 @@ class HeatingEngine(context: Context) {
          * Зона с конвектором Rubetek: греть выше уставки самого конвектора он не будет — ограничиваем ею
          * максимум и комфорт, иначе план рассчитывает на недостижимый «запас тепла».
          */
-        fun rubetekZone(zone: HeatZone, deviceSetpoint: Double): HeatZone = zone.copy(
-            maxTemp = minOf(zone.maxTemp, deviceSetpoint),
-            baseTemp = minOf(zone.baseTemp, deviceSetpoint),
-            windows = zone.windows.map { it.copy(temp = minOf(it.temp, deviceSetpoint)) },
-        )
+        fun rubetekZone(zone: HeatZone, deviceSetpoint: Double): HeatZone {
+            // Конвектор держит комнату в полосе [S + h, S] (h < 0): гарантировать он может только низ полосы
+            val floor = deviceSetpoint + minOf(zone.hyst, 0.0)
+            return zone.copy(
+                maxTemp = minOf(zone.maxTemp, deviceSetpoint),
+                baseTemp = minOf(zone.baseTemp, floor),
+                windows = zone.windows.map { it.copy(temp = minOf(it.temp, floor)) },
+            )
+        }
+
+        /** Гистерезис по умолчанию для устройства (как описал хозяин дома). */
+        fun defaultHysteresis(d: app.tuyacontrol.DeviceUi): Double = when {
+            RubetekMapper.isRubetek(d.id) -> -1.0
+            d.switchIsRelay -> -0.5                          // батарея в ванной: включение на 0,5 ниже порога
+            "智能温控器" in d.productName -> 1.0               // спальня
+            else -> 0.5                                       // гостиная, коридор, летняя кухня
+        }
 
         /** Час включения/выключения по плану: в часы, где план греет, конвектор включён. (минуты, вкл?) */
         fun onOffEvents(plan: ZonePlan): List<Pair<Int, Boolean>> {

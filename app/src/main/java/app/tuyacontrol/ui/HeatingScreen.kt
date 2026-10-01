@@ -565,6 +565,21 @@ private fun ModuleTimersBlock(
 ) {
     val timers = thermostat?.moduleTimers
     val ok = Color(0xFF43A047)
+    // Конвектор держит [S + h, S]: если окно комфорта выше низа полосы — подсказать, что поставить на конвекторе
+    thermostat?.setpoint?.let { s ->
+        val low = s + minOf(zone.hyst, 0.0)
+        val need = zone.windows.maxOfOrNull { it.temp } ?: return@let
+        Text(
+            if (need > low + 1e-6) {
+                "На конвекторе ${deg(s)} — в комнате будет ${deg(low)}…${deg(s)}. Для комфорта ${deg(need)} " +
+                    "поставьте на конвекторе ${deg(need - minOf(zone.hyst, 0.0))}"
+            } else {
+                "На конвекторе ${deg(s)} — в комнате будет ${deg(low)}…${deg(s)}"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (need > low + 1e-6) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     Text("В модуле конвектора сейчас", style = MaterialTheme.typography.labelMedium)
     if (timers == null) {
         Text("Ещё не прочитано из Rubetek…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -647,6 +662,7 @@ private fun ZoneDialog(
     var heat by remember { mutableStateOf(fieldText(initial.heatRate)) }
     var loss by remember { mutableStateOf(fieldText(initial.lossRate * 100)) }
     var peakHeat by remember { mutableStateOf(initial.peakHeat) }
+    var hyst by remember { mutableStateOf(fieldText(initial.hyst)) }
     var advanced by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -669,6 +685,7 @@ private fun ZoneDialog(
             heatRate = (parse(heat) ?: return null).coerceIn(0.1, 10.0),
             lossRate = ((parse(loss) ?: return null) / 100).coerceIn(0.001, 0.5),
             peakHeat = peakHeat,
+            hysteresis = (parse(hyst) ?: return null).coerceIn(-3.0, 3.0),
         )
     }
     val result = build()
@@ -738,6 +755,15 @@ private fun ZoneDialog(
                 )
                 NumberField(max, { max = it }, "Максимум про запас °C", Modifier.fillMaxWidth())
 
+                NumberField(hyst, { hyst = it }, "Гистерезис термостата °C", Modifier.fillMaxWidth(), signed = true)
+                Text(
+                    "Как термостат держит уставку S. Плюс — греет до S + гистерезис и включается при S " +
+                        "(тёплые полы: 0,5, спальня: 1). Минус — греет до S и включается при S − гистерезис " +
+                        "(конвекторы Rubetek: −1, батарея в ванной: −0,5). Уставки пола ставятся с этой поправкой.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
                 // Конвектор Rubetek управляется только таймерами вкл/выкл
                 if (device?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
                     Row(
@@ -794,14 +820,22 @@ private fun ZoneDialog(
 }
 
 @Composable
-private fun NumberField(value: String, onChange: (String) -> Unit, label: String, modifier: Modifier, decimal: Boolean = true) {
+private fun NumberField(
+    value: String,
+    onChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier,
+    decimal: Boolean = true,
+    signed: Boolean = false,
+) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
         label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         singleLine = true,
         isError = if (decimal) parse(value) == null else value.trim().toIntOrNull() == null,
-        keyboardOptions = KeyboardOptions(keyboardType = if (decimal) KeyboardType.Decimal else KeyboardType.Number),
+        // Со знаком: на цифровой клавиатуре некоторых телефонов нет минуса
+        keyboardOptions = KeyboardOptions(keyboardType = if (signed) KeyboardType.Text else if (decimal) KeyboardType.Decimal else KeyboardType.Number),
         modifier = modifier,
     )
 }

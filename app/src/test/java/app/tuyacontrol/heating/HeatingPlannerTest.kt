@@ -52,6 +52,19 @@ class HeatingPlannerTest {
     }
 
     @Test
+    fun setpointsAccountForHysteresis() {
+        val bedroom = HeatingSettings.defaults().zones.first()
+        val p0 = HeatingPlanner.plan(bedroom.copy(hysteresis = 0.0), prices, DoubleArray(48) { -10.0 }, step = 1.0)
+        val p1 = HeatingPlanner.plan(bedroom.copy(hysteresis = 1.0), prices, DoubleArray(48) { -10.0 }, step = 1.0)
+        for (h in 0 until 24) {
+            // Термостат догревает на гистерезис выше уставки — уставка не выше, чем без гистерезиса,
+            // и не ниже границы комфорта (низ полосы)
+            assertTrue("$h", p1.setpoints[h] <= p0.setpoints[h])
+            assertTrue("$h", p1.setpoints[h] >= 18.0)
+        }
+    }
+
+    @Test
     fun comfortWindowAcrossMidnight() {
         val w = ComfortWindow(23, 11, 23.0)
         assertTrue(w.covers(23) && w.covers(0) && w.covers(10))

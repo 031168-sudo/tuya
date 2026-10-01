@@ -187,6 +187,11 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             val hints = HeatingSettings.NAME_HINTS[z.id] ?: return@map z
             val match = list.firstOrNull { t -> hints.any { t.name.contains(it, ignoreCase = true) } }
             if (match != null) z.copy(deviceId = match.id) else z
+        }.map { z ->
+            // Гистерезис не задан — берём по типу термостата
+            if (z.hysteresis != null) return@map z
+            val d = devices.firstOrNull { it.id == z.deviceId } ?: return@map z
+            z.copy(hysteresis = HeatingEngine.defaultHysteresis(d))
         }
         if (zones != settings.zones || settings != _state.value.settings) {
             settings = settings.copy(zones = zones)

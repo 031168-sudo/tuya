@@ -64,15 +64,18 @@ object HeatingPlanner {
         }
         val (temps, heat) = solve(zone, price, tout, minT, if (peakBan) peakStep else null)
 
-        // Уставки: в часы нагрева — температура, до которой греем; иначе — нижняя граница
+        // Уставки с учётом гистерезиса термостата: при h > 0 он держит [S, S+h], при h < 0 — [S+h, S].
+        // В часы нагрева верх полосы — температура, до которой греем; иначе низ полосы — граница комфорта.
+        val up = maxOf(zone.hyst, 0.0)
+        val down = minOf(zone.hyst, 0.0)
         val setpoints = DoubleArray(24) { hour ->
             val ks = hour * STEPS_PER_HOUR until (hour + 1) * STEPS_PER_HOUR
             val heating = ks.any { heat[it] > 0 }
             if (heating) {
-                // До ближайшего шага термостата, но не ниже границы комфорта
-                maxOf(roundNearest(ks.maxOf { temps[it + 1] }, step), roundUp(ks.maxOf { minT[it + 1] }, step))
+                // До ближайшего шага термостата, но так, чтобы низ полосы был не ниже границы комфорта
+                maxOf(roundNearest(ks.maxOf { temps[it + 1] } - up, step), roundUp(ks.maxOf { minT[it + 1] } - down, step))
             } else {
-                roundDown(ks.minOf { minT[it + 1] }, step)
+                roundDown(ks.minOf { minT[it + 1] } - down, step)
             }
         }
 
