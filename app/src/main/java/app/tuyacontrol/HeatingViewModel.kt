@@ -197,6 +197,19 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         _state.update { it.copy(message = "Добавлено зон: ${fresh.size}") }
     }
 
+    /** Включить/исключить зону из общей сводки: только пересчёт итогов, без записи в устройства. */
+    fun setInTotal(id: String, on: Boolean) {
+        val s = _state.value.settings
+        val updated = s.copy(zones = s.zones.map { if (it.id == id) it.copy(inTotal = on) else it })
+        engine.store.save(updated)
+        _state.update { st ->
+            st.copy(
+                settings = updated,
+                plans = st.plans.map { p -> if (p.zone.id == id) p.withZone(p.zone.copy(inTotal = on)) else p },
+            )
+        }
+    }
+
     fun deleteZone(id: String) {
         val s = _state.value.settings
         applySettings(s.copy(zones = s.zones.filterNot { it.id == id }))

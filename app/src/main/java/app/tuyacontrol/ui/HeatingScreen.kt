@@ -121,6 +121,7 @@ fun HeatingScreen(
     onDeleteZone: (String) -> Unit,
     onLocation: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
     onAddRubetek: () -> Unit,
+    onInTotal: (String, Boolean) -> Unit,
     onMessageShown: () -> Unit,
     bottomBar: @Composable () -> Unit,
 ) {
@@ -155,7 +156,11 @@ fun HeatingScreen(
                 item { SummaryCard(state, onAutopilot, onDeploy) }
                 items(state.plans, key = { it.zone.id }) { plan ->
                     val thermostat = state.thermostats.firstOrNull { it.id == plan.zone.deviceId }
-                    ZoneCard(plan, thermostat, state.prices, onEdit = { editing = plan.zone })
+                    ZoneCard(
+                        plan, thermostat, state.prices,
+                        onEdit = { editing = plan.zone },
+                        onInTotal = { onInTotal(plan.zone.id, it) },
+                    )
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -213,13 +218,19 @@ fun HeatingScreen(
 
 @Composable
 private fun SummaryCard(state: HeatingUiState, onAutopilot: (Boolean) -> Unit, onDeploy: () -> Unit) {
-    val cost = state.plans.sumOf { it.cost }
-    val base = state.plans.sumOf { it.baselineCost }
-    val kwh = state.plans.sumOf { it.kwh }
+    // В сводку — только зоны с включённым «в общем расчёте»
+    val counted = state.plans.filter { it.zone.inTotal }
+    val cost = counted.sumOf { it.cost }
+    val base = counted.sumOf { it.baselineCost }
+    val kwh = counted.sumOf { it.kwh }
     val saving = base - cost
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Сегодня по плану", style = MaterialTheme.typography.labelLarge)
+            Text(
+                if (counted.size < state.plans.size) "Сегодня по плану (зон в расчёте: ${counted.size} из ${state.plans.size})"
+                else "Сегодня по плану",
+                style = MaterialTheme.typography.labelLarge,
+            )
             Row(verticalAlignment = Alignment.Bottom) {
                 Text("≈ ${rub(cost)}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.width(10.dp))
@@ -287,7 +298,13 @@ private fun TariffLegend(prices: HourPrices) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ZoneCard(plan: ZonePlan, thermostat: Thermostat?, prices: HourPrices, onEdit: () -> Unit) {
+private fun ZoneCard(
+    plan: ZonePlan,
+    thermostat: Thermostat?,
+    prices: HourPrices,
+    onEdit: () -> Unit,
+    onInTotal: (Boolean) -> Unit,
+) {
     val zone = plan.zone
     Card {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -321,6 +338,15 @@ private fun ZoneCard(plan: ZonePlan, thermostat: Thermostat?, prices: HourPrices
                 "${num(plan.kwh)} кВт·ч · ≈ ${rub(plan.cost)}  (без оптимизации ${rub(plan.baselineCost)})",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (zone.inTotal) "В общем расчёте" else "Не входит в общий расчёт",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Switch(checked = zone.inTotal, onCheckedChange = onInTotal)
+            }
             Text(
                 zone.windows.joinToString("; ") { "${deg(it.temp)} ${it.text()}" } +
                     (if (zone.windows.any { it.from == it.to }) "" else "; остальное время ${deg(zone.baseTemp)}"),

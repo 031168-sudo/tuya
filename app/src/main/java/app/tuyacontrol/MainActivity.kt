@@ -206,6 +206,7 @@ private fun App(
             onDeleteZone = heatingViewModel::deleteZone,
             onLocation = heatingViewModel::setLocation,
             onAddRubetek = heatingViewModel::addRubetekZones,
+            onInTotal = heatingViewModel::setInTotal,
             onMessageShown = heatingViewModel::messageShown,
             bottomBar = { bottomBar(2) },
         )

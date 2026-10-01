@@ -40,6 +40,8 @@ data class HeatZone(
     val heatRate: Double = 2.0,
     /** Доля разницы с улицей, теряемая за час (1/ч). 0,03 — дом остывает на 3% разницы в час. */
     val lossRate: Double = 0.03,
+    /** Учитывать зону в общей сводке «Сегодня по плану» (на управление не влияет). */
+    val inTotal: Boolean = true,
 ) {
     /** Температура, которую нужно держать в этот час (без поправки на пик). */
     fun targetAt(hour: Int): Double = windows.filter { it.covers(hour) }.maxOfOrNull { it.temp } ?: baseTemp

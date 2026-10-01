@@ -24,7 +24,12 @@ class ZonePlan(
     val kwhByZone: DoubleArray,
     /** Сколько шагов не удаётся удержать нижнюю границу (мощности не хватает). */
     val shortSteps: Int,
-)
+) {
+    /** Тот же план с обновлёнными настройками зоны (например, флагом «в общем расчёте»). */
+    fun withZone(z: HeatZone) = ZonePlan(
+        z, temps, heat, minTemps, setpoints, kwh, cost, baselineKwh, baselineCost, kwhByZone, shortSteps,
+    )
+}
 
 /**
  * Оптимальный по деньгам график нагрева: динамическое программирование по температуре.
