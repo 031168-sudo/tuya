@@ -72,8 +72,10 @@ object RubetekMapper {
             status["temp_set"] = state.optLong("thermostat:setTemp")
             spec["temp_set"] = DpSpec("temp_set", "Integer", unit = "°C", min = 5, max = 35, step = 1, writable = true)
         }
-        if (state.has("thermostat:setMode")) {
-            status["switch"] = state.optInt("thermostat:setMode") != 0
+        // Включение — у всех конвекторов с модулем-термостатом. Модуль сообщает thermostat:setMode только после
+        // первого переключения; пока его нет, считаем конвектор включённым (он греет по своей уставке)
+        if (state.has("thermostat:setMode") || state.has("thermostat:setTemp")) {
+            status["switch"] = if (state.has("thermostat:setMode")) state.optInt("thermostat:setMode") != 0 else true
             spec["switch"] = DpSpec("switch", "Boolean", writable = true)
         }
         if (state.has("rusKlimat:SetPower")) {
