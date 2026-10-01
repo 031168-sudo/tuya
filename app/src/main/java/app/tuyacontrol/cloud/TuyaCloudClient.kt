@@ -30,6 +30,9 @@ import javax.crypto.spec.SecretKeySpec
  *   str = client_id + [access_token] + t + nonce + stringToSign
  *   sign = HMAC-SHA256(secret, str).toUpperCase()
  */
+/** Нет подписки на API — общая проблема проекта, а не конкретного устройства. */
+val TUYA_NOT_SUBSCRIBED_CODES = setOf(1106, 28841101, 28841002)
+
 class TuyaCloudClient(private val credentials: Credentials) {
 
     private val http = OkHttpClient.Builder()

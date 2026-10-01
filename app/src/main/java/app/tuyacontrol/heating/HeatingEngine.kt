@@ -4,7 +4,9 @@ import android.content.Context
 import app.tuyacontrol.cloud.DpSpec
 import app.tuyacontrol.cloud.TuyaApiException
 import app.tuyacontrol.cloud.TuyaCloudClient
+import app.tuyacontrol.cloud.TUYA_NOT_SUBSCRIBED_CODES
 import app.tuyacontrol.data.AppLog
+import app.tuyacontrol.data.CredentialsStore
 import app.tuyacontrol.energy.EnergyDb
 import app.tuyacontrol.sensor.Reading
 import app.tuyacontrol.sensor.SensorDb
@@ -115,21 +117,37 @@ class HeatingEngine(context: Context) {
             }
             try {
                 val spec = specOf(client, id)
-                val code = setpointCode(spec) ?: throw IllegalStateException("нет уставки температуры")
-                val temp = spec.getValue(code)
-                val plan = HeatingPlanner.plan(zone, prices, forecast.temps, stepOf(temp))
-                val instructs = timerInstructs(plan.setpoints, temp, code)
-                client.replaceDailyTimers(id, TIMER_CATEGORY, instructs, "Мой дом: ${zone.name}")
+                val stepSpec = spec[setpointCode(spec) ?: "heating_temp_stop"]
+                setpointCommands(spec, 20.0) ?: throw IllegalStateException("нет уставки температуры")
+                val plan = HeatingPlanner.plan(zone, prices, forecast.temps, stepOf(stepSpec))
+                val instructs = (0 until 24)
+                    .filter { h -> h == 0 || plan.setpoints[h] != plan.setpoints[(h + 23) % 24] }
+                    .map { h -> "%02d:00".format(h) to setpointCommands(spec, plan.setpoints[h])!! }
+                val viaPhone = try {
+                    client.replaceDailyTimers(id, TIMER_CATEGORY, instructs, "Мой дом: ${zone.name}")
+                    false
+                } catch (e: TuyaApiException) {
+                    if (e.code in TUYA_NOT_SUBSCRIBED_CODES) throw e
+                    // Устройство без стандартных команд (батарея в ванной): расписание Tuya не принимает —
+                    // переключает телефон, как конвекторы Rubetek
+                    AppLog.i("Отопление: ${zone.name} — облачное расписание не принято (${e.code} ${e.message}), переключает телефон")
+                    schedules[id] = plan.setpoints
+                    true
+                }
 
                 // Сразу: включить, ручной режим (чтобы встроенная программа не перебивала), уставка сейчас
                 val now = mutableListOf<Pair<String, Any?>>()
                 if (id !in store.relayDevices) spec["switch"]?.takeIf { it.writable }?.let { now += "switch" to true }
                 spec["mode"]?.takeIf { it.writable && "manual" in it.range }?.let { now += "mode" to "manual" }
-                now += code to encode(plan.setpoints[LocalTime.now().hour], temp)
-                runCatching { client.sendCommands(id, now) }
+                now += setpointCommands(spec, plan.setpoints[LocalTime.now().hour])!!
+                runCatching { sendTuya(client, id, now) }
                     .onFailure { AppLog.e("Отопление: ${zone.name} — уставка сейчас не отправлена", it) }
 
-                lines += "${zone.name}: записано ${instructs.size} переключений"
+                lines += if (viaPhone) {
+                    "${zone.name}: план в телефоне, переключений ${changes(plan.setpoints)}"
+                } else {
+                    "${zone.name}: записано ${instructs.size} переключений"
+                }
                 ok++
             } catch (e: Exception) {
                 AppLog.e("Отопление: ${zone.name} — план не записан", e)
@@ -158,6 +176,7 @@ class HeatingEngine(context: Context) {
                 continue
             }
             lines += try {
+                // Если у устройства облачного расписания не было (переключал телефон) — ошибку не считаем
                 client.deleteTimers(id, TIMER_CATEGORY)
                 "${zone.name}: расписание снято"
             } catch (e: Exception) {
@@ -181,11 +200,42 @@ class HeatingEngine(context: Context) {
     suspend fun applyRubetekNow() {
         if (!store.load().autopilot) return
         val hour = LocalTime.now().hour
+        val tuya = CredentialsStore(app).load()?.let { TuyaCloudClient(it) }
         for ((id, sp) in store.loadSchedules()) {
-            runCatching { applyRubetek(id, sp[hour]) }
-                .onFailure { AppLog.e("Отопление: уставка Rubetek не отправлена", it) }
+            runCatching {
+                if (RubetekMapper.isRubetek(id)) {
+                    applyRubetek(id, sp[hour])
+                } else if (tuya != null) {
+                    val cmds = setpointCommands(specOf(tuya, id), sp[hour]) ?: return@runCatching
+                    sendTuya(tuya, id, cmds)
+                    AppLog.i("Отопление: ${id.takeLast(6)} уставка ${sp[hour]}")
+                }
+            }.onFailure { AppLog.e("Отопление: уставка по будильнику не отправлена", it) }
         }
         HeatingAlarm.scheduleNext(app)
+    }
+
+    /**
+     * Команды «поставить уставку T». Батарея в ванной (терморегулятор S1TW) уставки нет — у неё порог
+     * включения и выключения нагрева: выключаем на T, включаем на T − 0,5 (гистерезис как у остальных).
+     */
+    private fun setpointCommands(spec: Map<String, DpSpec>, t: Double): List<Pair<String, Any?>>? {
+        val stop = spec["heating_temp_stop"]
+        val start = spec["heating_temp_start"]
+        if (setpointCode(spec) == null && stop != null && start != null) {
+            return listOf("heating_temp_stop" to encode(t, stop), "heating_temp_start" to encode(t - 0.5, start))
+        }
+        val code = setpointCode(spec) ?: return null
+        return listOf(code to encode(t, spec.getValue(code)))
+    }
+
+    /** Стандартные команды, а если устройство их не понимает — свойства Things Data Model. */
+    private suspend fun sendTuya(client: TuyaCloudClient, id: String, cmds: List<Pair<String, Any?>>) {
+        try {
+            client.sendCommands(id, cmds)
+        } catch (e: TuyaApiException) {
+            client.sendProperties(id, cmds)
+        }
     }
 
     private fun changes(sp: DoubleArray) = (0 until 24).count { sp[it] != sp[(it + 23) % 24] }

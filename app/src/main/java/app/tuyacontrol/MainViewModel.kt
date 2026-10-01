@@ -137,6 +137,8 @@ data class DeviceUi(
     val setpointCode: String?
         get() {
             if ("temp_set" in status || "temp_set" in spec) return "temp_set"
+            // Терморегулятор S1TW (батарея в ванной): уставкой служит порог выключения нагрева
+            if ("heating_temp_stop" in status && "heating_temp_start" in status) return "heating_temp_stop"
             return (status.keys + spec.keys).firstOrNull { c ->
                 val s = spec[c]
                 s != null && s.writable && s.type == "Integer" && "temp" in c && "set" in c
