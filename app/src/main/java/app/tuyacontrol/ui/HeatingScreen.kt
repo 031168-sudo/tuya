@@ -378,7 +378,7 @@ private fun ZoneCard(
             if (plan.shortSteps > 0) {
                 Text(
                     "Мощности не хватает, чтобы держать комфорт ≈ ${num(plan.shortSteps / 4.0)} ч в сутки — " +
-                        "проверьте параметры пола в настройках зоны",
+                        "проверьте параметры ${if (zone.isFloor) "пола" else "обогревателя"} в настройках зоны",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -526,11 +526,11 @@ private fun HowItWorks() {
     Text(
         "Как считается: для каждой комнаты приложение перебирает варианты нагрева на двое суток вперёд с шагом " +
             "15 минут и выбирает самый дешёвый, при котором температура не опускается ниже заданной. Учитываются " +
-            "тарифы из раздела «Тарифы» и прогноз уличной температуры. Пол прогревается с запасом ночью и в " +
-            "полупик, а в пиковые часы отдаёт тепло. «Без оптимизации» — тот же комфорт, но без запаса и без " +
-            "просадки в пик. Параметры пола (мощность, скорость нагрева, остывание) пока типовые — их можно " +
-            "уточнить в настройках зоны. Термостаты Tuya переключает облачное расписание Tuya, конвекторы " +
-            "Rubetek — телефон по будильнику в начале часа (нужен интернет на телефоне).",
+            "тарифы из раздела «Тарифы» и прогноз уличной температуры. Где включено «Копить тепло заранее», " +
+            "комната прогревается с запасом ночью и в полупик, а в пиковые часы отдаёт тепло. «Без оптимизации» — " +
+            "тот же комфорт, но без запаса и без просадки в пик. Параметры (мощность, скорость нагрева, остывание) " +
+            "пока типовые — их можно уточнить в настройках зоны. План записывается прямо в устройства: в программу " +
+            "термостата или в таймеры модуля конвектора — работает без интернета и телефона.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 4.dp),
@@ -752,6 +752,7 @@ private fun ZoneDialog(
     var loss by remember { mutableStateOf(fieldText(initial.lossRate * 100)) }
     var peakHeat by remember { mutableStateOf(initial.peakHeat) }
     var hyst by remember { mutableStateOf(fieldText(initial.hyst)) }
+    var storeHeat by remember { mutableStateOf(initial.storeHeat ?: initial.isFloor) }
     var advanced by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -775,6 +776,7 @@ private fun ZoneDialog(
             lossRate = ((parse(loss) ?: return null) / 100).coerceIn(0.001, 0.5),
             peakHeat = peakHeat,
             hysteresis = (parse(hyst) ?: return null).coerceIn(-3.0, 3.0),
+            storeHeat = storeHeat,
         )
     }
     val result = build()
@@ -837,12 +839,33 @@ private fun ZoneDialog(
                 }
                 Text(
                     "Просадка в пик — на сколько градусов можно опустить температуру ниже комфортной в часы пикового " +
-                        "тарифа (7–10, 17–21). Пол заранее прогревается по дешёвому тарифу и в пик не включается, " +
-                        "пока комната не остынет на эту величину. 0 — держать комфорт всегда.",
+                        "тарифа (7–10, 17–21). В пик нагрев не включается, пока комната не остынет на эту величину. " +
+                        "0 — держать комфорт всегда.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 NumberField(max, { max = it }, "Максимум про запас °C", Modifier.fillMaxWidth())
+
+                if (device?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } != true) {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { storeHeat = !storeHeat },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("Копить тепло заранее", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        Switch(checked = storeHeat, onCheckedChange = { storeHeat = it })
+                    }
+                    Text(
+                        if (storeHeat) {
+                            "Греть по дешёвому тарифу выше нужного (до «максимума про запас»), чтобы потом не греть " +
+                                "по дорогому. Выгодно для тёплого пола — он долго отдаёт тепло."
+                        } else {
+                            "Вне окон комфорта держится только дежурная температура, прогрев начинается впритык " +
+                                "перед окном. Для обогревателей, которые быстро греют и быстро остывают."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
                 NumberField(hyst, { hyst = it }, "Гистерезис термостата °C", Modifier.fillMaxWidth(), signed = true)
                 Text(
@@ -875,7 +898,8 @@ private fun ZoneDialog(
                     )
                 }
 
-                TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Скрыть параметры пола" else "Параметры пола…") }
+                val what = if (initial.isFloor) "пола" else "обогревателя"
+                TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Скрыть параметры $what" else "Параметры $what…") }
                 if (advanced) {
                     NumberField(power, { power = it }, "Мощность, кВт", Modifier.fillMaxWidth())
                     NumberField(heat, { heat = it }, "Нагрев, °C в час при полной мощности", Modifier.fillMaxWidth())

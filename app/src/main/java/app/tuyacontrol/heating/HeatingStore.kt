@@ -116,6 +116,7 @@ class HeatingStore(context: Context) {
                     .put("control", z.control)
                     .put("peak_heat", z.peakHeat)
                     .put("hyst", z.hysteresis ?: JSONObject.NULL)
+                    .put("store_heat", z.storeHeat ?: JSONObject.NULL)
                     .put("windows", JSONArray().apply {
                         z.windows.forEach { w ->
                             put(JSONObject().put("from", w.from).put("to", w.to).put("temp", w.temp))
@@ -148,6 +149,7 @@ class HeatingStore(context: Context) {
                 control = z.optBoolean("control", false),
                 peakHeat = z.optBoolean("peak_heat", false),
                 hysteresis = if (z.isNull("hyst") || !z.has("hyst")) null else z.optDouble("hyst"),
+                storeHeat = if (z.isNull("store_heat") || !z.has("store_heat")) null else z.optBoolean("store_heat"),
             )
         }
         return HeatingSettings(

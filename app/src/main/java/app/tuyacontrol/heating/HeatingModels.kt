@@ -53,7 +53,17 @@ data class HeatZone(
      *  < 0: греет до S, включается при S + h (конвекторы Rubetek −1, батарея в ванной −0,5).
      */
     val hysteresis: Double? = null,
+    /**
+     * Копить тепло заранее: греть по дешёвому тарифу выше нужного, чтобы потом не греть по дорогому.
+     * Выключено — вне окон комфорта держим только дежурную и начинаем прогрев «впритык» к окну.
+     * null — по умолчанию (включено).
+     */
+    val storeHeat: Boolean? = null,
 ) {
+    /** Тёплый пол (гостиная, спальня); остальное — обогреватели (ИК под потолком, конвекторы, батарея). */
+    val isFloor: Boolean
+        get() = id in setOf("bedroom", "living") || listOf("спальн", "гостин").any { name.contains(it, ignoreCase = true) }
+
     /** Гистерезис с учётом значения по умолчанию. */
     val hyst: Double
         get() = hysteresis ?: if (deviceId?.startsWith("rubetek:") == true) -1.0 else 0.5

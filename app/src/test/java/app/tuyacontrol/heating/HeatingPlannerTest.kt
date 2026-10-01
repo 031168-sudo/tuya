@@ -65,6 +65,15 @@ class HeatingPlannerTest {
     }
 
     @Test
+    fun noHeatStorageKeepsBaseOutsideWindow() {
+        val hall = HeatingSettings.defaults().zones.first { it.id == "hall" }.copy(storeHeat = false, heatRate = 5.0)
+        val p = HeatingPlanner.plan(hall, prices, DoubleArray(48) { 5.0 })
+        // Ночью коридор не «заряжаем»: до 9 утра не выше дежурной + 1°
+        for (k in 0..36) assertTrue("шаг $k: ${p.temps[k]}", p.temps[k] <= hall.baseTemp + 1.0 + 1e-6)
+        assertEquals(0, p.shortSteps)
+    }
+
+    @Test
     fun comfortWindowAcrossMidnight() {
         val w = ComfortWindow(23, 11, 23.0)
         assertTrue(w.covers(23) && w.covers(0) && w.covers(10))
