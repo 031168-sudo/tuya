@@ -97,6 +97,22 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) continue
                 val raw = runCatching { client.timersRaw(id) }.getOrElse { "ошибка: ${it.message}" }
                 app.tuyacontrol.data.AppLog.i("Расписания устройства зоны «${z.name}»: $raw")
+                // Все DP модели устройства (включая скрытые raw) — есть ли у него своё расписание на борту
+                val model = runCatching { client.getThingModel(id) }.getOrNull()
+                if (model != null) {
+                    app.tuyacontrol.data.AppLog.i(
+                        "Модель устройства зоны «${z.name}»: " +
+                            model.values.joinToString { "${it.code}#${it.dpId}:${it.type}${if (it.writable) "(rw)" else ""}" }
+                    )
+                }
+                // Что устройство сообщало за последние 2 часа (запись расписания на борт видна как отчёт DP)
+                val now = System.currentTimeMillis()
+                val logs = runCatching { client.getDeviceLogs(id, "", now - 2 * 3600_000L, now, maxPages = 3) }.getOrDefault(emptyList())
+                app.tuyacontrol.data.AppLog.i(
+                    "Отчёты устройства зоны «${z.name}» за 2 ч: " +
+                        logs.filter { it.code !in setOf("cur_current", "cur_power", "cur_voltage", "temp_current", "temp_current_f", "add_ele", "total_electricity", "cost") }
+                            .joinToString { "${it.code}=${it.value.take(80)}" }
+                )
             }
         }
     }
