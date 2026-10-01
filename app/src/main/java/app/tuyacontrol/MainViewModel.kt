@@ -105,6 +105,40 @@ data class DeviceUi(
             else -> "devices_other"
         }
 
+    /**
+     * Греет ли обогреватель прямо сейчас (null — не обогреватель или неизвестно):
+     * work_state / valve_state термостата; у «温控仪» и розеток-терморегуляторов — их реле (switch).
+     */
+    val heatingNow: Boolean?
+        get() {
+            if (!online || isSensor) return null
+            val main = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
+            status["work_state"]?.let { v ->
+                if (main == false) return false
+                return when (v.toString().lowercase()) {
+                    "1", "heating", "heat", "hot", "warming", "true", "open", "on" -> true
+                    "0", "idle", "stop", "standby", "cold", "false", "close", "off", "manual" -> false
+                    else -> null
+                }
+            }
+            status["valve_state"]?.let { v ->
+                if (main == false) return false
+                return v == true || v.toString().lowercase() in setOf("open", "1", "true", "on")
+            }
+            if (productName.contains(ALWAYS_ON_PRODUCT) || "heating_temp_start" in status) return main
+            return null
+        }
+
+    /** Код уставки температуры: temp_set или похожий записываемый DP («set_temp» и т.п.). */
+    val setpointCode: String?
+        get() {
+            if ("temp_set" in status || "temp_set" in spec) return "temp_set"
+            return (status.keys + spec.keys).firstOrNull { c ->
+                val s = spec[c]
+                s != null && s.writable && s.type == "Integer" && "temp" in c && "set" in c
+            }
+        }
+
     /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
     val hasEnergy: Boolean
         get() = productName.contains(ENERGY_PRODUCT, ignoreCase = true)
@@ -180,6 +214,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var baseDevices: List<DeviceUi> = emptyList()
     private var foreground = false
     private var localStartJob: Job? = null
+    private var codesLogged = false
     private val rubetekStore = app.tuyacontrol.rubetek.RubetekStore(application)
     private val rubetek = app.tuyacontrol.rubetek.RubetekClient(rubetekStore)
     /** Устройства Rubetek (только облако), показываются вместе с Tuya. */
@@ -435,6 +470,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 AppLog.i("Устройств: ${cloudDevices.size}")
                 val devices = loadDetails(c, cloudDevices)
                 baseDevices = devices.sortedBy { d -> d.name.lowercase() }
+                if (!codesLogged) {
+                    // Один раз за запуск: какие DP есть у каждого устройства (для разбора новых моделей)
+                    codesLogged = true
+                    devices.forEach { d ->
+                        AppLog.i("DP «${d.name}» (${d.productName}): " + d.status.entries.joinToString { "${it.key}=${it.value}" } +
+                            " | уставка=${d.setpointCode} греет=${d.heatingNow}")
+                    }
+                }
                 deviceCache.save(baseDevices)
                 _state.update { it.copy(loading = false, lastUpdated = System.currentTimeMillis()) }
                 publish()

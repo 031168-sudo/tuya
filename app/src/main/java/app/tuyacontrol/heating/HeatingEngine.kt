@@ -71,16 +71,17 @@ class HeatingEngine(context: Context) {
             }
             try {
                 val spec = specOf(client, id)
-                val temp = spec["temp_set"] ?: throw IllegalStateException("нет уставки temp_set")
+                val code = setpointCode(spec) ?: throw IllegalStateException("нет уставки температуры")
+                val temp = spec.getValue(code)
                 val plan = HeatingPlanner.plan(zone, prices, forecast.temps, stepOf(temp))
-                val instructs = timerInstructs(plan.setpoints, temp)
+                val instructs = timerInstructs(plan.setpoints, temp, code)
                 client.replaceDailyTimers(id, TIMER_CATEGORY, instructs, "Мой дом: ${zone.name}")
 
                 // Сразу: включить, ручной режим (чтобы встроенная программа не перебивала), уставка сейчас
                 val now = mutableListOf<Pair<String, Any?>>()
                 spec["switch"]?.takeIf { it.writable }?.let { now += "switch" to true }
                 spec["mode"]?.takeIf { it.writable && "manual" in it.range }?.let { now += "mode" to "manual" }
-                now += "temp_set" to encode(plan.setpoints[LocalTime.now().hour], temp)
+                now += code to encode(plan.setpoints[LocalTime.now().hour], temp)
                 runCatching { client.sendCommands(id, now) }
                     .onFailure { AppLog.e("Отопление: ${zone.name} — уставка сейчас не отправлена", it) }
 
@@ -147,16 +148,21 @@ class HeatingEngine(context: Context) {
 
     private suspend fun specOf(client: TuyaCloudClient, id: String): Map<String, DpSpec> {
         val spec = runCatching { client.getSpecification(id) }.getOrDefault(emptyMap())
-        return if ("temp_set" in spec) spec else spec + runCatching { client.getThingModel(id) }.getOrDefault(emptyMap())
+        return if (setpointCode(spec) != null) spec else spec + runCatching { client.getThingModel(id) }.getOrDefault(emptyMap())
     }
 
     /** Таймеры только на часы, где уставка меняется. */
-    private fun timerInstructs(setpoints: DoubleArray, temp: DpSpec): List<Pair<String, List<Pair<String, Any?>>>> {
+    private fun setpointCode(spec: Map<String, DpSpec>): String? =
+        if ("temp_set" in spec) "temp_set" else spec.entries.firstOrNull { (c, s) ->
+            s.writable && s.type == "Integer" && "temp" in c && "set" in c
+        }?.key
+
+    private fun timerInstructs(setpoints: DoubleArray, temp: DpSpec, code: String): List<Pair<String, List<Pair<String, Any?>>>> {
         val out = mutableListOf<Pair<String, List<Pair<String, Any?>>>>()
         for (h in 0 until 24) {
             val prev = setpoints[(h + 23) % 24]
             if (h == 0 || setpoints[h] != prev) {
-                out += "%02d:00".format(h) to listOf("temp_set" to encode(setpoints[h], temp))
+                out += "%02d:00".format(h) to listOf(code to encode(setpoints[h], temp))
             }
         }
         return out

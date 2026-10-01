@@ -28,6 +28,8 @@ data class Thermostat(
     val current: Double?,
     val setpoint: Double?,
     val step: Double,
+    /** Греет сейчас (null — устройство не сообщает). */
+    val heating: Boolean? = null,
 )
 
 data class HeatingUiState(
@@ -63,16 +65,18 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     /** Термостаты приходят с главного экрана; пустым зонам подбираем устройство по названию. */
     fun setDevices(devices: List<DeviceUi>) {
-        val list = devices.filter { "temp_set" in it.status || "temp_set" in it.spec }.map { d ->
+        val list = devices.filter { it.setpointCode != null }.map { d ->
             val cur = d.spec["temp_current"]
-            val set = d.spec["temp_set"]
+            val code = d.setpointCode!!
+            val set = d.spec[code]
             Thermostat(
                 id = d.id,
                 name = d.name,
                 online = d.online,
                 current = (d.status["temp_current"] as? Number)?.toDouble()?.let { it / pow10(cur?.scale ?: 0) },
-                setpoint = (d.status["temp_set"] as? Number)?.toDouble()?.let { it / pow10(set?.scale ?: 0) },
+                setpoint = (d.status[code] as? Number)?.toDouble()?.let { it / pow10(set?.scale ?: 0) },
                 step = HeatingEngine.stepOf(set),
+                heating = d.heatingNow,
             )
         }.sortedBy { it.name.lowercase() }
         var settings = _state.value.settings

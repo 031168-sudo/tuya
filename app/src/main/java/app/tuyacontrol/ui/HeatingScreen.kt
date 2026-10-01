@@ -290,7 +290,13 @@ private fun ZoneCard(plan: ZonePlan, thermostat: Thermostat?, prices: HourPrices
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(zone.name, style = MaterialTheme.typography.titleMedium)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(zone.name, style = MaterialTheme.typography.titleMedium)
+                        thermostat?.heating?.let {
+                            Spacer(Modifier.width(6.dp))
+                            HeatingIndicator(it)
+                        }
+                    }
                     Text(
                         when {
                             thermostat == null -> "Термостат не выбран"

@@ -254,12 +254,19 @@ private fun DeviceCard(
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        device.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            device.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        device.heatingNow?.let {
+                            Spacer(Modifier.width(6.dp))
+                            HeatingIndicator(it)
+                        }
+                    }
                     if (category != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
@@ -515,4 +522,32 @@ private fun ConnectionBadge(device: DeviceUi) {
             .border(1.dp, color, RoundedCornerShape(6.dp))
             .padding(horizontal = 5.dp, vertical = 1.dp),
     )
+}
+
+
+private val HeatOnColor = androidx.compose.ui.graphics.Color(0xFFE5483B)
+
+/** Греет — красные волны тепла; не греет — те же волны серым и перечёркнуты. */
+@Composable
+fun HeatingIndicator(heating: Boolean, size: androidx.compose.ui.unit.Dp = 20.dp) {
+    val grey = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+        Icon(
+            DeviceIcons.vector("heat_wave"),
+            contentDescription = if (heating) "Греет" else "Не греет",
+            tint = if (heating) HeatOnColor else grey,
+            modifier = Modifier.size(size),
+        )
+        if (!heating) {
+            androidx.compose.foundation.Canvas(Modifier.size(size)) {
+                drawLine(
+                    grey,
+                    start = androidx.compose.ui.geometry.Offset(this.size.width * 0.12f, this.size.height * 0.12f),
+                    end = androidx.compose.ui.geometry.Offset(this.size.width * 0.88f, this.size.height * 0.88f),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+            }
+        }
+    }
 }
