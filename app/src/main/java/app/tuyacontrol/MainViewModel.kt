@@ -146,6 +146,8 @@ data class UiState(
     val localFound: Map<String, LocalAnnounce> = emptyMap(),
     val localScanning: Boolean = false,
     val localScannedAt: Long? = null,
+    /** Куда вернуться из графиков/энергии: список устройств или категория, откуда открыли. */
+    val returnTo: Screen? = null,
     /** Открытая категория (экран CategoryDevices). */
     val categoryId: String? = null,
     val mode: ControlMode = ControlMode.AUTO,
@@ -211,7 +213,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Последний известный список — сразу на экран (и для работы без интернета)
             baseDevices = deviceCache.load().sortedBy { it.name.lowercase() }
             baseDevices.forEach { d -> if (d.dpIds.isNotEmpty()) dpIdCache[d.id] = d.dpIds }
-            _state.update { it.copy(screen = Screen.Devices, credentials = saved) }
+            _state.update { it.copy(screen = Screen.Categories, credentials = saved) }
             publish()
             refresh()
         }
@@ -278,16 +280,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------- Навигация ----------
 
-    fun open(screen: Screen) = _state.update { it.copy(screen = screen, setupError = null) }
+    fun open(screen: Screen) = _state.update {
+        // Графики и энергию открываем «поверх» списка — запоминаем, куда вернуться
+        val from = if (screen == Screen.Sensor || screen == Screen.Energy) {
+            it.screen.takeIf { s -> s == Screen.Devices || s == Screen.CategoryDevices } ?: it.returnTo
+        } else {
+            it.returnTo
+        }
+        it.copy(screen = screen, setupError = null, returnTo = from)
+    }
 
     fun back(): Boolean {
         val s = _state.value
         return if (s.screen == Screen.Tariffs) {
             open(Screen.Energy); true
+        } else if ((s.screen == Screen.Sensor || s.screen == Screen.Energy) && s.returnTo != null) {
+            // Обратно туда, откуда открыли: в список устройств или в ту же категорию
+            _state.update { it.copy(screen = s.returnTo, returnTo = null) }; true
         } else if (s.screen == Screen.CategoryDevices) {
             open(Screen.Categories); true
-        } else if (s.screen != Screen.Devices && s.credentials != null) {
-            open(Screen.Devices); true
+        } else if (s.screen != Screen.Categories && s.credentials != null) {
+            // Главный экран — категории
+            open(Screen.Categories); true
         } else {
             false
         }
@@ -375,7 +389,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         setupInProgress = false,
                         credentials = creds,
-                        screen = Screen.Devices,
+                        screen = Screen.Categories,
                         devices = emptyList(),
                     )
                 }
@@ -736,7 +750,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (System.currentTimeMillis() - last > 30_000) refresh(silent = true)
             while (isActive) {
                 delay(AUTO_REFRESH_MS)
-                if (_state.value.screen == Screen.Devices) refresh(silent = true)
+                if (_state.value.screen in setOf(Screen.Devices, Screen.Categories, Screen.CategoryDevices)) refresh(silent = true)
             }
         }
     }

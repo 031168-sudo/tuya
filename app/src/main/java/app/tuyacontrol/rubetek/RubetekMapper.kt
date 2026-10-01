@@ -78,21 +78,15 @@ object RubetekMapper {
             status["switch"] = if (state.has("thermostat:setMode")) state.optInt("thermostat:setMode") != 0 else true
             spec["switch"] = DpSpec("switch", "Boolean", writable = true)
         }
-        if (state.has("rusKlimat:SetPower")) {
-            status["power_level"] = state.optInt("rusKlimat:SetPower")
-            spec["power_level"] = DpSpec("power_level", "Integer")
-        }
-        if (state.has("rusKlimat:Mode")) {
-            status["rk_mode"] = state.optInt("rusKlimat:Mode")
-            spec["rk_mode"] = DpSpec("rk_mode", "Integer")
-        }
 
+        // У конвекторов лишние поля не показываем: ступень мощности и режим дублируют приложение Rubetek
+        val convector = state.has("thermostat:setTemp")
         // Остальные поля состояния показываем как есть (только чтение): у конвекторов, обогревателей и
         // других «донглов» Rubetek свой набор ключей, его сопоставим по мере знакомства с устройствами
         val keys = state.keys()
         while (keys.hasNext()) {
             val k = keys.next()
-            if (k in KNOWN || SERVICE_PREFIXES.any { k.startsWith(it) }) continue
+            if (convector || k in KNOWN || SERVICE_PREFIXES.any { k.startsWith(it) }) continue
             val v = state.opt(k)
             when (v) {
                 is Boolean -> { status[k] = v; spec[k] = DpSpec(k, "Boolean") }
@@ -119,7 +113,10 @@ object RubetekMapper {
             category = CATEGORY,
             status = status,
             spec = spec,
-            lastDataTime = runCatching { OffsetDateTime.parse(o.optString("updated_at")).toInstant().toEpochMilli() }.getOrDefault(0L),
+            // Облако Rubetek отдаёт живое состояние: у устройства в сети данные свежие (updated_at — время
+            // изменения настроек устройства, а не показаний)
+            lastDataTime = if (online) System.currentTimeMillis() else
+                runCatching { OffsetDateTime.parse(o.optString("updated_at")).toInstant().toEpochMilli() }.getOrDefault(0L),
         )
     }
 

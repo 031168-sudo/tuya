@@ -83,6 +83,8 @@ fun DevicesScreen(
     onBack: (() -> Unit)? = null,
     bottomBar: @Composable () -> Unit = {},
     onModeChange: (ControlMode) -> Unit = {},
+    /** Положение прокрутки хранится снаружи: после графиков возвращаемся на то же устройство. */
+    listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
 ) {
     val snackbar = remember { SnackbarHostState() }
     val categories = state.categories.associateBy { it.id }
@@ -155,6 +157,7 @@ fun DevicesScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     contentPadding = PaddingValues(12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize(),

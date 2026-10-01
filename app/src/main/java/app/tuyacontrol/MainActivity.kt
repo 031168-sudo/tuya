@@ -109,11 +109,14 @@ private fun App(
         }
     }
 
-    BackHandler(enabled = state.screen != Screen.Devices && state.credentials != null) {
+    BackHandler(enabled = state.screen != Screen.Categories && state.credentials != null) {
         viewModel.back()
     }
 
     var editDevice by remember { mutableStateOf<DeviceUi?>(null) }
+    // Прокрутка списков живёт дольше экрана: вернулись из графиков — стоим на том же устройстве
+    val devicesListState = remember { androidx.compose.foundation.lazy.LazyListState() }
+    val categoryListStates = remember { mutableMapOf<String, androidx.compose.foundation.lazy.LazyListState>() }
     val openEnergy: (String?) -> Unit = { deviceId ->
         energyViewModel.select(deviceId)
         viewModel.open(Screen.Energy)
@@ -161,6 +164,7 @@ private fun App(
             onEditDevice = { editDevice = it },
             bottomBar = { bottomBar(0) },
             onModeChange = viewModel::setMode,
+            listState = devicesListState,
         )
         Screen.Categories -> CategoriesScreen(
             categories = state.categories,
@@ -188,6 +192,9 @@ private fun App(
                 onBack = { viewModel.back() },
                 bottomBar = { bottomBar(1) },
                 onModeChange = viewModel::setMode,
+                listState = categoryListStates.getOrPut(state.categoryId.orEmpty()) {
+                    androidx.compose.foundation.lazy.LazyListState()
+                },
             )
         }
         Screen.Heating -> HeatingScreen(
