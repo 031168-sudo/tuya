@@ -27,20 +27,23 @@ class Weather(context: Context) {
             val url = String.format(
                 Locale.US,
                 "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f" +
-                    "&hourly=temperature_2m&forecast_days=2&timezone=auto",
+                    "&hourly=temperature_2m&past_days=1&forecast_days=2&timezone=auto",
                 lat, lon,
             )
             val text = http.newCall(Request.Builder().url(url).build()).execute().use { r ->
                 if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
                 r.body?.string().orEmpty()
             }
+            // past_days=1: первые 24 часа — вчера (для сверки с уличным датчиком), дальше сегодня и завтра
             val arr = JSONObject(text).getJSONObject("hourly").getJSONArray("temperature_2m")
-            val temps = DoubleArray(48) { i -> arr.optDouble(i.coerceAtMost(arr.length() - 1), 0.0) }
+            val yesterday = DoubleArray(24) { i -> arr.optDouble(i, Double.NaN) }
+            val temps = DoubleArray(48) { i -> arr.optDouble((24 + i).coerceAtMost(arr.length() - 1), 0.0) }
+            prefs.edit().putString("yesterday", JSONArray(yesterday.map { if (it.isNaN()) JSONObject.NULL else it }).toString()).apply()
             prefs.edit()
                 .putString("temps", JSONArray(temps.toList()).toString())
                 .putString("day", LocalDate.now().toString())
                 .apply()
-            Forecast(temps, fresh = true)
+            Forecast(temps, fresh = true, yesterday = yesterday)
         } catch (e: Exception) {
             AppLog.e("Прогноз погоды не получен", e)
             cached() ?: Forecast(DoubleArray(48) { FALLBACK_TEMP }, fresh = false)
@@ -57,7 +60,17 @@ class Weather(context: Context) {
         return Forecast(DoubleArray(48) { all.getOrElse(it + shift) { all.lastOrNull() ?: FALLBACK_TEMP } }, fresh = false)
     }
 
-    class Forecast(val temps: DoubleArray, val fresh: Boolean)
+    /**
+     * @param temps 48 часов с 00:00 сегодня
+     * @param yesterday прогноз на вчера по часам (NaN — нет), для сверки с уличным датчиком
+     * @param bias поправка по уличному датчику, уже прибавленная к temps (0 — без поправки)
+     */
+    class Forecast(
+        val temps: DoubleArray,
+        val fresh: Boolean,
+        val yesterday: DoubleArray = DoubleArray(24) { Double.NaN },
+        val bias: Double = 0.0,
+    )
 
     private companion object {
         const val FALLBACK_TEMP = -5.0

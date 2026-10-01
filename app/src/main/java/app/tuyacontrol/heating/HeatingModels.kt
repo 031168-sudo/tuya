@@ -59,6 +59,9 @@ data class HeatingSettings(
     val longitude: Double = 37.62,
     /** Автопилот: план записан в облачное расписание термостатов. */
     val autopilot: Boolean = false,
+    /** Уличный датчик температуры (id устройства и код DP); null — не выбран. */
+    val outdoorSensorId: String? = null,
+    val outdoorCode: String? = null,
 ) {
     companion object {
         /** Начальные настройки по словам хозяина дома. */

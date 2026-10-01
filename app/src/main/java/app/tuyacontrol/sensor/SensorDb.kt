@@ -81,6 +81,12 @@ class SensorDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
         if (c.moveToFirst() && c.getInt(3) > 0) SeriesStats(c.getDouble(0), c.getDouble(1), c.getDouble(2), c.getInt(3)) else null
     }
 
+    /** Последнее показание кода. */
+    fun last(deviceId: String, code: String): Reading? = readableDatabase.rawQuery(
+        "SELECT time, value FROM readings WHERE device_id = ? AND code = ? ORDER BY time DESC LIMIT 1",
+        arrayOf(deviceId, code),
+    ).use { c -> if (c.moveToFirst()) Reading(code, c.getLong(0), c.getDouble(1)) else null }
+
     /** Самое раннее показание — с какого момента есть история. */
     fun firstTime(deviceId: String): Long? = readableDatabase.rawQuery(
         "SELECT MIN(time) FROM readings WHERE device_id = ?",

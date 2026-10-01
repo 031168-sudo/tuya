@@ -57,6 +57,8 @@ class HeatingStore(context: Context) {
         .put("lat", s.latitude)
         .put("lon", s.longitude)
         .put("autopilot", s.autopilot)
+        .put("outdoor_id", s.outdoorSensorId ?: JSONObject.NULL)
+        .put("outdoor_code", s.outdoorCode ?: JSONObject.NULL)
         .put("zones", JSONArray().apply {
             s.zones.forEach { z ->
                 put(JSONObject()
@@ -104,6 +106,8 @@ class HeatingStore(context: Context) {
             latitude = o.optDouble("lat", 55.75),
             longitude = o.optDouble("lon", 37.62),
             autopilot = o.optBoolean("autopilot", false),
+            outdoorSensorId = if (o.isNull("outdoor_id")) null else o.optString("outdoor_id").ifEmpty { null },
+            outdoorCode = if (o.isNull("outdoor_code")) null else o.optString("outdoor_code").ifEmpty { null },
         )
     }
 

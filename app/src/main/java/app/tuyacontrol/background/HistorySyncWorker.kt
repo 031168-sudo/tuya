@@ -61,13 +61,6 @@ class HistorySyncWorker(context: Context, params: WorkerParameters) : CoroutineW
             targets.lastResult = "Нет ключей Tuya"
             return Result.success()
         }
-        // Автопилот отопления: пересчитать план по свежему прогнозу и перезаписать расписание
-        val heating = HeatingEngine(ctx)
-        val heatingSettings = heating.store.load()
-        if (heatingSettings.autopilot) {
-            runCatching { heating.deploy(TuyaCloudClient(creds), heatingSettings) }
-                .onFailure { AppLog.e("Фон: план отопления не обновлён", it) }
-        }
 
         val energy = targets.energy()
         val sensors = targets.sensors()
@@ -91,6 +84,15 @@ class HistorySyncWorker(context: Context, params: WorkerParameters) : CoroutineW
             runCatching { sensorSync.sync(client, d) {} }
                 .onFailure { errors += "${d.name}: ${it.message ?: it.javaClass.simpleName}" }
             delay(3_000)
+        }
+
+        // Автопилот отопления: после загрузки истории (в ней и уличный датчик для поправки прогноза)
+        // пересчитать план по свежему прогнозу и перезаписать расписание
+        val heating = HeatingEngine(ctx)
+        val heatingSettings = heating.store.load()
+        if (heatingSettings.autopilot) {
+            runCatching { heating.deploy(TuyaCloudClient(creds), heatingSettings) }
+                .onFailure { AppLog.e("Фон: план отопления не обновлён", it) }
         }
 
         val now = System.currentTimeMillis()

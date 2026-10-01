@@ -119,7 +119,7 @@ fun HeatingScreen(
     onDeploy: () -> Unit,
     onSaveZone: (HeatZone) -> Unit,
     onDeleteZone: (String) -> Unit,
-    onLocation: (Double, Double) -> Unit,
+    onLocation: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
     onAddRubetek: () -> Unit,
     onMessageShown: () -> Unit,
     bottomBar: @Composable () -> Unit,
@@ -170,7 +170,7 @@ fun HeatingScreen(
                             Spacer(Modifier.width(6.dp))
                             Text("Зона")
                         }
-                        OutlinedButton(onClick = { editLocation = true }) { Text("Место для погоды") }
+                        OutlinedButton(onClick = { editLocation = true }) { Text("Погода и улица") }
                     }
                 }
                 val used = state.settings.zones.mapNotNull { it.deviceId }.toSet()
@@ -203,8 +203,10 @@ fun HeatingScreen(
         LocationDialog(
             lat = state.settings.latitude,
             lon = state.settings.longitude,
+            sensors = state.outdoorSensors,
+            selected = state.settings.outdoorSensorId,
             onDismiss = { editLocation = false },
-            onSave = { la, lo -> onLocation(la, lo); editLocation = false },
+            onSave = { la, lo, sensor -> onLocation(la, lo, sensor); editLocation = false },
         )
     }
 }
@@ -238,6 +240,7 @@ private fun SummaryCard(state: HeatingUiState, onAutopilot: (Boolean) -> Unit, o
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+            OutdoorLine(state)
             TariffLegend(state.prices)
             HorizontalDivider(Modifier.padding(vertical = 4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -637,17 +640,46 @@ private fun NumberField(value: String, onChange: (String) -> Unit, label: String
     )
 }
 
+/** Уличный датчик: сейчас на улице и поправка прогноза; если датчик молчит — предупреждение. */
 @Composable
-private fun LocationDialog(lat: Double, lon: Double, onDismiss: () -> Unit, onSave: (Double, Double) -> Unit) {
+private fun OutdoorLine(state: HeatingUiState) {
+    val id = state.settings.outdoorSensorId?.takeIf { it != "-" } ?: return
+    val name = state.outdoorSensors.firstOrNull { it.id == id }?.name ?: "датчик"
+    val now = state.outdoorNow
+    val stale = state.outdoorTime > 0 && System.currentTimeMillis() - state.outdoorTime > 3 * 3600_000L
+    val text = when {
+        now == null || stale -> "Уличный датчик «$name» не присылает данные — прогноз без поправки"
+        state.outdoorBias != 0.0 ->
+            "На улице сейчас ${deg(Math.round(now * 10) / 10.0)} («$name»). Прогноз поправлен по датчику: " +
+                String.format(Locale("ru"), "%+.1f°", state.outdoorBias)
+        else -> "На улице сейчас ${deg(Math.round(now * 10) / 10.0)} («$name»). Для поправки прогноза копится история датчика"
+    }
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = if (now == null || stale) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSecondaryContainer,
+    )
+}
+
+@Composable
+private fun LocationDialog(
+    lat: Double,
+    lon: Double,
+    sensors: List<app.tuyacontrol.OutdoorSensor>,
+    selected: String?,
+    onDismiss: () -> Unit,
+    onSave: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
+) {
+    var sensorId by remember { mutableStateOf(selected?.takeIf { it != "-" }) }
     var la by remember { mutableStateOf(lat.toString().replace('.', ',')) }
     var lo by remember { mutableStateOf(lon.toString().replace('.', ',')) }
     val a = parse(la)?.takeIf { it in -90.0..90.0 }
     val b = parse(lo)?.takeIf { it in -180.0..180.0 }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Где дом") },
+        title = { Text("Погода и улица") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Координаты нужны только для прогноза погоды. Их можно скопировать из Яндекс или Google Карт " +
                         "(долгое нажатие на дом). Точность до деревни достаточна.",
@@ -655,9 +687,30 @@ private fun LocationDialog(lat: Double, lon: Double, onDismiss: () -> Unit, onSa
                 )
                 NumberField(la, { la = it }, "Широта", Modifier.fillMaxWidth())
                 NumberField(lo, { lo = it }, "Долгота", Modifier.fillMaxWidth())
+                Text("Уличный датчик", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "Показывает температуру на улице сейчас и поправляет прогноз: если датчик стабильно " +
+                        "холоднее или теплее прогноза, план это учитывает.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(Modifier.fillMaxWidth().clickable { sensorId = null }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = sensorId == null, onClick = { sensorId = null })
+                    Text("Нет", style = MaterialTheme.typography.bodyMedium)
+                }
+                sensors.forEach { s ->
+                    Row(Modifier.fillMaxWidth().clickable { sensorId = s.id }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = sensorId == s.id, onClick = { sensorId = s.id })
+                        Text(s.name, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
         },
-        confirmButton = { TextButton(onClick = { if (a != null && b != null) onSave(a, b) }, enabled = a != null && b != null) { Text("Сохранить") } },
+        confirmButton = {
+            TextButton(
+                onClick = { if (a != null && b != null) onSave(a, b, sensors.firstOrNull { it.id == sensorId }) },
+                enabled = a != null && b != null,
+            ) { Text("Сохранить") }
+        },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
     )
 }

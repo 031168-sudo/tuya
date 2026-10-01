@@ -20,6 +20,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/** Датчик температуры, который можно назначить уличным. */
+data class OutdoorSensor(val id: String, val name: String, val code: String)
+
 /** Термостат, который можно назначить зоне. */
 data class Thermostat(
     val id: String,
@@ -38,6 +41,13 @@ data class HeatingUiState(
     val prices: HourPrices = HourPrices.default(),
     val outdoor: DoubleArray = DoubleArray(48),
     val forecastFresh: Boolean = false,
+    /** Поправка прогноза по уличному датчику, °C (0 — без поправки). */
+    val outdoorBias: Double = 0.0,
+    /** Датчики температуры, которые можно назначить уличными. */
+    val outdoorSensors: List<OutdoorSensor> = emptyList(),
+    /** Уличный датчик сейчас: значение и время данных (мс). */
+    val outdoorNow: Double? = null,
+    val outdoorTime: Long = 0,
     val plans: List<ZonePlan> = emptyList(),
     val computing: Boolean = false,
     val deploying: Boolean = false,
@@ -62,6 +72,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     private var computeJob: Job? = null
     private var loaded = false
+    private var lastOutdoorSave = 0L
 
     /** Термостаты приходят с главного экрана; пустым зонам подбираем устройство по названию. */
     fun setDevices(devices: List<DeviceUi>) {
@@ -81,18 +92,50 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             )
         }.sortedBy { it.name.lowercase() }
         var settings = _state.value.settings
+        // Уличный датчик: все датчики температуры, кроме термостатов; по умолчанию — «T & H» / «улица»
+        val sensors = devices.mapNotNull { d ->
+            val ch = d.sensorDevice?.temperature ?: return@mapNotNull null
+            if (d.setpointCode != null || app.tuyacontrol.rubetek.RubetekMapper.isRubetek(d.id)) return@mapNotNull null
+            OutdoorSensor(d.id, d.name, ch.code)
+        }.sortedBy { it.name.lowercase() }
+        if (settings.outdoorSensorId == null) {
+            sensors.firstOrNull { s -> listOf("T & H", "улиц", "outdoor").any { s.name.contains(it, ignoreCase = true) } }
+                ?.let { settings = settings.copy(outdoorSensorId = it.id, outdoorCode = it.code) }
+        }
+        val outdoorDevice = devices.firstOrNull { it.id == settings.outdoorSensorId }
+        val outdoorNow = outdoorDevice?.let { d ->
+            val ch = d.sensorDevice?.temperature ?: return@let null
+            (d.status[ch.code] as? Number)?.toDouble()?.let { it / pow10(ch.scale) }
+        }
+        // Текущее уличное значение — в архив (не чаще раза в 10 минут): по нему сверяется прогноз
+        if (outdoorNow != null && outdoorDevice?.online == true && System.currentTimeMillis() - lastOutdoorSave > 600_000L) {
+            lastOutdoorSave = System.currentTimeMillis()
+            val code = outdoorDevice.sensorDevice!!.temperature!!.code
+            val t = (outdoorDevice.lastDataTime.takeIf { it > 0 } ?: System.currentTimeMillis()) / 60_000 * 60_000
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { app.tuyacontrol.sensor.SensorDb(getApplication<Application>()).insert(outdoorDevice.id, listOf(app.tuyacontrol.sensor.Reading(code, t, outdoorNow))) }
+            }
+        }
         val zones = settings.zones.map { z ->
             if (z.deviceId != null) return@map z
             val hints = HeatingSettings.NAME_HINTS[z.id] ?: return@map z
             val match = list.firstOrNull { t -> hints.any { t.name.contains(it, ignoreCase = true) } }
             if (match != null) z.copy(deviceId = match.id) else z
         }
-        if (zones != settings.zones) {
+        if (zones != settings.zones || settings != _state.value.settings) {
             settings = settings.copy(zones = zones)
             engine.store.save(settings)
         }
         val changed = list != _state.value.thermostats
-        _state.update { it.copy(thermostats = list, settings = settings) }
+        _state.update {
+            it.copy(
+                thermostats = list,
+                settings = settings,
+                outdoorSensors = sensors,
+                outdoorNow = outdoorNow?.takeIf { outdoorDevice?.online == true },
+                outdoorTime = outdoorDevice?.lastDataTime ?: 0,
+            )
+        }
         if (!loaded || changed) {
             loaded = true
             recompute()
@@ -111,7 +154,10 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 s.zones.map { z -> HeatingPlanner.plan(z, prices, forecast.temps, steps[z.deviceId] ?: 0.5) }
             }
             _state.update {
-                it.copy(prices = prices, outdoor = forecast.temps, forecastFresh = forecast.fresh, plans = plans, computing = false)
+                it.copy(
+                    prices = prices, outdoor = forecast.temps, forecastFresh = forecast.fresh,
+                    outdoorBias = forecast.bias, plans = plans, computing = false,
+                )
             }
         }
     }
@@ -156,7 +202,15 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         applySettings(s.copy(zones = s.zones.filterNot { it.id == id }))
     }
 
-    fun setLocation(lat: Double, lon: Double) = applySettings(_state.value.settings.copy(latitude = lat, longitude = lon))
+    fun setLocation(lat: Double, lon: Double, outdoor: OutdoorSensor?) = applySettings(
+        _state.value.settings.copy(
+            latitude = lat,
+            longitude = lon,
+            // "-" — пользователь сознательно отказался от уличного датчика
+            outdoorSensorId = outdoor?.id ?: "-",
+            outdoorCode = outdoor?.code,
+        )
+    )
 
     private fun applySettings(s: HeatingSettings) {
         engine.store.save(s)

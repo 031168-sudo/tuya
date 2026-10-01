@@ -41,7 +41,49 @@ class HeatingEngine(context: Context) {
         HourPrices.of(price, zone)
     }
 
-    suspend fun forecast(s: HeatingSettings) = weather.forecast(s.latitude, s.longitude)
+    /** Прогноз, поправленный по уличному датчику (если он выбран и исправен). */
+    suspend fun forecast(s: HeatingSettings): Weather.Forecast {
+        val f = weather.forecast(s.latitude, s.longitude)
+        val bias = outdoorBias(s, f) ?: return f
+        AppLog.i("Отопление: поправка прогноза по уличному датчику %+.1f°".format(bias))
+        return Weather.Forecast(DoubleArray(f.temps.size) { f.temps[it] + bias }, f.fresh, f.yesterday, bias)
+    }
+
+    /** Состояние уличного датчика: последнее значение и время, null — не выбран или нет данных. */
+    fun outdoorLast(s: HeatingSettings): app.tuyacontrol.sensor.Reading? {
+        val id = s.outdoorSensorId ?: return null
+        val code = s.outdoorCode ?: return null
+        return runCatching { app.tuyacontrol.sensor.SensorDb(app).last(id, code) }.getOrNull()
+    }
+
+    /**
+     * Средняя разница «датчик − прогноз» за последние сутки по часам. Датчик считается исправным,
+     * если присылал данные последние 3 часа и есть хотя бы 6 часов для сравнения.
+     */
+    private suspend fun outdoorBias(s: HeatingSettings, f: Weather.Forecast): Double? = withContext(Dispatchers.IO) {
+        val id = s.outdoorSensorId ?: return@withContext null
+        val code = s.outdoorCode ?: return@withContext null
+        val db = app.tuyacontrol.sensor.SensorDb(app)
+        val last = db.last(id, code) ?: return@withContext null
+        val now = System.currentTimeMillis()
+        if (now - last.time > 3 * 3600_000L) return@withContext null
+        val zone = java.time.ZoneId.systemDefault()
+        val todayStart = LocalDate.now().atStartOfDay(zone).toInstant().toEpochMilli()
+        val from = todayStart - 24 * 3600_000L
+        val points = db.series(id, code, from, now, 3600_000L)
+        val diffs = points.mapNotNull { p ->
+            val idx = ((p.time - from) / 3600_000L).toInt()
+            val fc = when {
+                idx in 0 until 24 -> f.yesterday[idx]
+                idx - 24 in f.temps.indices -> f.temps[idx - 24] - 0.0
+                else -> Double.NaN
+            }
+            // только последние 24 часа
+            if (p.time < now - 24 * 3600_000L || fc.isNaN()) null else p.avg - fc
+        }
+        if (diffs.size < 6) return@withContext null
+        diffs.average().coerceIn(-6.0, 6.0)
+    }
 
     /**
      * Записать план каждой зоны в расписание её термостата и сразу выставить уставку текущего часа.
