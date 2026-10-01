@@ -288,7 +288,7 @@ private fun RubetekSection(
                     OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Отключить Rubetek") }
                 }
                 sentTo != null -> {
-                    Text("Код отправлен на $sentTo", style = MaterialTheme.typography.bodyMedium)
+                    Text(state.rubetekCodeHint ?: "Код отправлен на $sentTo", style = MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(
                         value = code,
                         onValueChange = { code = it.filter { c -> c.isDigit() }.take(8) },
@@ -308,7 +308,7 @@ private fun RubetekSection(
                 }
                 else -> {
                     Text(
-                        "Телефон или почта от приложения Rubetek. Придёт код — как при входе в само приложение. " +
+                        "Телефон или почта от приложения Rubetek. На телефон позвонят (код — последние 4 цифры номера), на почту придёт письмо. " +
                             "Код нужен один раз; часто запрашивать не стоит, Rubetek может временно заблокировать.",
                         style = MaterialTheme.typography.bodySmall,
                     )

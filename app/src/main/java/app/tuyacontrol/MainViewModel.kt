@@ -155,6 +155,8 @@ data class UiState(
     val rubetekLogin: String? = null,
     /** Код отправлен на этот телефон/почту, ждём ввода. */
     val rubetekCodeSentTo: String? = null,
+    /** Как придёт код: звонок, SMS или письмо. */
+    val rubetekCodeHint: String? = null,
     val rubetekBusy: Boolean = false,
     val rubetekError: String? = null,
     val rubetekCount: Int = 0,
@@ -649,8 +651,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(rubetekBusy = true, rubetekError = null) }
             try {
-                rubetek.sendCode(l)
-                _state.update { it.copy(rubetekBusy = false, rubetekCodeSentTo = l) }
+                val method = rubetek.sendCode(l)
+                val how = when (method) {
+                    "email" -> "Код отправлен на $l — проверьте почту"
+                    "sms" -> "Код отправлен по SMS на $l"
+                    else -> "Сейчас на $l позвонят: код — последние 4 цифры номера, с которого звонят"
+                }
+                _state.update { it.copy(rubetekBusy = false, rubetekCodeSentTo = l, rubetekCodeHint = how) }
             } catch (e: Exception) {
                 AppLog.e("Rubetek: код не запрошен", e)
                 _state.update { it.copy(rubetekBusy = false, rubetekError = describeRubetek(e)) }

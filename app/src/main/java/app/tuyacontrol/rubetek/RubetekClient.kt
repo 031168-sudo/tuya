@@ -69,12 +69,37 @@ class RubetekClient(private val store: RubetekStore) {
 
     val connected: Boolean get() = store.refreshToken != null
 
-    /** Шаг 1: попросить код. Логин с «@» — почта, иначе телефон (+7…). */
-    suspend fun sendCode(login: String) {
-        val req = JSONObject().put("length", 6)
-        if (isEmail(login)) req.put("method", "email").put("email", login)
-        else req.put("method", "sms").put("phone", normalizePhone(login))
-        AppLog.i("Rubetek: запрашиваю код (${if (isEmail(login)) "почта" else "SMS"})")
+    /**
+     * Шаг 1: попросить код. Логин с «@» — почта (код в письме), иначе телефон.
+     * Приложение Rubetek для телефона использует звонок: код — последние 4 цифры номера, который звонит.
+     * Точное название этого способа в API неизвестно, поэтому пробуем варианты по очереди, в конце — SMS.
+     * Возвращает описание способа для пользователя.
+     */
+    suspend fun sendCode(login: String): String {
+        if (isEmail(login)) {
+            AppLog.i("Rubetek: запрашиваю код на почту")
+            requestCode(JSONObject().put("length", 6).put("method", "email").put("email", login))
+            return "email"
+        }
+        val phone = normalizePhone(login)
+        var last: Exception? = null
+        for ((method, length) in PHONE_METHODS) {
+            try {
+                AppLog.i("Rubetek: запрашиваю код, способ «$method»")
+                requestCode(JSONObject().put("length", length).put("method", method).put("phone", phone))
+                AppLog.i("Rubetek: код запрошен способом «$method»")
+                return method
+            } catch (e: RubetekException) {
+                // 4xx — способ не подошёл, пробуем следующий; 429 и 5xx — дальше не пробуем
+                if (e.status == 429 || e.status >= 500) throw e
+                AppLog.i("Rubetek: способ «$method» не принят (${e.status} ${e.message})")
+                last = e
+            }
+        }
+        throw last ?: RubetekException(-1, "Rubetek не принял запрос кода")
+    }
+
+    private suspend fun requestCode(req: JSONObject) {
         call(
             "POST", "$IOT/api/v1/code_requests",
             body = JSONObject().put("code_request", req),
@@ -220,6 +245,9 @@ class RubetekClient(private val store: RubetekStore) {
         private const val CLIENT_ID = "ckvfvkClm2IdPrkSlvWSe3KiEWJOAbyKOQR5giCYYAo"
         private const val CLIENT_SECRET = "_TiXiy8xkVmVEpTBoYndqvyYbldXFs00wBtgLNmSOCE"
         private val JSON = "application/json; charset=UTF-8".toMediaType()
+
+        /** Способ доставки кода на телефон и длина кода: сначала звонок (как в приложении Rubetek), потом SMS. */
+        private val PHONE_METHODS = listOf("call" to 4, "flash_call" to 4, "flashcall" to 4, "voice" to 4, "sms" to 6)
 
         fun isEmail(login: String) = "@" in login
 
