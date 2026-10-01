@@ -36,6 +36,28 @@ class HeatingStore(context: Context) {
         get() = prefs.getStringSet("relay_devices", emptySet()) ?: emptySet()
         set(v) = prefs.edit().putStringSet("relay_devices", v).apply()
 
+    /**
+     * Что приложение записало в модули Rubetek и проверило (id -> «минуты:1/0,…»).
+     * Нет записи — приложение таймеров в этот модуль не писало (или сняло).
+     */
+    fun deployedTimers(): Map<String, List<Pair<Int, Boolean>>> = try {
+        val o = JSONObject(prefs.getString("rubetek_deployed", "{}")!!)
+        o.keys().asSequence().associateWith { id ->
+            o.getString(id).split(",").filter { it.contains(":") }.map {
+                val (m, on) = it.split(":")
+                m.toInt() to (on == "1")
+            }
+        }
+    } catch (e: Exception) {
+        emptyMap()
+    }
+
+    fun setDeployedTimers(id: String, events: List<Pair<Int, Boolean>>?) {
+        val o = runCatching { JSONObject(prefs.getString("rubetek_deployed", "{}")!!) }.getOrDefault(JSONObject())
+        if (events == null) o.remove(id) else o.put(id, events.joinToString(",") { "${it.first}:${if (it.second) 1 else 0}" })
+        prefs.edit().putString("rubetek_deployed", o.toString()).apply()
+    }
+
     /** Незавершённый тест таймера Rubetek: «id|слот» — при следующем запуске слот очищается. */
     var rubetekTest: String?
         get() = prefs.getString("rubetek_test", null)

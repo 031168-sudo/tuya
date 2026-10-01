@@ -33,6 +33,10 @@ data class Thermostat(
     val step: Double,
     /** Греет сейчас (null — устройство не сообщает). */
     val heating: Boolean? = null,
+    /** Таймеры, которые сейчас стоят в модуле конвектора Rubetek (null — неизвестно / не Rubetek). */
+    val moduleTimers: List<app.tuyacontrol.rubetek.ModuleTimer>? = null,
+    /** Когда прочитаны таймеры модуля, мс. */
+    val timersAt: Long = 0,
 )
 
 data class HeatingUiState(
@@ -54,6 +58,8 @@ data class HeatingUiState(
     val deployedAt: Long = 0,
     val deployResult: String? = null,
     val message: String? = null,
+    /** Что приложение записало и проверило в модулях Rubetek: id -> (минуты, вкл?). */
+    val deployedTimers: Map<String, List<Pair<Int, Boolean>>> = emptyMap(),
 )
 
 class HeatingViewModel(application: Application) : AndroidViewModel(application) {
@@ -66,6 +72,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             settings = engine.store.load(),
             deployedAt = engine.store.deployedAt,
             deployResult = engine.store.deployResult,
+            deployedTimers = engine.store.deployedTimers(),
         )
     )
     val state: StateFlow<HeatingUiState> = _state.asStateFlow()
@@ -142,7 +149,13 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 setpoint = (d.status[code] as? Number)?.toDouble()?.let { it / pow10(set?.scale ?: 0) },
                 step = HeatingEngine.stepOf(set),
                 heating = d.heatingNow,
+                moduleTimers = d.moduleTimers,
+                timersAt = if (d.moduleTimers != null) d.lastDataTime else 0,
             )
+        }.map { t ->
+            // Таймеры, прочитанные отоплением напрямую, свежее списка устройств — не затираем их старыми
+            val own = _state.value.thermostats.firstOrNull { it.id == t.id }
+            if (own != null && own.timersAt > t.timersAt) t.copy(moduleTimers = own.moduleTimers, timersAt = own.timersAt) else t
         }.sortedBy { it.name.lowercase() }
         var settings = _state.value.settings
         // Уличный датчик: все датчики температуры, кроме термостатов; по умолчанию — «T & H» / «улица»
@@ -195,8 +208,38 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private var timersReadAt = 0L
+
+    /** Прочитать из облака Rubetek, какие таймеры сейчас стоят в модулях конвекторов зон. */
+    fun reloadModuleTimers(force: Boolean = false) {
+        val ids = _state.value.settings.zones.mapNotNull { it.deviceId }.filter { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) }
+        if (ids.isEmpty()) return
+        if (!force && System.currentTimeMillis() - timersReadAt < 60_000) return
+        timersReadAt = System.currentTimeMillis()
+        viewModelScope.launch {
+            val rubetek = app.tuyacontrol.rubetek.RubetekClient(app.tuyacontrol.rubetek.RubetekStore(getApplication()))
+            val devices = try {
+                rubetek.allDevices()
+            } catch (e: Exception) {
+                app.tuyacontrol.data.AppLog.e("Отопление: таймеры Rubetek не прочитаны", e)
+                return@launch
+            }
+            val now = System.currentTimeMillis()
+            val byId = devices.filter { it.id in ids }.associateBy { it.id }
+            _state.update { st ->
+                st.copy(
+                    deployedTimers = engine.store.deployedTimers(),
+                    thermostats = st.thermostats.map { t ->
+                        byId[t.id]?.let { d -> t.copy(moduleTimers = d.moduleTimers, timersAt = now) } ?: t
+                    },
+                )
+            }
+        }
+    }
+
     fun recompute() {
         logDeviceTimers(_state.value.settings)
+        reloadModuleTimers()
         computeJob?.cancel()
         computeJob = viewModelScope.launch {
             _state.update { it.copy(computing = true) }
@@ -375,6 +418,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 "Ошибка: ${HeatingEngine.describe(e)}"
             }
+            reloadModuleTimers(force = true)
             _state.update {
                 it.copy(
                     deploying = false,
@@ -433,6 +477,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 "Тест «$name»: ошибка — ${e.message ?: e.javaClass.simpleName}"
             }
             log.i(result)
+            reloadModuleTimers(force = true)
             _state.update { it.copy(deploying = false, message = result, deployResult = result) }
         }
     }

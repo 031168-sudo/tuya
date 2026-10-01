@@ -111,6 +111,7 @@ object RubetekMapper {
         val room = o.optString("room")
         val name = o.optString("name").ifEmpty { type.ifEmpty { "Rubetek" } }
         return DeviceUi(
+            moduleTimers = ModuleTimer.fromState(state),
             id = "$PREFIX$houseId:$id",
             name = name,
             online = online,

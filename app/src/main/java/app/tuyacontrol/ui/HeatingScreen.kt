@@ -41,6 +41,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -164,6 +166,7 @@ fun HeatingScreen(
                         onControl = { onZoneControl(plan.zone.id, it) },
                         onTestStudio = { onTestStudio(plan.zone.id) },
                         busy = state.deploying,
+                        deployed = plan.zone.deviceId?.let { state.deployedTimers[it] },
                     )
                 }
                 item {
@@ -301,6 +304,7 @@ private fun ZoneCard(
     onControl: (Boolean) -> Unit,
     onTestStudio: () -> Unit,
     busy: Boolean,
+    deployed: List<Pair<Int, Boolean>>? = null,
 ) {
     val zone = plan.zone
     Card {
@@ -357,10 +361,6 @@ private fun ZoneCard(
             if (thermostat != null && thermostat.id in setOf("bfe74dac4ad9e53858ebtn")) {
                 TextButton(onClick = onTestStudio, enabled = !busy) { Text("Тест: записать в Heating mode schedule") }
             }
-            // Временно: проверка, выполняет ли модуль Rubetek таймеры, записанные приложением
-            if (zone.deviceId?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
-                TextButton(onClick = onTestStudio, enabled = !busy) { Text("Тест: выключить таймером через 3 минуты") }
-            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (zone.inTotal) "В общем расчёте" else "Не входит в общий расчёт",
@@ -386,7 +386,8 @@ private fun ZoneCard(
                 )
             }
             if (zone.deviceId?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
-                Text("Таймеры конвектора (вкл / выкл)", style = MaterialTheme.typography.labelMedium)
+                ModuleTimersBlock(zone, thermostat, plan, prices, deployed, busy, onControl)
+                Text("По плану на сегодня", style = MaterialTheme.typography.labelMedium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan).forEach { (m, on) ->
                         Text(
@@ -546,6 +547,82 @@ private class WindowDraft(from: String, to: String, temp: String) {
 
 private fun parse(s: String): Double? = s.trim().replace(',', '.').toDoubleOrNull()
 private fun fieldText(d: Double) = if (d % 1.0 == 0.0) d.toLong().toString() else d.toString().replace('.', ',')
+
+/**
+ * Что на самом деле стоит в модуле конвектора Rubetek. Приложение Rubetek таймеры, записанные нами, не
+ * показывает — поэтому здесь видно всё, что модуль будет выполнять, и предупреждение, если что-то не так.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ModuleTimersBlock(
+    zone: HeatZone,
+    thermostat: Thermostat?,
+    plan: ZonePlan,
+    prices: HourPrices,
+    deployed: List<Pair<Int, Boolean>>?,
+    busy: Boolean,
+    onControl: (Boolean) -> Unit,
+) {
+    val timers = thermostat?.moduleTimers
+    val ok = Color(0xFF43A047)
+    Text("В модуле конвектора сейчас", style = MaterialTheme.typography.labelMedium)
+    if (timers == null) {
+        Text("Ещё не прочитано из Rubetek…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    if (timers.isEmpty()) {
+        Text("Таймеров нет", style = MaterialTheme.typography.bodyMedium)
+    } else {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            timers.forEach { t ->
+                Text(
+                    t.text(),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(zoneColor(prices, t.minutes / 60).copy(alpha = 0.6f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+        }
+    }
+    val actual = timers.map { it.minutes to it.on }.sortedWith(compareBy({ it.first }, { it.second }))
+    val written = deployed?.sortedWith(compareBy({ it.first }, { it.second }))
+    val matches = written != null && actual == written && timers.all { it.everyDay }
+    when {
+        zone.control && matches -> Text(
+            "✓ Записано по плану и проверено в модуле. Конвектор включается и выключается сам, даже без интернета",
+            style = MaterialTheme.typography.bodySmall, color = ok,
+        )
+        zone.control -> Text(
+            "⚠ В модуле не то, что записало приложение. Нажмите «Обновить уставки сейчас» или выключите и включите управление",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
+        )
+        timers.isNotEmpty() -> {
+            Text(
+                "⚠ Управление выключено, но в модуле стоят таймеры — конвектор будет сам включаться и выключаться",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
+            )
+            Button(
+                onClick = { onControl(false) },
+                enabled = !busy,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+            ) { Text("Снять все таймеры") }
+        }
+        else -> Text(
+            "✓ Таймеров нет — сам конвектор не включается и не выключается",
+            style = MaterialTheme.typography.bodySmall, color = ok,
+        )
+    }
+    val planned = app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan)
+    if (zone.control && matches && planned.sortedWith(compareBy({ it.first }, { it.second })) != written) {
+        Text(
+            "План на сегодня изменился по погоде — новые таймеры запишутся ночью или кнопкой «Обновить уставки сейчас»",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 @Composable
 private fun ZoneDialog(

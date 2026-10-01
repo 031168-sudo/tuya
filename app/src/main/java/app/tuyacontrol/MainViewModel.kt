@@ -59,6 +59,8 @@ data class DeviceUi(
     val dpIds: Map<String, Int> = emptyMap(),
     /** Данные пришли по Wi-Fi напрямую от устройства. */
     val viaLocal: Boolean = false,
+    /** Таймеры вкл/выкл в модуле конвектора Rubetek (null — не Rubetek или модуль без таймеров). */
+    val moduleTimers: List<app.tuyacontrol.rubetek.ModuleTimer>? = null,
 ) {
     /**
      * Устройство в сети, но выключено главным переключателем — его показания могут не обновляться.

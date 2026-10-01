@@ -319,6 +319,7 @@ class HeatingEngine(context: Context) {
             got = state.keys.associateWith { k -> st.opt(k) }
             if (state.all { (k, v) -> same(k, v) }) {
                 AppLog.i("Отопление: Rubetek ${id.takeLast(6)} — модуль подтвердил таймеры (попытка $attempt)")
+                store.setDeployedTimers(id, if (events.isEmpty()) null else events.take(20))
                 return
             }
         }
