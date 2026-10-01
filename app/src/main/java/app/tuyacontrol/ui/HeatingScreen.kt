@@ -115,8 +115,8 @@ private fun hh(h: Int) = "${h.toString().padStart(2, '0')}:00"
 fun HeatingScreen(
     state: HeatingUiState,
     onRecompute: () -> Unit,
-    onAutopilot: (Boolean) -> Unit,
     onDeploy: () -> Unit,
+    onZoneControl: (String, Boolean) -> Unit,
     onSaveZone: (HeatZone) -> Unit,
     onDeleteZone: (String) -> Unit,
     onLocation: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
@@ -153,13 +153,15 @@ fun HeatingScreen(
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item { SummaryCard(state, onAutopilot, onDeploy) }
+                item { SummaryCard(state, onDeploy) }
                 items(state.plans, key = { it.zone.id }) { plan ->
                     val thermostat = state.thermostats.firstOrNull { it.id == plan.zone.deviceId }
                     ZoneCard(
                         plan, thermostat, state.prices,
                         onEdit = { editing = plan.zone },
                         onInTotal = { onInTotal(plan.zone.id, it) },
+                        onControl = { onZoneControl(plan.zone.id, it) },
+                        busy = state.deploying,
                     )
                 }
                 item {
@@ -217,7 +219,7 @@ fun HeatingScreen(
 }
 
 @Composable
-private fun SummaryCard(state: HeatingUiState, onAutopilot: (Boolean) -> Unit, onDeploy: () -> Unit) {
+private fun SummaryCard(state: HeatingUiState, onDeploy: () -> Unit) {
     // В сводку — только зоны с включённым «в общем расчёте»
     val counted = state.plans.filter { it.zone.inTotal }
     val cost = counted.sumOf { it.cost }
@@ -253,28 +255,18 @@ private fun SummaryCard(state: HeatingUiState, onAutopilot: (Boolean) -> Unit, o
             }
             OutdoorLine(state)
             TariffLegend(state.prices)
-            HorizontalDivider(Modifier.padding(vertical = 4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Автопилот", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        if (state.settings.autopilot) {
-                            "План записан в расписание термостатов" +
-                                (if (state.deployedAt > 0) " " + SimpleDateFormat("d MMM HH:mm", Locale("ru")).format(Date(state.deployedAt)) else "") +
-                                ". Каждую ночь пересчитывается по погоде."
-                        } else {
-                            "Сейчас план только показывается. Включите — и термостаты будут работать по нему, даже когда телефон выключен."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                Switch(checked = state.settings.autopilot, onCheckedChange = onAutopilot, enabled = !state.deploying)
-            }
-            if (state.settings.autopilot) {
+            if (state.settings.zones.any { it.control }) {
+                HorizontalDivider(Modifier.padding(vertical = 4.dp))
+                Text(
+                    "Последняя запись уставок" +
+                        (if (state.deployedAt > 0) " " + SimpleDateFormat("d MMM HH:mm", Locale("ru")).format(Date(state.deployedAt)) else "") +
+                        ". Каждую ночь план пересчитывается по погоде.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 state.deployResult?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f))
                 }
-                TextButton(onClick = onDeploy, enabled = !state.deploying) { Text("Перезаписать расписание сейчас") }
+                TextButton(onClick = onDeploy, enabled = !state.deploying) { Text("Обновить уставки сейчас") }
             }
         }
     }
@@ -304,6 +296,8 @@ private fun ZoneCard(
     prices: HourPrices,
     onEdit: () -> Unit,
     onInTotal: (Boolean) -> Unit,
+    onControl: (Boolean) -> Unit,
+    busy: Boolean,
 ) {
     val zone = plan.zone
     Card {
@@ -338,6 +332,19 @@ private fun ZoneCard(
                 "${num(plan.kwh)} кВт·ч · ≈ ${rub(plan.cost)}  (без оптимизации ${rub(plan.baselineCost)})",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            // Управление: включено — уставки по плану выставляются и обновляются; выключено — устройство не трогаем
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Управление по плану", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        if (zone.control) "Уставки выставляются по плану и обновляются каждую ночь"
+                        else "Выключено: приложение уставки не меняет, на устройстве остаётся что есть",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = zone.control, onCheckedChange = onControl, enabled = !busy && zone.deviceId != null)
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (zone.inTotal) "В общем расчёте" else "Не входит в общий расчёт",
@@ -646,7 +653,7 @@ private fun ZoneDialog(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("Удалить зону «${initial.name}»?") },
-            text = { Text("Если включён автопилот, расписание этого термостата останется до следующей записи — снимите его вручную или выключите автопилот.") },
+            text = { Text("Если у зоны включено управление, приложение перестанет обновлять уставки. Текущие значения на устройстве останутся.") },
             confirmButton = { TextButton(onClick = onDelete) { Text("Удалить") } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Отмена") } },
         )

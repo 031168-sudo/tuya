@@ -42,6 +42,8 @@ data class HeatZone(
     val lossRate: Double = 0.03,
     /** Учитывать зону в общей сводке «Сегодня по плану» (на управление не влияет). */
     val inTotal: Boolean = true,
+    /** Управление включено: приложение выставляет устройству уставки по плану. Выключено — не трогает. */
+    val control: Boolean = false,
 ) {
     /** Температура, которую нужно держать в этот час (без поправки на пик). */
     fun targetAt(hour: Int): Double = windows.filter { it.covers(hour) }.maxOfOrNull { it.temp } ?: baseTemp

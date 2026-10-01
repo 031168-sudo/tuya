@@ -93,20 +93,23 @@ class HeatingEngine(context: Context) {
      * Записать план каждой зоны в расписание её термостата и сразу выставить уставку текущего часа.
      * Возвращает построчный отчёт.
      */
-    suspend fun deploy(client: TuyaCloudClient, s: HeatingSettings): String {
+    suspend fun deploy(client: TuyaCloudClient, s: HeatingSettings, onlyZone: String? = null): String {
         val prices = prices()
         val forecast = forecast(s)
         val lines = mutableListOf<String>()
         var ok = 0
-        val schedules = mutableMapOf<String, DoubleArray>()
+        // Расписания телефона: оставляем только зоны с включённым управлением, обновляемые перезапишем
+        val controlled = s.zones.filter { it.control }.mapNotNull { it.deviceId }.toSet()
+        val schedules = store.loadSchedules().filterKeys { it in controlled }.toMutableMap()
         for (zone in s.zones) {
+            if (!zone.control || (onlyZone != null && zone.id != onlyZone)) continue
             val id = zone.deviceId ?: continue
             // Конвекторы Rubetek: расписания уставок у них нет — переключает телефон по будильнику
             if (RubetekMapper.isRubetek(id)) {
                 try {
                     val plan = HeatingPlanner.plan(zone, prices, forecast.temps, 1.0)
                     schedules[id] = plan.setpoints
-                    applyRubetek(id, plan.setpoints[LocalTime.now().hour], turnOn = true)
+                    applyRubetek(id, plan.setpoints[LocalTime.now().hour])
                     lines += "${zone.name}: план в телефоне (Rubetek), переключений ${changes(plan.setpoints)}"
                     ok++
                 } catch (e: Exception) {
@@ -135,9 +138,9 @@ class HeatingEngine(context: Context) {
                     true
                 }
 
-                // Сразу: включить, ручной режим (чтобы встроенная программа не перебивала), уставка сейчас
+                // Сразу — уставка текущего часа. Ничего не включаем: только уставки (и ручной режим,
+                // чтобы встроенная программа термостата не перебивала их)
                 val now = mutableListOf<Pair<String, Any?>>()
-                if (id !in store.relayDevices) spec["switch"]?.takeIf { it.writable }?.let { now += "switch" to true }
                 spec["mode"]?.takeIf { it.writable && "manual" in it.range }?.let { now += "mode" to "manual" }
                 now += setpointCommands(spec, plan.setpoints[LocalTime.now().hour])!!
                 runCatching { sendTuya(client, id, now) }
@@ -154,7 +157,7 @@ class HeatingEngine(context: Context) {
                 lines += "${zone.name}: ошибка — ${describe(e)}"
             }
         }
-        if (lines.isEmpty()) lines += "Ни одной зоне не назначен термостат"
+        if (lines.isEmpty()) lines += "Нет зон с включённым управлением"
         store.saveSchedules(schedules)
         HeatingAlarm.scheduleNext(app)
         val report = lines.joinToString("\n")
@@ -162,6 +165,24 @@ class HeatingEngine(context: Context) {
         store.deployResult = report
         AppLog.i("Отопление: план записан ($ok зон)\n$report")
         return report
+    }
+
+    /**
+     * Выключить управление зоной: перестать обновлять уставки. Текущие значения на устройстве не трогаем,
+     * только убираем наше облачное расписание и будильник телефона.
+     */
+    suspend fun stopZone(client: TuyaCloudClient, zone: HeatZone): String {
+        val id = zone.deviceId ?: return "${zone.name}: нет устройства"
+        store.saveSchedules(store.loadSchedules() - id)
+        HeatingAlarm.scheduleNext(app)
+        if (!RubetekMapper.isRubetek(id)) {
+            runCatching { client.deleteTimers(id, TIMER_CATEGORY) }
+                .onFailure { AppLog.e("Отопление: ${zone.name} — расписание не снято", it) }
+        }
+        val line = "${zone.name}: управление выключено, уставки больше не меняются"
+        store.deployResult = line
+        AppLog.i("Отопление: $line")
+        return line
     }
 
     /** Убрать наше расписание со всех термостатов. */
@@ -198,7 +219,7 @@ class HeatingEngine(context: Context) {
 
     /** Будильник: выставить конвекторам Rubetek уставку текущего часа и завести следующий. */
     suspend fun applyRubetekNow() {
-        if (!store.load().autopilot) return
+        if (store.load().zones.none { it.control }) return
         val hour = LocalTime.now().hour
         val tuya = CredentialsStore(app).load()?.let { TuyaCloudClient(it) }
         for ((id, sp) in store.loadSchedules()) {

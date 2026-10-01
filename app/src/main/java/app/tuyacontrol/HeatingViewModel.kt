@@ -70,6 +70,18 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     )
     val state: StateFlow<HeatingUiState> = _state.asStateFlow()
 
+    init {
+        // Раньше был общий автопилот. Теперь управление включается по зонам: если автопилот был включён,
+        // один раз снимаем все наши расписания (уставки на устройствах остаются как есть)
+        val s = engine.store.load()
+        if (s.autopilot) {
+            val cleared = s.copy(autopilot = false)
+            engine.store.save(cleared)
+            _state.update { it.copy(settings = cleared) }
+            runCloud { client -> engine.disable(client, s) }
+        }
+    }
+
     private var computeJob: Job? = null
     private var loaded = false
     private var lastOutdoorSave = 0L
@@ -212,7 +224,13 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteZone(id: String) {
         val s = _state.value.settings
-        applySettings(s.copy(zones = s.zones.filterNot { it.id == id }))
+        val zone = s.zones.firstOrNull { it.id == id }
+        val rest = s.copy(zones = s.zones.filterNot { it.id == id })
+        engine.store.save(rest)
+        _state.update { it.copy(settings = rest) }
+        recompute()
+        // Удалённая зона с управлением: снимаем её расписание, остальные не трогаем
+        if (zone?.control == true) runCloud { client -> engine.stopZone(client, zone) }
     }
 
     fun setLocation(lat: Double, lon: Double, outdoor: OutdoorSensor?) = applySettings(
@@ -229,20 +247,30 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         engine.store.save(s)
         _state.update { it.copy(settings = s) }
         recompute()
-        // При включённом автопилоте изменения сразу уходят в расписание
-        if (s.autopilot) deploy()
+        // Зоны с включённым управлением сразу получают новый план
+        if (s.zones.any { it.control }) deploy()
     }
 
-    fun setAutopilot(on: Boolean) {
-        val s = _state.value.settings.copy(autopilot = on)
-        engine.store.save(s)
-        _state.update { it.copy(settings = s) }
-        if (on) deploy() else disable()
+    /** Управление зоной: включить — выставить уставки по плану и обновлять их; выключить — перестать трогать. */
+    fun setZoneControl(id: String, on: Boolean) {
+        val s = _state.value.settings
+        val updated = s.copy(zones = s.zones.map { if (it.id == id) it.copy(control = on) else it })
+        engine.store.save(updated)
+        _state.update { st ->
+            st.copy(
+                settings = updated,
+                plans = st.plans.map { p -> if (p.zone.id == id) p.withZone(p.zone.copy(control = on)) else p },
+            )
+        }
+        val zone = updated.zones.first { it.id == id }
+        if (on) {
+            runCloud { client -> engine.deploy(client, updated, onlyZone = id) }
+        } else {
+            runCloud { client -> engine.stopZone(client, zone) }
+        }
     }
 
     fun deploy() = runCloud { client -> engine.deploy(client, _state.value.settings) }
-
-    private fun disable() = runCloud { client -> engine.disable(client, _state.value.settings) }
 
     private fun runCloud(block: suspend (TuyaCloudClient) -> String) {
         val creds = credentials.load() ?: run {

@@ -90,7 +90,7 @@ class HistorySyncWorker(context: Context, params: WorkerParameters) : CoroutineW
         // пересчитать план по свежему прогнозу и перезаписать расписание
         val heating = HeatingEngine(ctx)
         val heatingSettings = heating.store.load()
-        if (heatingSettings.autopilot) {
+        if (heatingSettings.zones.any { it.control }) {
             runCatching { heating.deploy(TuyaCloudClient(creds), heatingSettings) }
                 .onFailure { AppLog.e("Фон: план отопления не обновлён", it) }
         }

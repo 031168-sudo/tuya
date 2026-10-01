@@ -72,6 +72,7 @@ class HeatingStore(context: Context) {
                     .put("heat", z.heatRate)
                     .put("loss", z.lossRate)
                     .put("in_total", z.inTotal)
+                    .put("control", z.control)
                     .put("windows", JSONArray().apply {
                         z.windows.forEach { w ->
                             put(JSONObject().put("from", w.from).put("to", w.to).put("temp", w.temp))
@@ -101,6 +102,7 @@ class HeatingStore(context: Context) {
                 heatRate = z.optDouble("heat", 2.0),
                 lossRate = z.optDouble("loss", 0.03),
                 inTotal = z.optBoolean("in_total", true),
+                control = z.optBoolean("control", false),
             )
         }
         return HeatingSettings(

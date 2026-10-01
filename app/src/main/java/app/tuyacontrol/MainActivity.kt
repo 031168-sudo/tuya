@@ -200,8 +200,8 @@ private fun App(
         Screen.Heating -> HeatingScreen(
             state = heating,
             onRecompute = heatingViewModel::recompute,
-            onAutopilot = heatingViewModel::setAutopilot,
             onDeploy = heatingViewModel::deploy,
+            onZoneControl = heatingViewModel::setZoneControl,
             onSaveZone = heatingViewModel::saveZone,
             onDeleteZone = heatingViewModel::deleteZone,
             onLocation = heatingViewModel::setLocation,
