@@ -310,6 +310,40 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     fun deploy() = runCloud { client -> engine.deploy(client, _state.value.settings) }
 
+    /**
+     * Проверка: можно ли писать в «Heating mode schedule» (облачная группа studio). Добавляет ОДНУ запись
+     * 03:30 с порогами 12°/13°, сразу выключает её и читает список обратно. Существующие записи не трогает.
+     */
+    fun testStudioTimer(zoneId: String) {
+        val zone = _state.value.settings.zones.firstOrNull { it.id == zoneId } ?: return
+        val id = zone.deviceId ?: return
+        runCloud { client ->
+            val log = app.tuyacontrol.data.AppLog
+            val lines = mutableListOf<String>()
+            try {
+                val group = client.addDailyTimer(
+                    id, "studio", "03:30",
+                    listOf("heating_temp_start" to 120, "heating_temp_stop" to 130),
+                    "Мой дом тест",
+                )
+                lines += "Запись добавлена (группа $group)"
+                log.i("Тест studio: добавлено, group_id=$group")
+                if (group.isNotEmpty()) {
+                    runCatching { client.setTimerGroupStatus(id, "studio", group, false) }
+                        .onSuccess { lines += "и выключена" }
+                        .onFailure { lines += "выключить не удалось: ${it.message}"; log.e("Тест studio: выключение", it) }
+                }
+            } catch (e: Exception) {
+                lines += "Запись не принята: ${HeatingEngine.describe(e)}"
+                log.e("Тест studio: добавление", e)
+            }
+            val raw = runCatching { client.timersRaw(id) }.getOrElse { "ошибка: ${it.message}" }
+            log.i("Тест studio: расписания после записи: $raw")
+            "Тест записи в Heating mode schedule: " + lines.joinToString(", ") +
+                ". Проверьте список в Tuya Smart: должна появиться выключенная запись 03:30 (12°/13°)"
+        }
+    }
+
     private fun runCloud(block: suspend (TuyaCloudClient) -> String) {
         val creds = credentials.load() ?: run {
             _state.update { it.copy(message = "Сначала введите ключи Tuya в настройках") }

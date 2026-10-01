@@ -145,6 +145,40 @@ class TuyaCloudClient(private val credentials: Credentials) {
     suspend fun timersV2Raw(deviceId: String, category: String?): String =
         get("/v2.0/cloud/timer/device/$deviceId", if (category != null) mapOf("category" to category) else emptyMap())?.toString() ?: "[]"
 
+    /**
+     * Добавить одну ежедневную запись в категорию, НЕ удаляя существующие (для «studio» — общий список
+     * с Tuya Smart). Возвращает group_id.
+     */
+    suspend fun addDailyTimer(
+        deviceId: String,
+        category: String,
+        time: String,
+        commands: List<Pair<String, Any?>>,
+        alias: String,
+    ): String {
+        val zone = java.time.ZoneId.systemDefault()
+        val offset = zone.rules.getOffset(java.time.Instant.now()).id.let { if (it == "Z") "+00:00" else it }
+        val fns = JSONArray()
+        commands.forEach { (code, value) -> fns.put(JSONObject().put("code", code).put("value", value ?: JSONObject.NULL)) }
+        val body = JSONObject()
+            .put("category", category)
+            .put("loops", "1111111")
+            .put("time_zone", offset)
+            .put("timezone_id", zone.id)
+            .put("alias_name", alias)
+            .put("instruct", JSONArray().put(JSONObject().put("time", time).put("functions", fns)))
+        val r = post("/v1.0/devices/$deviceId/timers", body)
+        return (r as? JSONObject)?.optString("group_id").orEmpty()
+    }
+
+    /** Включить ("1") / выключить ("0") группу таймеров. */
+    suspend fun setTimerGroupStatus(deviceId: String, category: String, groupId: String, enabled: Boolean) {
+        request(
+            "PUT", "/v1.0/devices/$deviceId/timers/categories/$category/groups/$groupId/status",
+            emptyMap(), JSONObject().put("value", if (enabled) "1" else "0").toString(),
+        )
+    }
+
     /** Сколько таймеров записано в категории. */
     suspend fun countTimers(deviceId: String, category: String): Int {
         val result = get("/v1.0/devices/$deviceId/timers/categories/$category")

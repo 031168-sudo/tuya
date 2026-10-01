@@ -117,6 +117,7 @@ fun HeatingScreen(
     onRecompute: () -> Unit,
     onDeploy: () -> Unit,
     onZoneControl: (String, Boolean) -> Unit,
+    onTestStudio: (String) -> Unit,
     onSaveZone: (HeatZone) -> Unit,
     onDeleteZone: (String) -> Unit,
     onLocation: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
@@ -161,6 +162,7 @@ fun HeatingScreen(
                         onEdit = { editing = plan.zone },
                         onInTotal = { onInTotal(plan.zone.id, it) },
                         onControl = { onZoneControl(plan.zone.id, it) },
+                        onTestStudio = { onTestStudio(plan.zone.id) },
                         busy = state.deploying,
                     )
                 }
@@ -297,6 +299,7 @@ private fun ZoneCard(
     onEdit: () -> Unit,
     onInTotal: (Boolean) -> Unit,
     onControl: (Boolean) -> Unit,
+    onTestStudio: () -> Unit,
     busy: Boolean,
 ) {
     val zone = plan.zone
@@ -344,6 +347,10 @@ private fun ZoneCard(
                     )
                 }
                 Switch(checked = zone.control, onCheckedChange = onControl, enabled = !busy && zone.deviceId != null)
+            }
+            // Временно: проверка записи в «Heating mode schedule» — только для батареи с порогами нагрева
+            if (thermostat != null && thermostat.id in setOf("bfe74dac4ad9e53858ebtn")) {
+                TextButton(onClick = onTestStudio, enabled = !busy) { Text("Тест: записать в Heating mode schedule") }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
