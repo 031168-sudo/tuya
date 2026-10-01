@@ -133,6 +133,16 @@ class HeatingEngine(context: Context) {
                 val stepSpec = spec[setpointCode(spec) ?: "heating_temp_stop"]
                 setpointCommands(spec, 20.0) ?: throw IllegalStateException("нет уставки температуры")
                 val plan = HeatingPlanner.plan(zone, prices, forecast.temps, stepOf(stepSpec))
+
+                // Термостат с недельной программой на борту: пишем план прямо в него (работает без интернета)
+                val model = runCatching { client.getThingModel(id) }.getOrDefault(emptyMap())
+                val progCode = PROGRAM_CODES.firstOrNull { model[it]?.writable == true }
+                if (progCode != null) {
+                    lines += writeProgram(client, zone, id, progCode, plan, prices)
+                    ok++
+                    continue
+                }
+
                 val instructs = (0 until 24)
                     .filter { h -> h == 0 || plan.setpoints[h] != plan.setpoints[(h + 23) % 24] }
                     .map { h -> "%02d:00".format(h) to setpointCommands(spec, plan.setpoints[h])!! }
@@ -199,6 +209,8 @@ class HeatingEngine(context: Context) {
         }
         runCatching { client.deleteTimers(id, TIMER_CATEGORY) }
             .onFailure { AppLog.e("Отопление: ${zone.name} — расписание не снято", it) }
+        // Программу в термостате не трогаем: он продолжает работать по ней, приложение её больше не меняет
+        store.setDeployedProgram(id, null)
         val line = "${zone.name}: управление выключено, уставки больше не меняются"
         store.deployResult = line
         AppLog.i("Отопление: $line")
@@ -271,6 +283,58 @@ class HeatingEngine(context: Context) {
     }
 
     /** Стандартные команды, а если устройство их не понимает — свойства Things Data Model. */
+    /** Программы термостатов зон прямо сейчас: id -> состояние DP (для карточек). */
+    suspend fun readPrograms(client: TuyaCloudClient, ids: List<String>): Map<String, Map<String, Any?>> =
+        ids.associateWith { deviceState(client, it) }.filterValues { st -> PROGRAM_CODES.any { it in st } }
+
+    /** Текущее состояние DP устройства (список + теневые свойства — там бывают недельные программы). */
+    private suspend fun deviceState(client: TuyaCloudClient, id: String): Map<String, Any?> =
+        runCatching { client.getStatus(id) }.getOrDefault(emptyMap()) +
+            runCatching { client.getShadowProperties(id) }.getOrDefault(emptyMap())
+
+    /**
+     * Записать план в недельную программу термостата: 6 периодов рабочего дня (выходные записи сохраняем),
+     * все дни недели — по рабочему, режим «по программе». Затем перечитать и проверить.
+     */
+    private suspend fun writeProgram(
+        client: TuyaCloudClient,
+        zone: HeatZone,
+        id: String,
+        code: String,
+        plan: ZonePlan,
+        prices: HourPrices,
+    ): String {
+        val periods = WeekProgram.compress(plan.setpoints, prices.price)
+        val before = deviceState(client, id)
+        val old = (before[code] as? String)?.let { WeekProgram.decode(code, it) }.orEmpty()
+        val weekend = old.drop(WeekProgram.PERIODS).ifEmpty { listOf(WeekProgram.Period(8 * 60, 22.0), WeekProgram.Period(23 * 60, 16.0)) }
+        val value = WeekProgram.encode(code, periods + weekend)!!
+        val modes = programModes(code)
+        val text = periods.joinToString(", ") { it.text() }
+        val same = before[code] == value && modes.all { (k, v) -> before[k]?.toString() == v }
+        if (same) {
+            store.setDeployedProgram(id, value)
+            AppLog.i("Отопление: ${zone.name} — программа в термостате уже такая: $text")
+            return "${zone.name}: программа в термостате без изменений — $text"
+        }
+        AppLog.i("Отопление: ${zone.name} — пишу программу $code=$value ($text), режим $modes; было ${before[code]}")
+        sendTuya(client, id, listOf(code to value) + modes)
+        // Наши облачные расписания уставок этому термостату больше не нужны — они сбили бы программу
+        runCatching { client.deleteTimers(id, TIMER_CATEGORY) }
+        var after: Map<String, Any?> = emptyMap()
+        for (attempt in 1..4) {
+            kotlinx.coroutines.delay(3000)
+            after = deviceState(client, id)
+            if (after[code] == value && modes.all { (k, v) -> after[k]?.toString() == v }) {
+                store.setDeployedProgram(id, value)
+                AppLog.i("Отопление: ${zone.name} — термостат подтвердил программу (попытка $attempt)")
+                return "${zone.name}: программа записана в термостат — $text"
+            }
+        }
+        AppLog.i("Отопление: ${zone.name} — термостат НЕ подтвердил: $code=${after[code]}, режим ${modes.map { it.first + "=" + after[it.first] }}")
+        throw IllegalStateException("термостат не подтвердил программу")
+    }
+
     private suspend fun sendTuya(client: TuyaCloudClient, id: String, cmds: List<Pair<String, Any?>>) {
         try {
             client.sendCommands(id, cmds)
@@ -371,9 +435,11 @@ class HeatingEngine(context: Context) {
             )
         }
 
-        /** Гистерезис по умолчанию для устройства (как описал хозяин дома). */
+        /** Гистерезис по умолчанию для устройства (как описал хозяин дома; если прибор сообщает — с прибора). */
         fun defaultHysteresis(d: app.tuyacontrol.DeviceUi): Double = when {
             RubetekMapper.isRubetek(d.id) -> -1.0
+            (d.status["Temp_dif"] as? Number) != null -> (d.status["Temp_dif"] as Number).toDouble()   // спальня
+            (d.status["qidongwencha"] as? Number) != null -> (d.status["qidongwencha"] as Number).toDouble() / 10  // «Temp»
             d.switchIsRelay -> -0.5                          // батарея в ванной: включение на 0,5 ниже порога
             "智能温控器" in d.productName -> 1.0               // спальня
             else -> 0.5                                       // гостиная, коридор, летняя кухня
@@ -385,6 +451,17 @@ class HeatingEngine(context: Context) {
             val events = (0 until 24).filter { h -> on[h] != on[(h + 23) % 24] }.map { h -> h * 60 to on[h] }
             // Весь день одинаково — один таймер в полночь, чтобы состояние всё-таки задавалось
             return events.ifEmpty { listOf(0 to on[0]) }
+        }
+
+        /** DP недельной программы термостата (в порядке предпочтения). */
+        val PROGRAM_CODES = listOf("week_program3", "week_program1")
+
+        /** Режим «работать по программе, все дни одинаково» для формата программы. */
+        fun programModes(code: String): List<Pair<String, String>> = when (code) {
+            // «Temp» (гостиная, коридор, кухня): mode hot — по программе (cold — вручную); work_days 3 — без выходных
+            "week_program3" -> listOf("mode" to "hot", "work_days" to "3")
+            // Спальня: mode auto — по программе; program_mode 70 — 7 дней по рабочему
+            else -> listOf("mode" to "auto", "program_mode" to "70")
         }
 
         /** Своя категория таймеров: расписания, заведённые вручную в Tuya Smart, не трогаем. */

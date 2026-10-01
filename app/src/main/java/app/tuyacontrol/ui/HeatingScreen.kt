@@ -167,6 +167,7 @@ fun HeatingScreen(
                         onTestStudio = { onTestStudio(plan.zone.id) },
                         busy = state.deploying,
                         deployed = plan.zone.deviceId?.let { state.deployedTimers[it] },
+                        deployedProgram = plan.zone.deviceId?.let { state.deployedPrograms[it] },
                     )
                 }
                 item {
@@ -301,6 +302,7 @@ private fun ZoneCard(
     onTestStudio: () -> Unit,
     busy: Boolean,
     deployed: List<Pair<Int, Boolean>>? = null,
+    deployedProgram: String? = null,
 ) {
     val zone = plan.zone
     Card {
@@ -396,6 +398,8 @@ private fun ZoneCard(
                         )
                     }
                 }
+            } else if (thermostat?.programCode != null) {
+                ProgramBlock(zone, thermostat, plan, prices, deployedProgram, busy, onControl)
             } else {
             Text("Уставки термостата", style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -543,6 +547,91 @@ private class WindowDraft(from: String, to: String, temp: String) {
 
 private fun parse(s: String): Double? = s.trim().replace(',', '.').toDoubleOrNull()
 private fun fieldText(d: Double) = if (d % 1.0 == 0.0) d.toLong().toString() else d.toString().replace('.', ',')
+
+/** Ряд периодов программы, окрашенных по тарифу. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PeriodChips(periods: List<app.tuyacontrol.heating.WeekProgram.Period>, prices: HourPrices, bold: Boolean) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        periods.sortedBy { it.minutes }.forEach { p ->
+            Text(
+                p.text(),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = if (bold) FontWeight.Bold else null,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(zoneColor(prices, p.minutes / 60).copy(alpha = if (bold) 0.6f else 0.45f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Термостат с недельной программой на борту (гостиная, коридор, спальня): что в нём записано сейчас,
+ * совпадает ли с тем, что записало приложение, и что получится по плану (6 периодов в сутки).
+ */
+@Composable
+private fun ProgramBlock(
+    zone: HeatZone,
+    thermostat: Thermostat,
+    plan: ZonePlan,
+    prices: HourPrices,
+    deployed: String?,
+    busy: Boolean,
+    onControl: (Boolean) -> Unit,
+) {
+    val ok = Color(0xFF43A047)
+    val program = thermostat.program.orEmpty()
+    Text("В термостате сейчас (рабочий день)", style = MaterialTheme.typography.labelMedium)
+    if (program.isEmpty()) {
+        Text("Программа не прочитана", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        PeriodChips(program.take(app.tuyacontrol.heating.WeekProgram.PERIODS), prices, bold = true)
+    }
+    val matches = deployed != null && thermostat.programRaw == deployed && thermostat.programOn == true
+    when {
+        zone.control && matches -> Text(
+            "✓ План записан в термостат и проверен. Работает сам, даже без интернета",
+            style = MaterialTheme.typography.bodySmall, color = ok,
+        )
+        zone.control -> {
+            Text(
+                if (thermostat.programOn == false) "⚠ Термостат не в режиме программы — работает по ручной уставке"
+                else "⚠ В термостате не то, что записало приложение",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
+            )
+            Button(onClick = { onControl(true) }, enabled = !busy) { Text("Записать план в термостат") }
+        }
+        else -> Text(
+            if (thermostat.programOn == true) "Управление выключено: термостат работает по своей программе, приложение её не меняет"
+            else "Управление выключено: термостат на ручной уставке, приложение её не меняет",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    // Что запишется по плану: 6 периодов вместо почасовых уставок
+    val planned = app.tuyacontrol.heating.WeekProgram.compress(plan.setpoints, prices.price)
+    val hourly = app.tuyacontrol.heating.WeekProgram.hourly(planned)
+    // Переплата за то, что период держит максимум: лишние градусо-часы × теплопотери, пересчитанные в кВт·ч
+    val extraRub = (0 until 24).sumOf { h ->
+        (hourly[h] - plan.setpoints[h]) * zone.lossRate / zone.heatRate * zone.powerKw * prices.price[h]
+    }
+    Text("По плану на сегодня (${planned.size} периодов)", style = MaterialTheme.typography.labelMedium)
+    PeriodChips(planned, prices, bold = false)
+    if (extraRub >= 0.5) {
+        Text(
+            "Из-за ограничения в 6 периодов ≈ +${Math.round(extraRub)} ₽ в сутки к плану",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (zone.control && matches && program.take(planned.size) != planned) {
+        Text(
+            "План на сегодня изменился по погоде — новая программа запишется ночью",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        TextButton(onClick = { onControl(true) }, enabled = !busy) { Text("Записать сейчас") }
+    }
+}
 
 /**
  * Что на самом деле стоит в модуле конвектора Rubetek. Приложение Rubetek таймеры, записанные нами, не

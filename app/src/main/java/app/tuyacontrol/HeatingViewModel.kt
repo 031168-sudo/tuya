@@ -37,7 +37,24 @@ data class Thermostat(
     val moduleTimers: List<app.tuyacontrol.rubetek.ModuleTimer>? = null,
     /** Когда прочитаны таймеры модуля, мс. */
     val timersAt: Long = 0,
-)
+    /** Недельная программа в самом термостате: код DP, значение (base64), периоды рабочего дня, включена ли. */
+    val programCode: String? = null,
+    val programRaw: String? = null,
+    val programOn: Boolean? = null,
+    val programAt: Long = 0,
+) {
+    val program: List<app.tuyacontrol.heating.WeekProgram.Period>?
+        get() = programCode?.let { c -> programRaw?.let { app.tuyacontrol.heating.WeekProgram.decode(c, it) } }
+
+    companion object {
+        /** Программа из состояния DP: (код, значение, по программе ли работает); null — программы нет. */
+        fun programOf(st: Map<String, Any?>): Triple<String, String, Boolean>? {
+            val code = app.tuyacontrol.heating.HeatingEngine.PROGRAM_CODES.firstOrNull { st[it] is String } ?: return null
+            val on = app.tuyacontrol.heating.HeatingEngine.programModes(code).all { (k, v) -> st[k]?.toString() == v }
+            return Triple(code, st[code] as String, on)
+        }
+    }
+}
 
 data class HeatingUiState(
     val settings: HeatingSettings = HeatingSettings.defaults(),
@@ -60,6 +77,8 @@ data class HeatingUiState(
     val message: String? = null,
     /** Что приложение записало и проверило в модулях Rubetek: id -> (минуты, вкл?). */
     val deployedTimers: Map<String, List<Pair<Int, Boolean>>> = emptyMap(),
+    /** Что приложение записало и проверило в программах термостатов: id -> base64. */
+    val deployedPrograms: Map<String, String> = emptyMap(),
 )
 
 class HeatingViewModel(application: Application) : AndroidViewModel(application) {
@@ -73,6 +92,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             deployedAt = engine.store.deployedAt,
             deployResult = engine.store.deployResult,
             deployedTimers = engine.store.deployedTimers(),
+            deployedPrograms = engine.store.deployedPrograms(),
         )
     )
     val state: StateFlow<HeatingUiState> = _state.asStateFlow()
@@ -157,11 +177,17 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 heating = d.heatingNow,
                 moduleTimers = d.moduleTimers,
                 timersAt = if (d.moduleTimers != null) d.lastDataTime else 0,
-            )
+            ).let { t ->
+                val p = Thermostat.programOf(d.status) ?: return@let t
+                t.copy(programCode = p.first, programRaw = p.second, programOn = p.third, programAt = d.lastDataTime)
+            }
         }.map { t ->
             // Таймеры, прочитанные отоплением напрямую, свежее списка устройств — не затираем их старыми
             val own = _state.value.thermostats.firstOrNull { it.id == t.id }
-            if (own != null && own.timersAt > t.timersAt) t.copy(moduleTimers = own.moduleTimers, timersAt = own.timersAt) else t
+            val t1 = if (own != null && own.timersAt > t.timersAt) t.copy(moduleTimers = own.moduleTimers, timersAt = own.timersAt) else t
+            if (own != null && own.programAt > t1.programAt) {
+                t1.copy(programCode = own.programCode, programRaw = own.programRaw, programOn = own.programOn, programAt = own.programAt)
+            } else t1
         }.sortedBy { it.name.lowercase() }
         var settings = _state.value.settings
         // Уличный датчик: все датчики температуры, кроме термостатов; по умолчанию — «T & H» / «улица»
@@ -248,9 +274,34 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private var programsReadAt = 0L
+
+    /** Прочитать недельные программы термостатов зон (они в теневых свойствах, список устройств их не обновляет). */
+    fun reloadPrograms(force: Boolean = false) {
+        val ids = _state.value.settings.zones.mapNotNull { it.deviceId }.filterNot { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) }
+        if (ids.isEmpty()) return
+        if (!force && System.currentTimeMillis() - programsReadAt < 60_000) return
+        programsReadAt = System.currentTimeMillis()
+        val creds = credentials.load() ?: return
+        viewModelScope.launch {
+            val states = runCatching { engine.readPrograms(TuyaCloudClient(creds), ids) }.getOrDefault(emptyMap())
+            val now = System.currentTimeMillis()
+            _state.update { st ->
+                st.copy(
+                    deployedPrograms = engine.store.deployedPrograms(),
+                    thermostats = st.thermostats.map { t ->
+                        val p = states[t.id]?.let { Thermostat.programOf(it) } ?: return@map t
+                        t.copy(programCode = p.first, programRaw = p.second, programOn = p.third, programAt = now)
+                    },
+                )
+            }
+        }
+    }
+
     fun recompute() {
         logDeviceTimers(_state.value.settings)
         reloadModuleTimers()
+        reloadPrograms()
         computeJob?.cancel()
         computeJob = viewModelScope.launch {
             _state.update { it.copy(computing = true) }
@@ -430,6 +481,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 "Ошибка: ${HeatingEngine.describe(e)}"
             }
             reloadModuleTimers(force = true)
+            reloadPrograms(force = true)
             _state.update {
                 it.copy(
                     deploying = false,

@@ -58,6 +58,20 @@ class HeatingStore(context: Context) {
         prefs.edit().putString("rubetek_deployed", o.toString()).apply()
     }
 
+    /** Программа, которую приложение записало в термостат и проверило: id -> base64 значения DP. */
+    fun deployedPrograms(): Map<String, String> = try {
+        val o = JSONObject(prefs.getString("programs_deployed", "{}")!!)
+        o.keys().asSequence().associateWith { o.getString(it) }
+    } catch (e: Exception) {
+        emptyMap()
+    }
+
+    fun setDeployedProgram(id: String, value: String?) {
+        val o = runCatching { JSONObject(prefs.getString("programs_deployed", "{}")!!) }.getOrDefault(JSONObject())
+        if (value == null) o.remove(id) else o.put(id, value)
+        prefs.edit().putString("programs_deployed", o.toString()).apply()
+    }
+
     /** Незавершённый тест таймера Rubetek: «id|слот» — при следующем запуске слот очищается. */
     var rubetekTest: String?
         get() = prefs.getString("rubetek_test", null)
