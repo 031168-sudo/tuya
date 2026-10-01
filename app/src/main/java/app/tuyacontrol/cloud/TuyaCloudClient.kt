@@ -138,6 +138,9 @@ class TuyaCloudClient(private val credentials: Credentials) {
         }
     }
 
+    /** Все облачные расписания устройства как есть (для разбора формата расписаний из Tuya Smart). */
+    suspend fun timersRaw(deviceId: String): String = get("/v1.0/devices/$deviceId/timers")?.toString() ?: "[]"
+
     /** Сколько таймеров записано в категории. */
     suspend fun countTimers(deviceId: String, category: String): Int {
         val result = get("/v1.0/devices/$deviceId/timers/categories/$category")

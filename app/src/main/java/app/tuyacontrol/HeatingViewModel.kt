@@ -83,6 +83,23 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private var computeJob: Job? = null
+    private var timersLogged = false
+
+    /** Один раз за запуск: записать в журнал все расписания устройств зон (как их хранит Tuya Smart). */
+    private fun logDeviceTimers(s: HeatingSettings) {
+        if (timersLogged) return
+        val creds = credentials.load() ?: return
+        timersLogged = true
+        viewModelScope.launch {
+            val client = TuyaCloudClient(creds)
+            for (z in s.zones) {
+                val id = z.deviceId ?: continue
+                if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) continue
+                val raw = runCatching { client.timersRaw(id) }.getOrElse { "ошибка: ${it.message}" }
+                app.tuyacontrol.data.AppLog.i("Расписания устройства зоны «${z.name}»: $raw")
+            }
+        }
+    }
     private var loaded = false
     private var lastOutdoorSave = 0L
 
@@ -155,6 +172,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun recompute() {
+        logDeviceTimers(_state.value.settings)
         computeJob?.cancel()
         computeJob = viewModelScope.launch {
             _state.update { it.copy(computing = true) }
