@@ -36,6 +36,11 @@ class HeatingStore(context: Context) {
         get() = prefs.getStringSet("relay_devices", emptySet()) ?: emptySet()
         set(v) = prefs.edit().putStringSet("relay_devices", v).apply()
 
+    /** Незавершённый тест таймера Rubetek: «id|слот» — при следующем запуске слот очищается. */
+    var rubetekTest: String?
+        get() = prefs.getString("rubetek_test", null)
+        set(v) = prefs.edit().putString("rubetek_test", v).apply()
+
     /** Почасовые уставки устройств, которые переключает телефон (Rubetek): id -> 24 значения. */
     fun saveSchedules(m: Map<String, DoubleArray>) {
         val o = JSONObject()

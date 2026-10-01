@@ -357,6 +357,10 @@ private fun ZoneCard(
             if (thermostat != null && thermostat.id in setOf("bfe74dac4ad9e53858ebtn")) {
                 TextButton(onClick = onTestStudio, enabled = !busy) { Text("Тест: записать в Heating mode schedule") }
             }
+            // Временно: проверка, выполняет ли модуль Rubetek таймеры, записанные приложением
+            if (zone.deviceId?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
+                TextButton(onClick = onTestStudio, enabled = !busy) { Text("Тест: выключить таймером через 3 минуты") }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     if (zone.inTotal) "В общем расчёте" else "Не входит в общий расчёт",

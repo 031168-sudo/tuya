@@ -71,6 +71,10 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     val state: StateFlow<HeatingUiState> = _state.asStateFlow()
 
     init {
+        // Тест таймера Rubetek прервался (приложение закрыли) — снимаем тестовый таймер, иначе он сработает завтра
+        engine.store.rubetekTest?.let { pending ->
+            viewModelScope.launch { clearRubetekTest(pending) }
+        }
         // Раньше был общий автопилот. Теперь управление включается по зонам: если автопилот был включён,
         // один раз снимаем все наши расписания (уставки на устройствах остаются как есть)
         val s = engine.store.load()
@@ -328,6 +332,10 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     fun testStudioTimer(zoneId: String) {
         val zone = _state.value.settings.zones.firstOrNull { it.id == zoneId } ?: return
         val id = zone.deviceId ?: return
+        if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) {
+            testRubetekOff(zone.name, id)
+            return
+        }
         runCloud { client ->
             val log = app.tuyacontrol.data.AppLog
             val lines = mutableListOf<String>()
@@ -375,6 +383,71 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                     message = result.lineSequence().firstOrNull { l -> "ошибка" in l.lowercase() } ?: "Готово",
                 )
             }
+        }
+    }
+
+    /**
+     * Проверка, выполняет ли модуль Rubetek таймеры, записанные через облако: в свободный слот пишем
+     * «выкл» через 3 минуты, ждём и смотрим, выключился ли конвектор. Затем слот очищаем.
+     */
+    private fun testRubetekOff(name: String, id: String) {
+        val (house, device) = app.tuyacontrol.rubetek.RubetekMapper.parseId(id) ?: return
+        val log = app.tuyacontrol.data.AppLog
+        viewModelScope.launch {
+            _state.update { it.copy(deploying = true) }
+            val rubetek = app.tuyacontrol.rubetek.RubetekClient(app.tuyacontrol.rubetek.RubetekStore(getApplication()))
+            val result = try {
+                fun stateOf(all: List<org.json.JSONObject>) =
+                    all.firstOrNull { it.optString("id") == device }?.optJSONObject("state") ?: org.json.JSONObject()
+                val before = stateOf(rubetek.devices(house))
+                val slot = (0 until 10).firstOrNull { before.optLong("tmr:off[$it]", -1) == -1L }
+                    ?: throw IllegalStateException("нет свободного слота таймера")
+                val at = java.time.LocalTime.now().plusMinutes(3).withSecond(0).withNano(0)
+                val minutes = at.hour * 60 + at.minute
+                val value = (127 shl 16) or minutes
+                log.i("Тест Rubetek «$name»: питание до теста=${before.opt("rusKlimat:Power")}, слот tmr:off[$slot]=$value (%02d:%02d)".format(at.hour, at.minute))
+                engine.store.rubetekTest = "$id|$slot"
+                rubetek.setState(house, device, mapOf("tmr:off[$slot]" to value))
+                _state.update { it.copy(message = "Тест: «$name» должен выключиться в %02d:%02d. Ждите ~4 минуты".format(at.hour, at.minute)) }
+
+                // Ждём наступления минуты таймера и ещё минуту
+                val waitMs = java.time.Duration.between(java.time.LocalTime.now(), at).toMillis().coerceAtLeast(0) + 60_000
+                kotlinx.coroutines.delay(waitMs)
+                var power: Any? = null
+                for (attempt in 1..4) {
+                    val st = stateOf(rubetek.devices(house))
+                    power = st.opt("rusKlimat:Power")
+                    log.i("Тест Rubetek «$name»: после таймера питание=$power (проверка $attempt)")
+                    if (power != true) break
+                    kotlinx.coroutines.delay(20_000)
+                }
+                clearRubetekTest("$id|$slot")
+                if (power == true) {
+                    "Тест «$name»: в %02d:%02d НЕ выключился — модуль наши таймеры не выполняет".format(at.hour, at.minute)
+                } else {
+                    "Тест «$name»: в %02d:%02d выключился — таймеры из приложения работают. Включите конвектор обратно".format(at.hour, at.minute)
+                }
+            } catch (e: Exception) {
+                log.e("Тест Rubetek «$name» не выполнен", e)
+                engine.store.rubetekTest?.let { clearRubetekTest(it) }
+                "Тест «$name»: ошибка — ${e.message ?: e.javaClass.simpleName}"
+            }
+            log.i(result)
+            _state.update { it.copy(deploying = false, message = result, deployResult = result) }
+        }
+    }
+
+    /** Снять тестовый таймер выключения (слот «id|n» -> −1). */
+    private suspend fun clearRubetekTest(pending: String) {
+        val (id, slot) = pending.split("|").let { it[0] to (it.getOrNull(1)?.toIntOrNull() ?: return) }
+        val (house, device) = app.tuyacontrol.rubetek.RubetekMapper.parseId(id) ?: return
+        try {
+            app.tuyacontrol.rubetek.RubetekClient(app.tuyacontrol.rubetek.RubetekStore(getApplication()))
+                .setState(house, device, mapOf("tmr:off[$slot]" to -1))
+            engine.store.rubetekTest = null
+            app.tuyacontrol.data.AppLog.i("Тест Rubetek: тестовый таймер tmr:off[$slot] снят")
+        } catch (e: Exception) {
+            app.tuyacontrol.data.AppLog.e("Тест Rubetek: тестовый таймер не снят", e)
         }
     }
 
