@@ -122,7 +122,8 @@ class HeatingEngine(context: Context) {
         fun stepOf(spec: DpSpec?): Double {
             if (spec == null) return 0.5
             val s = spec.step.coerceAtLeast(1) / 10.0.pow(spec.scale)
-            return if (s in 0.05..5.0) s else 0.5
+            // Термостат может принимать десятые, но для плана хватает полуградуса
+            return if (s in 0.05..5.0) maxOf(s, 0.5) else 0.5
         }
 
         /** Градусы -> значение DP с учётом множителя и допустимого диапазона. */

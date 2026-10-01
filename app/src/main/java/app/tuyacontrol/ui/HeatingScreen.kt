@@ -45,6 +45,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -70,6 +71,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import app.tuyacontrol.HeatingUiState
 import app.tuyacontrol.Thermostat
 import app.tuyacontrol.heating.ComfortWindow
@@ -296,7 +299,8 @@ private fun ZoneCard(plan: ZonePlan, thermostat: Thermostat?, prices: HourPrices
                 style = MaterialTheme.typography.bodyMedium,
             )
             Text(
-                zone.windows.joinToString("; ") { "${deg(it.temp)} ${it.text()}" } + "; остальное время ${deg(zone.baseTemp)}",
+                zone.windows.joinToString("; ") { "${deg(it.temp)} ${it.text()}" } +
+                    (if (zone.windows.any { it.from == it.to }) "" else "; остальное время ${deg(zone.baseTemp)}"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -501,11 +505,23 @@ private fun ZoneDialog(
     }
     val result = build()
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (isNew) "Новая зона" else initial.name) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Во весь экран: в обычном окне поля интервалов получались слишком узкими
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Закрыть") }
+                Text(
+                    if (isNew) "Новая зона" else initial.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { result?.let(onSave) }, enabled = result != null) { Text("Сохранить") }
+            }
+            Column(
+                Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(name, { name = it }, label = { Text("Название") }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
                 Text("Термостат", style = MaterialTheme.typography.labelMedium)
@@ -520,13 +536,21 @@ private fun ZoneDialog(
                     }
                 }
 
-                Text("Комфорт (часы с — по, температура)", style = MaterialTheme.typography.labelMedium)
+                Text("Окна комфорта", style = MaterialTheme.typography.titleSmall)
+                if (windows.isEmpty()) Text("Нет — весь день дежурная температура", style = MaterialTheme.typography.bodySmall)
                 windows.forEachIndexed { i, w ->
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        NumberField(w.from, { w.from = it }, "с", Modifier.weight(1f), decimal = false)
-                        NumberField(w.to, { w.to = it }, "по", Modifier.weight(1f), decimal = false)
-                        NumberField(w.temp, { w.temp = it }, "°C", Modifier.weight(1.2f))
-                        IconButton(onClick = { windows.removeAt(i) }) { Icon(Icons.Filled.Close, contentDescription = "Убрать") }
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+                        Column(Modifier.padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Окно ${i + 1}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                                IconButton(onClick = { windows.removeAt(i) }) { Icon(Icons.Filled.Close, contentDescription = "Убрать окно") }
+                            }
+                            Row(Modifier.padding(end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                NumberField(w.from, { w.from = it }, "С, час", Modifier.weight(1f), decimal = false)
+                                NumberField(w.to, { w.to = it }, "По, час", Modifier.weight(1f), decimal = false)
+                                NumberField(w.temp, { w.temp = it }, "°C", Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
                 TextButton(onClick = { windows.add(WindowDraft("8", "22", "21")) }) { Text("+ окно комфорта") }
@@ -551,11 +575,14 @@ private fun ZoneDialog(
                 if (!isNew) {
                     TextButton(onClick = { confirmDelete = true }) { Text("Удалить зону", color = MaterialTheme.colorScheme.error) }
                 }
+                if (result == null) {
+                    Text("Проверьте поля, отмеченные красным", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+                Spacer(Modifier.height(24.dp))
             }
-        },
-        confirmButton = { TextButton(onClick = { result?.let(onSave) }, enabled = result != null) { Text("Сохранить") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
-    )
+        }
+        }
+    }
 
     if (confirmDelete) {
         AlertDialog(
