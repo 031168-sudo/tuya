@@ -645,14 +645,18 @@ private fun NumberField(value: String, onChange: (String) -> Unit, label: String
 private fun OutdoorLine(state: HeatingUiState) {
     val id = state.settings.outdoorSensorId?.takeIf { it != "-" } ?: return
     val name = state.outdoorSensors.firstOrNull { it.id == id }?.name ?: "датчик"
-    val now = state.outdoorNow
+    val now: Double? = state.outdoorNow
     val stale = state.outdoorTime > 0 && System.currentTimeMillis() - state.outdoorTime > 3 * 3600_000L
-    val text = when {
-        now == null || stale -> "Уличный датчик «$name» не присылает данные — прогноз без поправки"
-        state.outdoorBias != 0.0 ->
-            "На улице сейчас ${deg(Math.round(now * 10) / 10.0)} («$name»). Прогноз поправлен по датчику: " +
+    val text = if (now == null || stale) {
+        "Уличный датчик «$name» не присылает данные — прогноз без поправки"
+    } else {
+        val t = deg(Math.round(now * 10) / 10.0)
+        if (state.outdoorBias != 0.0) {
+            "На улице сейчас $t («$name»). Прогноз поправлен по датчику: " +
                 String.format(Locale("ru"), "%+.1f°", state.outdoorBias)
-        else -> "На улице сейчас ${deg(Math.round(now * 10) / 10.0)} («$name»). Для поправки прогноза копится история датчика"
+        } else {
+            "На улице сейчас $t («$name»). Для поправки прогноза копится история датчика"
+        }
     }
     Text(
         text,
