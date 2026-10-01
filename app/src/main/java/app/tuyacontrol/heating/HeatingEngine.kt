@@ -100,17 +100,27 @@ class HeatingEngine(context: Context) {
         var ok = 0
         // Расписания телефона: оставляем только зоны с включённым управлением, обновляемые перезапишем
         val controlled = s.zones.filter { it.control }.mapNotNull { it.deviceId }.toSet()
-        val schedules = store.loadSchedules().filterKeys { it in controlled }.toMutableMap()
+        val schedules = store.loadSchedules().filterKeys { it in controlled && !RubetekMapper.isRubetek(it) }.toMutableMap()
         for (zone in s.zones) {
             if (!zone.control || (onlyZone != null && zone.id != onlyZone)) continue
             val id = zone.deviceId ?: continue
             // Конвекторы Rubetek: расписания уставок у них нет — переключает телефон по будильнику
+            // Конвекторы Rubetek: температура — та, что выставлена на конвекторе; по плану только включаем и
+            // выключаем таймерами, которые хранятся в самом модуле (работают без интернета и телефона)
             if (RubetekMapper.isRubetek(id)) {
                 try {
-                    val plan = HeatingPlanner.plan(zone, prices, forecast.temps, 1.0)
-                    schedules[id] = plan.setpoints
-                    applyRubetek(id, plan.setpoints[LocalTime.now().hour])
-                    lines += "${zone.name}: план в телефоне (Rubetek), переключений ${changes(plan.setpoints)}"
+                    val rubetek = RubetekClient(RubetekStore(app))
+                    val device = rubetek.allDevices().firstOrNull { it.id == id }
+                        ?: throw IllegalStateException("конвектор не найден в Rubetek")
+                    val own = (device.status["temp_set"] as? Number)?.toDouble()
+                        ?: throw IllegalStateException("неизвестна уставка конвектора")
+                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0)
+                    val events = onOffEvents(plan)
+                    writeRubetekTimers(rubetek, id, events)
+                    schedules.remove(id)
+                    lines += "${zone.name}: таймеры в модуле — " + events.joinToString(", ") { (m, on) ->
+                        "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл")
+                    } + " (температура ${own.toInt()}° с конвектора)"
                     ok++
                 } catch (e: Exception) {
                     AppLog.e("Отопление: ${zone.name} — Rubetek не ответил", e)
@@ -175,10 +185,20 @@ class HeatingEngine(context: Context) {
         val id = zone.deviceId ?: return "${zone.name}: нет устройства"
         store.saveSchedules(store.loadSchedules() - id)
         HeatingAlarm.scheduleNext(app)
-        if (!RubetekMapper.isRubetek(id)) {
-            runCatching { client.deleteTimers(id, TIMER_CATEGORY) }
-                .onFailure { AppLog.e("Отопление: ${zone.name} — расписание не снято", it) }
+        if (RubetekMapper.isRubetek(id)) {
+            // Rubetek: все таймеры модуля отключаем; сам конвектор не трогаем (вкл остаётся вкл, выкл — выкл)
+            val line = try {
+                writeRubetekTimers(RubetekClient(RubetekStore(app)), id, emptyList())
+                "${zone.name}: таймеры модуля отключены, конвектор не трогали"
+            } catch (e: Exception) {
+                AppLog.e("Отопление: ${zone.name} — таймеры Rubetek не сняты", e)
+                "${zone.name}: ошибка Rubetek — ${e.message ?: e.javaClass.simpleName}"
+            }
+            store.deployResult = line
+            return line
         }
+        runCatching { client.deleteTimers(id, TIMER_CATEGORY) }
+            .onFailure { AppLog.e("Отопление: ${zone.name} — расписание не снято", it) }
         val line = "${zone.name}: управление выключено, уставки больше не меняются"
         store.deployResult = line
         AppLog.i("Отопление: $line")
@@ -259,6 +279,24 @@ class HeatingEngine(context: Context) {
         }
     }
 
+    /**
+     * Записать в модуль Rubetek таймеры вкл/выкл: tmr:on[0..9], tmr:off[0..9].
+     * Значение = (дни недели битами << 16) | минуты от полуночи; 127 — каждый день; -1 — пусто.
+     * Пустой список — все 20 ячеек очищаются.
+     */
+    private suspend fun writeRubetekTimers(rubetek: RubetekClient, id: String, events: List<Pair<Int, Boolean>>) {
+        val (house, device) = RubetekMapper.parseId(id) ?: return
+        val ons = events.filter { it.second }.map { it.first }.take(10)
+        val offs = events.filter { !it.second }.map { it.first }.take(10)
+        val state = mutableMapOf<String, Any>()
+        for (i in 0 until 10) {
+            state["tmr:on[$i]"] = ons.getOrNull(i)?.let { (EVERY_DAY shl 16) or it } ?: -1
+            state["tmr:off[$i]"] = offs.getOrNull(i)?.let { (EVERY_DAY shl 16) or it } ?: -1
+        }
+        rubetek.setState(house, device, state)
+        AppLog.i("Отопление: Rubetek ${id.takeLast(6)} таймеры вкл=${ons.map { it / 60 }} выкл=${offs.map { it / 60 }}")
+    }
+
     private fun changes(sp: DoubleArray) = (0 until 24).count { sp[it] != sp[(it + 23) % 24] }
 
     private suspend fun specOf(client: TuyaCloudClient, id: String): Map<String, DpSpec> {
@@ -284,6 +322,27 @@ class HeatingEngine(context: Context) {
     }
 
     companion object {
+        /** Дни недели для таймеров Rubetek: все семь. */
+        private const val EVERY_DAY = 127
+
+        /**
+         * Зона с конвектором Rubetek: греть выше уставки самого конвектора он не будет — ограничиваем ею
+         * максимум и комфорт, иначе план рассчитывает на недостижимый «запас тепла».
+         */
+        fun rubetekZone(zone: HeatZone, deviceSetpoint: Double): HeatZone = zone.copy(
+            maxTemp = minOf(zone.maxTemp, deviceSetpoint),
+            baseTemp = minOf(zone.baseTemp, deviceSetpoint),
+            windows = zone.windows.map { it.copy(temp = minOf(it.temp, deviceSetpoint)) },
+        )
+
+        /** Час включения/выключения по плану: в часы, где план греет, конвектор включён. (минуты, вкл?) */
+        fun onOffEvents(plan: ZonePlan): List<Pair<Int, Boolean>> {
+            val on = BooleanArray(24) { h -> (0 until HeatingPlanner.STEPS_PER_HOUR).any { plan.heat[h * HeatingPlanner.STEPS_PER_HOUR + it] > 0 } }
+            val events = (0 until 24).filter { h -> on[h] != on[(h + 23) % 24] }.map { h -> h * 60 to on[h] }
+            // Весь день одинаково — один таймер в полночь, чтобы состояние всё-таки задавалось
+            return events.ifEmpty { listOf(0 to on[0]) }
+        }
+
         /** Своя категория таймеров: расписания, заведённые вручную в Tuya Smart, не трогаем. */
         const val TIMER_CATEGORY = "moydomheat"
 

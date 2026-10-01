@@ -339,9 +339,14 @@ private fun ZoneCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("Управление по плану", style = MaterialTheme.typography.titleSmall)
+                    val rubetek = zone.deviceId?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true
                     Text(
-                        if (zone.control) "Уставки выставляются по плану и обновляются каждую ночь"
-                        else "Выключено: приложение уставки не меняет, на устройстве остаётся что есть",
+                        when {
+                            rubetek && zone.control -> "Таймеры вкл/выкл записаны в модуль конвектора; температура — та, что на конвекторе"
+                            rubetek -> "Выключено: таймеры модуля отключены, сам конвектор не трогаем"
+                            zone.control -> "Уставки выставляются по плану и обновляются каждую ночь"
+                            else -> "Выключено: приложение уставки не меняет, на устройстве остаётся что есть"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -376,6 +381,21 @@ private fun ZoneCard(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+            if (zone.deviceId?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
+                Text("Таймеры конвектора (вкл / выкл)", style = MaterialTheme.typography.labelMedium)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan).forEach { (m, on) ->
+                        Text(
+                            "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл"),
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(zoneColor(prices, m / 60).copy(alpha = 0.45f))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
+                        )
+                    }
+                }
+            } else {
             Text("Уставки термостата", style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (h in 0 until 24) {
@@ -390,6 +410,7 @@ private fun ZoneCard(
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     )
                 }
+            }
             }
         }
     }

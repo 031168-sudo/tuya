@@ -201,7 +201,14 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             val forecast = engine.forecast(s)
             val steps = _state.value.thermostats.associate { it.id to it.step }
             val plans = withContext(Dispatchers.Default) {
-                s.zones.map { z -> HeatingPlanner.plan(z, prices, forecast.temps, steps[z.deviceId] ?: 0.5) }
+                s.zones.map { z ->
+                    // Rubetek: температура — уставка самого конвектора, план только вкл/выкл
+                    val own = _state.value.thermostats.firstOrNull { it.id == z.deviceId }?.setpoint
+                    val planZone = if (own != null && z.deviceId != null && app.tuyacontrol.rubetek.RubetekMapper.isRubetek(z.deviceId)) {
+                        HeatingEngine.rubetekZone(z, own)
+                    } else z
+                    HeatingPlanner.plan(planZone, prices, forecast.temps, steps[z.deviceId] ?: 0.5).withZone(z)
+                }
             }
             _state.update {
                 it.copy(
