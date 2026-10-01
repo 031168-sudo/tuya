@@ -31,6 +31,23 @@ class HeatingStore(context: Context) {
         get() = prefs.getString("deploy_result", null)
         set(v) = prefs.edit().putString("deploy_result", v).apply()
 
+    /** Почасовые уставки устройств, которые переключает телефон (Rubetek): id -> 24 значения. */
+    fun saveSchedules(m: Map<String, DoubleArray>) {
+        val o = JSONObject()
+        m.forEach { (id, sp) -> o.put(id, JSONArray(sp.toList())) }
+        prefs.edit().putString("phone_schedules", o.toString()).apply()
+    }
+
+    fun loadSchedules(): Map<String, DoubleArray> = try {
+        val o = JSONObject(prefs.getString("phone_schedules", "{}")!!)
+        o.keys().asSequence().associateWith { id ->
+            val a = o.getJSONArray(id)
+            DoubleArray(24) { a.optDouble(it, 18.0) }
+        }
+    } catch (e: Exception) {
+        emptyMap()
+    }
+
     private fun toJson(s: HeatingSettings) = JSONObject()
         .put("lat", s.latitude)
         .put("lon", s.longitude)

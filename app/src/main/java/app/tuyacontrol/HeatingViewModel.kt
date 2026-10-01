@@ -63,10 +63,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     /** Термостаты приходят с главного экрана; пустым зонам подбираем устройство по названию. */
     fun setDevices(devices: List<DeviceUi>) {
-        // Конвекторы Rubetek пока не в планировщике: расписание пишется в облако Tuya
-        val list = devices.filter {
-            ("temp_set" in it.status || "temp_set" in it.spec) && !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it.id)
-        }.map { d ->
+        val list = devices.filter { "temp_set" in it.status || "temp_set" in it.spec }.map { d ->
             val cur = d.spec["temp_current"]
             val set = d.spec["temp_set"]
             Thermostat(
@@ -118,6 +115,35 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         val s = _state.value.settings
         val zones = if (s.zones.any { it.id == zone.id }) s.zones.map { if (it.id == zone.id) zone else it } else s.zones + zone
         applySettings(s.copy(zones = zones))
+    }
+
+    /** Зона для каждого конвектора Rubetek, которому ещё не назначена зона: комфорт 21° круглосуточно. */
+    fun addRubetekZones() {
+        val s = _state.value.settings
+        val used = s.zones.mapNotNull { it.deviceId }.toSet()
+        val fresh = _state.value.thermostats
+            .filter { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it.id) && it.id !in used }
+            .map { t ->
+                HeatZone(
+                    id = java.util.UUID.randomUUID().toString().take(8),
+                    name = t.name.filter { it.isLetterOrDigit() || it == ' ' || it == ',' }.trim().ifEmpty { t.name },
+                    deviceId = t.id,
+                    windows = listOf(app.tuyacontrol.heating.ComfortWindow(0, 0, 21.0)),
+                    baseTemp = 16.0,
+                    peakDrop = 1.0,
+                    maxTemp = 23.0,
+                    // Конвектор греет воздух быстро, но и остывает комната быстрее, чем с тёплым полом
+                    powerKw = 2.0,
+                    heatRate = 3.0,
+                    lossRate = 0.04,
+                )
+            }
+        if (fresh.isEmpty()) {
+            _state.update { it.copy(message = "Все конвекторы Rubetek уже в зонах") }
+            return
+        }
+        applySettings(s.copy(zones = s.zones + fresh))
+        _state.update { it.copy(message = "Добавлено зон: ${fresh.size}") }
     }
 
     fun deleteZone(id: String) {

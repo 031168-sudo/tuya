@@ -62,6 +62,8 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         viewModel.setForeground(true)
+        // Будильник переключения конвекторов мог потеряться (обновление приложения) — заводим заново
+        app.tuyacontrol.heating.HeatingAlarm.scheduleNext(this)
     }
 
     override fun onStop() {
@@ -192,6 +194,7 @@ private fun App(
             onSaveZone = heatingViewModel::saveZone,
             onDeleteZone = heatingViewModel::deleteZone,
             onLocation = heatingViewModel::setLocation,
+            onAddRubetek = heatingViewModel::addRubetekZones,
             onMessageShown = heatingViewModel::messageShown,
             bottomBar = { bottomBar(2) },
         )

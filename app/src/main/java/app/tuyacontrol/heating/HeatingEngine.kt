@@ -6,6 +6,9 @@ import app.tuyacontrol.cloud.TuyaApiException
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.energy.EnergyDb
+import app.tuyacontrol.rubetek.RubetekClient
+import app.tuyacontrol.rubetek.RubetekMapper
+import app.tuyacontrol.rubetek.RubetekStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -49,8 +52,23 @@ class HeatingEngine(context: Context) {
         val forecast = forecast(s)
         val lines = mutableListOf<String>()
         var ok = 0
+        val schedules = mutableMapOf<String, DoubleArray>()
         for (zone in s.zones) {
             val id = zone.deviceId ?: continue
+            // Конвекторы Rubetek: расписания уставок у них нет — переключает телефон по будильнику
+            if (RubetekMapper.isRubetek(id)) {
+                try {
+                    val plan = HeatingPlanner.plan(zone, prices, forecast.temps, 1.0)
+                    schedules[id] = plan.setpoints
+                    applyRubetek(id, plan.setpoints[LocalTime.now().hour], turnOn = true)
+                    lines += "${zone.name}: план в телефоне (Rubetek), переключений ${changes(plan.setpoints)}"
+                    ok++
+                } catch (e: Exception) {
+                    AppLog.e("Отопление: ${zone.name} — Rubetek не ответил", e)
+                    lines += "${zone.name}: ошибка Rubetek — ${e.message ?: e.javaClass.simpleName}"
+                }
+                continue
+            }
             try {
                 val spec = specOf(client, id)
                 val temp = spec["temp_set"] ?: throw IllegalStateException("нет уставки temp_set")
@@ -74,6 +92,8 @@ class HeatingEngine(context: Context) {
             }
         }
         if (lines.isEmpty()) lines += "Ни одной зоне не назначен термостат"
+        store.saveSchedules(schedules)
+        HeatingAlarm.scheduleNext(app)
         val report = lines.joinToString("\n")
         store.deployedAt = System.currentTimeMillis()
         store.deployResult = report
@@ -84,8 +104,14 @@ class HeatingEngine(context: Context) {
     /** Убрать наше расписание со всех термостатов. */
     suspend fun disable(client: TuyaCloudClient, s: HeatingSettings): String {
         val lines = mutableListOf<String>()
+        store.saveSchedules(emptyMap())
+        HeatingAlarm.cancel(app)
         for (zone in s.zones) {
             val id = zone.deviceId ?: continue
+            if (RubetekMapper.isRubetek(id)) {
+                lines += "${zone.name}: телефон больше не переключает"
+                continue
+            }
             lines += try {
                 client.deleteTimers(id, TIMER_CATEGORY)
                 "${zone.name}: расписание снято"
@@ -96,6 +122,28 @@ class HeatingEngine(context: Context) {
         store.deployResult = "Автопилот выключен"
         return lines.joinToString("\n")
     }
+
+    /** Выставить уставку конвектору Rubetek (и включить его, если нужно). */
+    suspend fun applyRubetek(id: String, temp: Double, turnOn: Boolean = false) {
+        val (house, device) = RubetekMapper.parseId(id) ?: return
+        val state = mutableMapOf<String, Any>("thermostat:setTemp" to Math.round(temp).toInt().coerceIn(5, 35))
+        if (turnOn) state["thermostat:setMode"] = 1
+        RubetekClient(RubetekStore(app)).setState(house, device, state)
+        AppLog.i("Отопление: Rubetek ${id.takeLast(6)} уставка ${state["thermostat:setTemp"]}")
+    }
+
+    /** Будильник: выставить конвекторам Rubetek уставку текущего часа и завести следующий. */
+    suspend fun applyRubetekNow() {
+        if (!store.load().autopilot) return
+        val hour = LocalTime.now().hour
+        for ((id, sp) in store.loadSchedules()) {
+            runCatching { applyRubetek(id, sp[hour]) }
+                .onFailure { AppLog.e("Отопление: уставка Rubetek не отправлена", it) }
+        }
+        HeatingAlarm.scheduleNext(app)
+    }
+
+    private fun changes(sp: DoubleArray) = (0 until 24).count { sp[it] != sp[(it + 23) % 24] }
 
     private suspend fun specOf(client: TuyaCloudClient, id: String): Map<String, DpSpec> {
         val spec = runCatching { client.getSpecification(id) }.getOrDefault(emptyMap())

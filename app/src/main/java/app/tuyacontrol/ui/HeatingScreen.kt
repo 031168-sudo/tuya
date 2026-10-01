@@ -120,6 +120,7 @@ fun HeatingScreen(
     onSaveZone: (HeatZone) -> Unit,
     onDeleteZone: (String) -> Unit,
     onLocation: (Double, Double) -> Unit,
+    onAddRubetek: () -> Unit,
     onMessageShown: () -> Unit,
     bottomBar: @Composable () -> Unit,
 ) {
@@ -170,6 +171,17 @@ fun HeatingScreen(
                             Text("Зона")
                         }
                         OutlinedButton(onClick = { editLocation = true }) { Text("Место для погоды") }
+                    }
+                }
+                val used = state.settings.zones.mapNotNull { it.deviceId }.toSet()
+                val freeRubetek = state.thermostats.count {
+                    app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it.id) && it.id !in used
+                }
+                if (freeRubetek > 0) item {
+                    OutlinedButton(onClick = onAddRubetek, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Filled.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Конвекторы Rubetek в зоны ($freeRubetek)")
                     }
                 }
                 item { HowItWorks() }
@@ -442,7 +454,8 @@ private fun HowItWorks() {
             "тарифы из раздела «Тарифы» и прогноз уличной температуры. Пол прогревается с запасом ночью и в " +
             "полупик, а в пиковые часы отдаёт тепло. «Без оптимизации» — тот же комфорт, но без запаса и без " +
             "просадки в пик. Параметры пола (мощность, скорость нагрева, остывание) пока типовые — их можно " +
-            "уточнить в настройках зоны.",
+            "уточнить в настройках зоны. Термостаты Tuya переключает облачное расписание Tuya, конвекторы " +
+            "Rubetek — телефон по будильнику в начале часа (нужен интернет на телефоне).",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = 4.dp),
