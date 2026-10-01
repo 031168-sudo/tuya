@@ -268,10 +268,6 @@ private fun SummaryCard(state: HeatingUiState, onDeploy: () -> Unit) {
                         ". Каждую ночь план пересчитывается по погоде.",
                     style = MaterialTheme.typography.bodySmall,
                 )
-                state.deployResult?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f))
-                }
-                TextButton(onClick = onDeploy, enabled = !state.deploying) { Text("Обновить уставки сейчас") }
             }
         }
     }
@@ -610,10 +606,13 @@ private fun ModuleTimersBlock(
             "✓ Записано по плану и проверено в модуле. Конвектор включается и выключается сам, даже без интернета",
             style = MaterialTheme.typography.bodySmall, color = ok,
         )
-        zone.control -> Text(
-            "⚠ В модуле не то, что записало приложение. Нажмите «Обновить уставки сейчас» или выключите и включите управление",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
-        )
+        zone.control -> {
+            Text(
+                "⚠ В модуле не то, что записало приложение",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
+            )
+            Button(onClick = { onControl(true) }, enabled = !busy) { Text("Записать план в модуль") }
+        }
         timers.isNotEmpty() -> {
             Text(
                 "⚠ Управление выключено, но в модуле стоят таймеры — конвектор будет сам включаться и выключаться",
@@ -633,9 +632,10 @@ private fun ModuleTimersBlock(
     val planned = app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan)
     if (zone.control && matches && planned.sortedWith(compareBy({ it.first }, { it.second })) != written) {
         Text(
-            "План на сегодня изменился по погоде — новые таймеры запишутся ночью или кнопкой «Обновить уставки сейчас»",
+            "План на сегодня изменился по погоде — новые таймеры запишутся ночью",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        TextButton(onClick = { onControl(true) }, enabled = !busy) { Text("Записать сейчас") }
     }
 }
 
