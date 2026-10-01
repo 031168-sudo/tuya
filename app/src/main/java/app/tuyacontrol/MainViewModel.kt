@@ -184,7 +184,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var rubetekDevices: List<DeviceUi> = emptyList()
     private var rubetekJob: Job? = null
     private var rubetekStateLogged = false
-    private var rubetekProbed = false
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -618,15 +617,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 AppLog.i("Rubetek: устройств ${list.size}")
                 app.tuyacontrol.rubetek.RubetekHistory.record(getApplication<android.app.Application>(), list)
-                if (!rubetekProbed) {
-                    // Один раз за запуск: узнать, хранит ли облако Rubetek историю показаний
-                    rubetekProbed = true
-                    list.firstOrNull { "temp_current" in it.status }?.let { d ->
-                        app.tuyacontrol.rubetek.RubetekMapper.parseId(d.id)?.let { (h, dev) ->
-                            launch { rubetek.probeHistory(h, dev) }
-                        }
-                    }
-                }
                 _state.update { it.copy(rubetekCount = list.size, rubetekError = null) }
                 publish()
             } catch (e: Exception) {
