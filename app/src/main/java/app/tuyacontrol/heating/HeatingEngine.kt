@@ -6,6 +6,8 @@ import app.tuyacontrol.cloud.TuyaApiException
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.energy.EnergyDb
+import app.tuyacontrol.sensor.Reading
+import app.tuyacontrol.sensor.SensorDb
 import app.tuyacontrol.rubetek.RubetekClient
 import app.tuyacontrol.rubetek.RubetekMapper
 import app.tuyacontrol.rubetek.RubetekStore
@@ -50,10 +52,10 @@ class HeatingEngine(context: Context) {
     }
 
     /** Состояние уличного датчика: последнее значение и время, null — не выбран или нет данных. */
-    fun outdoorLast(s: HeatingSettings): app.tuyacontrol.sensor.Reading? {
+    fun outdoorLast(s: HeatingSettings): Reading? {
         val id = s.outdoorSensorId ?: return null
         val code = s.outdoorCode ?: return null
-        return runCatching { app.tuyacontrol.sensor.SensorDb(app).last(id, code) }.getOrNull()
+        return runCatching { SensorDb(app).last(id, code) }.getOrNull()
     }
 
     /**
@@ -63,7 +65,7 @@ class HeatingEngine(context: Context) {
     private suspend fun outdoorBias(s: HeatingSettings, f: Weather.Forecast): Double? = withContext(Dispatchers.IO) {
         val id = s.outdoorSensorId ?: return@withContext null
         val code = s.outdoorCode ?: return@withContext null
-        val db = app.tuyacontrol.sensor.SensorDb(app)
+        val db = SensorDb(app)
         val last = db.last(id, code) ?: return@withContext null
         val now = System.currentTimeMillis()
         if (now - last.time > 3 * 3600_000L) return@withContext null
