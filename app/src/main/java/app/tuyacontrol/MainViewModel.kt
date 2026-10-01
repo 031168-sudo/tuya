@@ -654,7 +654,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val method = rubetek.sendCode(l)
                 val how = when (method) {
                     "email" -> "Код отправлен на $l — проверьте почту"
-                    "sms" -> "Код отправлен по SMS на $l"
+                    "sms" -> "Ждите звонка или SMS на $l. При звонке код — последние 4 цифры номера"
                     else -> "Сейчас на $l позвонят: код — последние 4 цифры номера, с которого звонят"
                 }
                 _state.update { it.copy(rubetekBusy = false, rubetekCodeSentTo = l, rubetekCodeHint = how) }

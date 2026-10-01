@@ -60,7 +60,32 @@ class RubetekStore(context: Context) {
  */
 class RubetekClient(private val store: RubetekStore) {
 
+    /**
+     * Сервер авторизации iot.rubetek.com (Rails) держит запрос кода в сессии: без cookie сессии он отвечает 201,
+     * но код не отправляет. Поэтому храним cookie между «получить код» и «войти». Начальная сессия — как в
+     * библиотеке rubetek_socket_api; если сервер выдаст свою, она её заменит.
+     */
+    private val cookies = java.util.concurrent.ConcurrentHashMap<String, String>().apply {
+        put("_iot_rubetek_com_session", SEED_SESSION)
+        put("locale", "ru")
+    }
+    private val jar = object : okhttp3.CookieJar {
+        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
+            if (url.host != "iot.rubetek.com") return
+            cookies.forEach {
+                AppLog.i("Rubetek: сервер выдал cookie ${it.name}")
+                this@RubetekClient.cookies[it.name] = it.value
+            }
+        }
+
+        override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> {
+            if (url.host != "iot.rubetek.com") return emptyList()
+            return cookies.map { (k, v) -> okhttp3.Cookie.Builder().domain(url.host).path("/").name(k).value(v).build() }
+        }
+    }
+
     private val http = OkHttpClient.Builder()
+        .cookieJar(jar)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
@@ -103,7 +128,7 @@ class RubetekClient(private val store: RubetekStore) {
         call(
             "POST", "$IOT/api/v1/code_requests",
             body = JSONObject().put("code_request", req),
-            headers = mapOf("User-Agent" to "okhttp/4.12.0", "Cookie" to "locale=ru"),
+            headers = mapOf("User-Agent" to "okhttp/4.12.0", "Accept-Language" to "ru"),
             auth = false,
         )
     }
@@ -245,9 +270,15 @@ class RubetekClient(private val store: RubetekStore) {
         private const val CLIENT_ID = "ckvfvkClm2IdPrkSlvWSe3KiEWJOAbyKOQR5giCYYAo"
         private const val CLIENT_SECRET = "_TiXiy8xkVmVEpTBoYndqvyYbldXFs00wBtgLNmSOCE"
         private val JSON = "application/json; charset=UTF-8".toMediaType()
+        private const val SEED_SESSION =
+            "IRsv98v2DswIJJ1i2VKdWcVzOyv8%2BVlPAldUGbFqUe3eKwLT8VK%2BfuWvHFo1JJKa" +
+                "pEAqoQOfMTBhfuQ14xgkV7TBQy2hllQTtu2R8J2oo8sgCtPQWRO9aInCxeJB4wQ7UX%2F%2FXiZafoIAjT%2BKrHWAueo" +
+                "6HaH232cje1h2vT4HX0vQarHhLk75SQipMrOuIhefdOQW7fzKamFavxtyquxtrBV9uEhOdQULVbbxQt3AjqGAbAY%2BsH" +
+                "zjgI%2FEIfw0qI8XJcjry1aD3yFex316kDABTGU4PCDJdOm1telhF8rAjpCKe2CMISv3g8okyvx9oc3ELAlbvREG%2BxV" +
+                "onOH2--4WBiJmIgZZT825rb--45HBPHoCrH8aa9ly%2B6cVyA%3D%3D"
 
         /** Способ доставки кода на телефон и длина кода: сначала звонок (как в приложении Rubetek), потом SMS. */
-        private val PHONE_METHODS = listOf("call" to 4, "flash_call" to 4, "flashcall" to 4, "voice" to 4, "sms" to 6)
+        private val PHONE_METHODS = listOf("sms" to 6, "call" to 4)
 
         fun isEmail(login: String) = "@" in login
 
