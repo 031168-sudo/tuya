@@ -106,18 +106,24 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             for (z in s.zones) {
                 val id = z.deviceId ?: continue
                 if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) continue
-                val raw = runCatching { client.timersRaw(id) }.getOrElse { "ошибка: ${it.message}" }
-                app.tuyacontrol.data.AppLog.i("Расписания устройства зоны «${z.name}»: $raw")
-                for (cat in listOf("studio", null)) {
-                    val v2 = runCatching { client.timersV2Raw(id, cat) }.getOrElse { "ошибка: ${it.message}" }
-                    app.tuyacontrol.data.AppLog.i("Расписания v2 («${cat ?: "все"}») зоны «${z.name}»: $v2")
-                }
-                // Все DP модели устройства (включая скрытые raw) — есть ли у него своё расписание на борту
+                // Модель с диапазонами (что означают режимы и рабочие дни) и программа, записанная в термостат
                 val model = runCatching { client.getThingModel(id) }.getOrNull()
                 if (model != null) {
                     app.tuyacontrol.data.AppLog.i(
-                        "Модель устройства зоны «${z.name}»: " +
-                            model.values.joinToString { "${it.code}#${it.dpId}:${it.type}${if (it.writable) "(rw)" else ""}" }
+                        "Модель устройства зоны «${z.name}»: " + model.values.joinToString { d ->
+                            "${d.code}#${d.dpId}:${d.type}${if (d.writable) "(rw)" else ""}" +
+                                (if (d.range.isNotEmpty()) d.range.toString() else "") +
+                                (if (d.type == "Integer") "[${d.min}..${d.max} шаг ${d.step} ×10^-${d.scale}]" else "")
+                        }
+                    )
+                }
+                val status = runCatching { client.getStatus(id) }.getOrDefault(emptyMap()) +
+                    runCatching { client.getShadowProperties(id) }.getOrDefault(emptyMap())
+                status.forEach { (code, v) ->
+                    val periods = app.tuyacontrol.heating.WeekProgram.decode(code, v?.toString() ?: return@forEach) ?: return@forEach
+                    app.tuyacontrol.data.AppLog.i(
+                        "Программа в термостате «${z.name}» ($code): " + periods.joinToString(", ") { it.text() } +
+                            "; режим=${status["mode"]}, рабочие дни=${status["work_days"]}, program_mode=${status["program_mode"]}"
                     )
                 }
                 // Что устройство сообщало за последние 2 часа (запись расписания на борт видна как отчёт DP)
