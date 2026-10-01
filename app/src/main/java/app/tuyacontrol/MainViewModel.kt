@@ -518,6 +518,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
 
+                        // Термостаты «Temp»: в стандартном статусе нет work_state (греет / не греет),
+                        // он есть только в shadow — дополняем недостающими DP
+                        if (!useThingModel && d.category == "wk" && "work_state" !in status) {
+                            val shadow = runCatching { c.getShadowProperties(d.id) }.getOrDefault(emptyMap())
+                            val extra = shadow.filterKeys { it !in status }
+                            if (extra.isNotEmpty()) status = status + extra
+                        }
+
                         val spec = specCache[d.id] ?: runCatching {
                             if (useThingModel) c.getThingModel(d.id) else c.getSpecification(d.id)
                         }
