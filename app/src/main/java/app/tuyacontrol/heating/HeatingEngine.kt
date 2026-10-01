@@ -79,7 +79,7 @@ class HeatingEngine(context: Context) {
 
                 // Сразу: включить, ручной режим (чтобы встроенная программа не перебивала), уставка сейчас
                 val now = mutableListOf<Pair<String, Any?>>()
-                spec["switch"]?.takeIf { it.writable }?.let { now += "switch" to true }
+                if (id !in store.relayDevices) spec["switch"]?.takeIf { it.writable }?.let { now += "switch" to true }
                 spec["mode"]?.takeIf { it.writable && "manual" in it.range }?.let { now += "mode" to "manual" }
                 now += code to encode(plan.setpoints[LocalTime.now().hour], temp)
                 runCatching { client.sendCommands(id, now) }

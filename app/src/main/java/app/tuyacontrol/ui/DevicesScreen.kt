@@ -215,7 +215,11 @@ private fun DeviceCard(
     var expanded by rememberSaveable(device.id) { mutableStateOf(false) }
 
     // У датчика температуры нет выключателя — логические DP (вкл/выкл) не показываем
-    val entries = device.status.entries.toList().filter { !(device.isSensor && it.value is Boolean) }
+    // У «温控仪» (батарея в ванной) switch — реле нагрева: его не переключают, он показан значком «греет»
+    val entries = device.status.entries.toList().filter {
+        !(device.isSensor && it.value is Boolean) &&
+            !(device.switchIsRelay && it.key in DeviceUi.MAIN_SWITCHES)
+    }
     val primary = entries.filter { DpLabels.isPrimary(it.key, device.spec[it.key]) || isFallbackSwitch(it, device) }
     val secondary = entries - primary.toSet()
 

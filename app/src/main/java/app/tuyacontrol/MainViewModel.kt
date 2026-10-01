@@ -129,6 +129,10 @@ data class DeviceUi(
             return null
         }
 
+    /** Переключатель этого устройства — не «питание», а реле нагрева: показывается как «греет / не греет». */
+    val switchIsRelay: Boolean
+        get() = productName.contains(ALWAYS_ON_PRODUCT)
+
     /** Код уставки температуры: temp_set или похожий записываемый DP («set_temp» и т.п.). */
     val setpointCode: String?
         get() {

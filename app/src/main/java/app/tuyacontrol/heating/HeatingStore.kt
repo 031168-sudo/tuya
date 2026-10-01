@@ -31,6 +31,11 @@ class HeatingStore(context: Context) {
         get() = prefs.getString("deploy_result", null)
         set(v) = prefs.edit().putString("deploy_result", v).apply()
 
+    /** Устройства, у которых switch — реле нагрева (его нельзя трогать при записи плана). */
+    var relayDevices: Set<String>
+        get() = prefs.getStringSet("relay_devices", emptySet()) ?: emptySet()
+        set(v) = prefs.edit().putStringSet("relay_devices", v).apply()
+
     /** Почасовые уставки устройств, которые переключает телефон (Rubetek): id -> 24 значения. */
     fun saveSchedules(m: Map<String, DoubleArray>) {
         val o = JSONObject()

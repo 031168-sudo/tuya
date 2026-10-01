@@ -65,6 +65,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     /** Термостаты приходят с главного экрана; пустым зонам подбираем устройство по названию. */
     fun setDevices(devices: List<DeviceUi>) {
+        engine.store.relayDevices = devices.filter { it.switchIsRelay }.map { it.id }.toSet()
         val list = devices.filter { it.setpointCode != null }.map { d ->
             val cur = d.spec["temp_current"]
             val code = d.setpointCode!!
