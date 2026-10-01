@@ -311,21 +311,30 @@ class HeatingEngine(context: Context) {
         val value = WeekProgram.encode(code, periods + weekend)!!
         val modes = programModes(code)
         val text = periods.joinToString(", ") { it.text() }
-        val same = before[code] == value && modes.all { (k, v) -> before[k]?.toString() == v }
+        fun progOf(st: Map<String, Any?>) = (st[code] as? String)?.let { WeekProgram.decode(code, it) }
+        val wanted = periods + weekend
+        val same = progOf(before) == wanted && modes.all { (k, v) -> before[k]?.toString() == v }
         if (same) {
             store.setDeployedProgram(id, value)
             AppLog.i("Отопление: ${zone.name} — программа в термостате уже такая: $text")
             return "${zone.name}: программа в термостате без изменений — $text"
         }
         AppLog.i("Отопление: ${zone.name} — пишу программу $code=$value ($text), режим $modes; было ${before[code]}")
-        sendTuya(client, id, listOf(code to value) + modes)
+        // Каждый DP отдельно и через модель устройства (week_program — нестандартные DP, обычные команды
+        // их могут молча не принять); если модель не приняла — обычной командой. Ответы — в журнал
+        for ((k, v) in listOf(code to value) + modes) {
+            val r = runCatching { client.sendProperties(id, listOf(k to v)); "модель: принято" }
+                .recoverCatching { e1 -> client.sendCommands(id, listOf(k to v)); "модель: ${describe(e1)}; команда: принято" }
+                .getOrElse { "не принято: ${describe(it)}" }
+            AppLog.i("Отопление: ${zone.name} — $k=$v → $r")
+        }
         // Наши облачные расписания уставок этому термостату больше не нужны — они сбили бы программу
         runCatching { client.deleteTimers(id, TIMER_CATEGORY) }
         var after: Map<String, Any?> = emptyMap()
-        for (attempt in 1..4) {
-            kotlinx.coroutines.delay(3000)
+        for (attempt in 1..8) {
+            kotlinx.coroutines.delay(4000)
             after = deviceState(client, id)
-            if (after[code] == value && modes.all { (k, v) -> after[k]?.toString() == v }) {
+            if (progOf(after) == wanted && modes.all { (k, v) -> after[k]?.toString() == v }) {
                 store.setDeployedProgram(id, value)
                 AppLog.i("Отопление: ${zone.name} — термостат подтвердил программу (попытка $attempt)")
                 return "${zone.name}: программа записана в термостат — $text"
