@@ -184,6 +184,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var rubetekDevices: List<DeviceUi> = emptyList()
     private var rubetekJob: Job? = null
     private var rubetekStateLogged = false
+    private var rubetekProbed = false
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -307,7 +308,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun doScan(): Map<String, LocalAnnounce> {
         _state.update { it.copy(localScanning = true) }
-        val found = runCatching { LocalDiscovery.scan(getApplication()) }
+        val found = runCatching { LocalDiscovery.scan(getApplication<android.app.Application>()) }
             .onFailure { AppLog.e("Поиск в локальной сети", it) }
             .getOrDefault(emptyMap())
         _state.update {
@@ -616,6 +617,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (old != null && old.pending.isNotEmpty()) d.copy(status = d.status + old.status.filterKeys { it in old.pending }, pending = old.pending) else d
                 }
                 AppLog.i("Rubetek: устройств ${list.size}")
+                app.tuyacontrol.rubetek.RubetekHistory.record(getApplication<android.app.Application>(), list)
+                if (!rubetekProbed) {
+                    // Один раз за запуск: узнать, хранит ли облако Rubetek историю показаний
+                    rubetekProbed = true
+                    list.firstOrNull { "temp_current" in it.status }?.let { d ->
+                        app.tuyacontrol.rubetek.RubetekMapper.parseId(d.id)?.let { (h, dev) ->
+                            launch { rubetek.probeHistory(h, dev) }
+                        }
+                    }
+                }
                 _state.update { it.copy(rubetekCount = list.size, rubetekError = null) }
                 publish()
             } catch (e: Exception) {
@@ -688,6 +699,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 rubetek.signIn(login, code)
                 _state.update { it.copy(rubetekBusy = false, rubetekCodeSentTo = null, rubetekLogin = login) }
+                app.tuyacontrol.rubetek.RubetekHistory.schedule(getApplication<android.app.Application>())
                 refreshRubetek(silent = false)
             } catch (e: Exception) {
                 AppLog.e("Rubetek: вход не удался", e)
@@ -701,6 +713,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun rubetekSignOut() {
         rubetekJob?.cancel()
         rubetek.signOut()
+        app.tuyacontrol.rubetek.RubetekHistory.cancel(getApplication<android.app.Application>())
         rubetekDevices = emptyList()
         _state.update { it.copy(rubetekLogin = null, rubetekCount = 0, rubetekError = null) }
         publish()

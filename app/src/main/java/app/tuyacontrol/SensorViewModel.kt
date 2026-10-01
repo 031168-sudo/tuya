@@ -81,8 +81,12 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
 
     fun refresh() {
         val device = _state.value.device ?: return
-        val creds = credentials.load() ?: return
         if (syncJob?.isActive == true) return
+        if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(device.id)) {
+            refreshRubetek(device)
+            return
+        }
+        val creds = credentials.load() ?: return
         val client = TuyaCloudClient(creds)
         syncJob = viewModelScope.launch {
             _state.update { it.copy(syncing = true, progress = "Текущие показания…") }
@@ -106,6 +110,27 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 _state.update {
                     it.copy(syncing = false, progress = null, message = e.message ?: e.javaClass.simpleName)
                 }
+            }
+            reload()
+        }
+    }
+
+    /** Rubetek: истории в облаке нет — берём текущее значение, пишем точку и показываем накопленное. */
+    private fun refreshRubetek(device: SensorDevice) {
+        syncJob = viewModelScope.launch {
+            _state.update { it.copy(syncing = true, progress = "Текущие показания…") }
+            try {
+                val store = app.tuyacontrol.rubetek.RubetekStore(getApplication<android.app.Application>())
+                val all = app.tuyacontrol.rubetek.RubetekClient(store).allDevices()
+                app.tuyacontrol.rubetek.RubetekHistory.record(getApplication<android.app.Application>(), all)
+                val d = all.firstOrNull { it.id == device.id }
+                val current = device.channels.mapNotNull { ch ->
+                    (d?.status?.get(ch.code) as? Number)?.toDouble()?.let { ch.code to it }
+                }.toMap()
+                _state.update { it.copy(current = current, currentTime = System.currentTimeMillis(), syncing = false, progress = null) }
+            } catch (e: Exception) {
+                AppLog.e("${device.name}: Rubetek не ответил", e)
+                _state.update { it.copy(syncing = false, progress = null, message = e.message ?: e.javaClass.simpleName) }
             }
             reload()
         }

@@ -191,6 +191,50 @@ class RubetekClient(private val store: RubetekStore) {
 
     // ---------- HTTP ----------
 
+    /** Все устройства всех домов как DeviceUi. */
+    suspend fun allDevices(): List<app.tuyacontrol.DeviceUi> {
+        val houses = houses()
+        val out = mutableListOf<app.tuyacontrol.DeviceUi>()
+        for (h in houses) {
+            val hid = h.optString("id")
+            if (hid.isEmpty() || (!h.isNull("deleted_at") && h.optString("deleted_at").isNotEmpty())) continue
+            devices(hid).mapNotNullTo(out) { RubetekMapper.toDevice(hid, h.optString("name"), houses.size > 1, it) }
+        }
+        return out
+    }
+
+    /**
+     * Разведка: есть ли у облака Rubetek история показаний. Пробуем вероятные адреса и пишем в журнал,
+     * что ответил сервер (404 — такого нет). Только чтение.
+     */
+    suspend fun probeHistory(houseId: String, deviceId: String) {
+        val now = System.currentTimeMillis() / 1000
+        val from = now - 24 * 3600
+        val paths = listOf(
+            "/v5/houses/$houseId/devices/$deviceId/history",
+            "/v6/houses/$houseId/devices/$deviceId/history",
+            "/v6/houses/$houseId/devices/$deviceId/history?from=$from&to=$now",
+            "/v5/houses/$houseId/devices/$deviceId/statistics",
+            "/v6/houses/$houseId/devices/$deviceId/statistics",
+            "/v6/houses/$houseId/devices/$deviceId/state_history",
+            "/v6/houses/$houseId/devices/$deviceId/charts",
+            "/v6/houses/$houseId/devices/$deviceId/graph",
+            "/v5/houses/$houseId/devices/$deviceId/events",
+            "/v6/houses/$houseId/devices/$deviceId/events",
+            "/v6/houses/$houseId/events?per_page=20",
+            "/v6/houses/$houseId/history?per_page=20",
+            "/v6/houses/$houseId/notifications?per_page=20",
+        )
+        for (p in paths) {
+            val r = runCatching { get("$CCC$p") }
+            val result = r.fold(
+                { "200 " + it.toString().take(300) },
+                { (it as? RubetekException)?.let { e -> "${e.status} ${e.message}" } ?: it.javaClass.simpleName },
+            )
+            AppLog.i("Rubetek история? GET $p → $result")
+        }
+    }
+
     private suspend fun get(url: String): Any? = authed("GET", url, null)
 
     /** Запрос с токеном; при 401 обновляем токен и повторяем один раз. */

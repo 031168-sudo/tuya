@@ -46,6 +46,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // Ежедневная фоновая загрузка истории (~3:00)
         HistorySyncWorker.schedule(this)
+        // Замеры температуры конвекторов Rubetek (их облако истории не хранит)
+        if (app.tuyacontrol.rubetek.RubetekStore(this).refreshToken != null) {
+            app.tuyacontrol.rubetek.RubetekHistory.schedule(this)
+        }
         // Уведомление «история давно не обновлялась» на Android 13+ требует разрешения
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
