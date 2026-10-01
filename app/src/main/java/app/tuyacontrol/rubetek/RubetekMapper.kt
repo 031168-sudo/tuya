@@ -79,7 +79,16 @@ object RubetekMapper {
             spec["switch"] = DpSpec("switch", "Boolean", writable = true)
         }
 
-        // У конвекторов лишние поля не показываем: ступень мощности и режим дублируют приложение Rubetek
+        if (state.has("rusKlimat:SetPower")) {
+            status["power_level"] = state.optInt("rusKlimat:SetPower")
+            spec["power_level"] = DpSpec("power_level", "Integer")
+        }
+        if (state.has("rusKlimat:Mode")) {
+            status["rk_mode"] = state.optInt("rusKlimat:Mode")
+            spec["rk_mode"] = DpSpec("rk_mode", "Integer")
+        }
+        // У конвекторов остальные поля не показываем: CurrentPower повторяет ступень мощности, Power и
+        // thermostat:mode — то же, что переключатель: ступень мощности и режим дублируют приложение Rubetek
         val convector = state.has("thermostat:setTemp")
         // Остальные поля состояния показываем как есть (только чтение): у конвекторов, обогревателей и
         // других «донглов» Rubetek свой набор ключей, его сопоставим по мере знакомства с устройствами
