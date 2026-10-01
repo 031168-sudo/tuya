@@ -69,16 +69,16 @@ fun AppBottomBar(
 ) {
     NavigationBar {
         NavigationBarItem(
-            selected = selected == 0,
-            onClick = onDevices,
-            icon = { Icon(DeviceIcons.vector("devices_other"), contentDescription = null) },
-            label = { Text("Устройства") },
-        )
-        NavigationBarItem(
             selected = selected == 1,
             onClick = onCategories,
             icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
             label = { Text("Категории") },
+        )
+        NavigationBarItem(
+            selected = selected == 0,
+            onClick = onDevices,
+            icon = { Icon(DeviceIcons.vector("devices_other"), contentDescription = null) },
+            label = { Text("Устройства") },
         )
         NavigationBarItem(
             selected = selected == 2,

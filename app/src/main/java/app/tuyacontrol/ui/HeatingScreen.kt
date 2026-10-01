@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -506,9 +508,10 @@ private fun ZoneDialog(
     val result = build()
 
     // Во весь экран: в обычном окне поля интервалов получались слишком узкими
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.fillMaxSize()) {
+        // Отступы под системные панели и клавиатуру: поле ввода прокручивается над клавиатурой
+        Column(Modifier.fillMaxSize().systemBarsPadding().imePadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, contentDescription = "Закрыть") }
                 Text(
@@ -560,6 +563,13 @@ private fun ZoneDialog(
                     NumberField(base, { base = it }, "Дежурная °C", Modifier.weight(1f))
                     NumberField(drop, { drop = it }, "Просадка в пик", Modifier.weight(1f))
                 }
+                Text(
+                    "Просадка в пик — на сколько градусов можно опустить температуру ниже комфортной в часы пикового " +
+                        "тарифа (7–10, 17–21). Пол заранее прогревается по дешёвому тарифу и в пик не включается, " +
+                        "пока комната не остынет на эту величину. 0 — держать комфорт всегда.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 NumberField(max, { max = it }, "Максимум про запас °C", Modifier.fillMaxWidth())
 
                 TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Скрыть параметры пола" else "Параметры пола…") }

@@ -162,7 +162,24 @@ fun DevicesScreen(
                     item(key = "mode") {
                         ModeBar(state, devices, onModeChange)
                     }
-                    items(devices, key = { it.id }) { device ->
+                    // Группы по категориям в порядке списка категорий; без категории — в конце
+                    val order = state.categories.mapIndexed { i, c -> c.id to i }.toMap()
+                    val groups = devices
+                        .groupBy { d -> state.devicePrefs[d.id]?.categoryId?.takeIf { it in categories } }
+                        .toList()
+                        .sortedBy { (id, _) -> id?.let { order[it] } ?: Int.MAX_VALUE }
+                    groups.forEach { (catId, list) ->
+                        if (groups.size > 1) {
+                            item(key = "header_${catId ?: "none"}") {
+                                Text(
+                                    catId?.let { categories[it]?.name } ?: "Без категории",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(start = 4.dp, top = 6.dp),
+                                )
+                            }
+                        }
+                    items(list, key = { it.id }) { device ->
                         val pref = state.devicePrefs[device.id]
                         DeviceCard(
                             device = device,
@@ -173,6 +190,7 @@ fun DevicesScreen(
                             onOpenEnergy = { onOpenEnergy(device.id) },
                             onOpenSensor = onOpenSensor,
                         )
+                    }
                     }
                 }
             }
