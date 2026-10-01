@@ -100,7 +100,7 @@ data class DeviceUi(
             hasEnergy -> "electric_meter"
             "temp_set" in status || productName.contains("温控") -> "device_thermostat"
             "switch_led" in status || category == "dj" -> "lightbulb"
-            category == "cz" || productName.contains("socket", true) || productName.contains("plug", true) -> "outlet"
+            category == "rubetek" || category == "cz" || productName.contains("socket", true) || productName.contains("plug", true) -> "outlet"
             sensorDevice != null -> "thermostat"
             else -> "devices_other"
         }
@@ -151,6 +151,13 @@ data class UiState(
     val mode: ControlMode = ControlMode.AUTO,
     /** Состояние локальных подключений по устройствам. */
     val local: Map<String, LocalState> = emptyMap(),
+    /** Rubetek: логин подключённого аккаунта (null — не подключён). */
+    val rubetekLogin: String? = null,
+    /** Код отправлен на этот телефон/почту, ждём ввода. */
+    val rubetekCodeSentTo: String? = null,
+    val rubetekBusy: Boolean = false,
+    val rubetekError: String? = null,
+    val rubetekCount: Int = 0,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -169,6 +176,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var baseDevices: List<DeviceUi> = emptyList()
     private var foreground = false
     private var localStartJob: Job? = null
+    private val rubetekStore = app.tuyacontrol.rubetek.RubetekStore(application)
+    private val rubetek = app.tuyacontrol.rubetek.RubetekClient(rubetekStore)
+    /** Устройства Rubetek (только облако), показываются вместе с Tuya. */
+    private var rubetekDevices: List<DeviceUi> = emptyList()
+    private var rubetekJob: Job? = null
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -176,7 +188,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         val mode = runCatching { ControlMode.valueOf(settings.getString("mode", "AUTO")!!) }.getOrDefault(ControlMode.AUTO)
         _state.update {
-            it.copy(categories = categoryStore.categories(), devicePrefs = categoryStore.devicePrefs(), mode = mode)
+            it.copy(
+                categories = categoryStore.categories(),
+                devicePrefs = categoryStore.devicePrefs(),
+                mode = mode,
+                rubetekLogin = if (rubetek.connected) rubetekStore.login ?: "" else null,
+            )
         }
         // Локальные данные сразу накладываем на список устройств
         viewModelScope.launch {
@@ -229,7 +246,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else -> d
             }
         }
-        _state.update { it.copy(devices = shown) }
+        // Rubetek работает только через своё облако
+        val rubetekShown = if (s.mode == ControlMode.LOCAL) rubetekDevices.map { it.copy(online = false) } else rubetekDevices
+        val all = if (rubetekShown.isEmpty()) shown else (shown + rubetekShown).sortedBy { it.name.lowercase() }
+        _state.update { it.copy(devices = all) }
     }
 
     /** Поиск в сети (если давно не искали) и подключение ко всем найденным устройствам с ключом. */
@@ -388,6 +408,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ensureLocal(forceScan = !silent && _state.value.local.isEmpty())
             return
         }
+        refreshRubetek(silent)
         val c = client ?: return
         if (_state.value.loading) return
         viewModelScope.launch {
@@ -482,6 +503,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Отправка одной команды, например switch_1 = true или temp_set = 220. */
     fun sendCommand(deviceId: String, code: String, value: Any) {
         val before = _state.value.devices.find { it.id == deviceId } ?: return
+        if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(deviceId)) {
+            sendRubetek(before, code, value)
+            return
+        }
         val oldValue = before.status[code]
         val mode = _state.value.mode
         val dpId = before.dpIds[code]
@@ -546,8 +571,132 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun updateDevice(id: String, transform: (DeviceUi) -> DeviceUi) {
-        baseDevices = baseDevices.map { if (it.id == id) transform(it) else it }
+        if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) {
+            rubetekDevices = rubetekDevices.map { if (it.id == id) transform(it) else it }
+        } else {
+            baseDevices = baseDevices.map { if (it.id == id) transform(it) else it }
+        }
         publish()
+    }
+
+    // ---------- Rubetek ----------
+
+    private fun refreshRubetek(silent: Boolean) {
+        if (!rubetek.connected || rubetekJob?.isActive == true) return
+        rubetekJob = viewModelScope.launch {
+            try {
+                val houses = rubetek.houses()
+                val list = mutableListOf<DeviceUi>()
+                for (h in houses) {
+                    val hid = h.optString("id")
+                    if (hid.isEmpty()) continue
+                    if (!h.isNull("deleted_at") && h.optString("deleted_at").isNotEmpty()) continue
+                    rubetek.devices(hid).mapNotNullTo(list) {
+                        app.tuyacontrol.rubetek.RubetekMapper.toDevice(hid, h.optString("name"), houses.size > 1, it)
+                    }
+                }
+                // Не затираем значения, по которым ещё ждём подтверждения команды
+                val pending = rubetekDevices.associateBy { it.id }
+                rubetekDevices = list.map { d ->
+                    val old = pending[d.id]
+                    if (old != null && old.pending.isNotEmpty()) d.copy(status = d.status + old.status.filterKeys { it in old.pending }, pending = old.pending) else d
+                }
+                AppLog.i("Rubetek: устройств ${list.size}")
+                _state.update { it.copy(rubetekCount = list.size, rubetekError = null) }
+                publish()
+            } catch (e: Exception) {
+                AppLog.e("Rubetek: список не обновлён", e)
+                val msg = describeRubetek(e)
+                _state.update { it.copy(rubetekError = msg, message = if (silent) it.message else "Rubetek: $msg") }
+            }
+        }
+    }
+
+    private fun sendRubetek(before: DeviceUi, code: String, value: Any) {
+        val (house, device) = app.tuyacontrol.rubetek.RubetekMapper.parseId(before.id) ?: return
+        val state = app.tuyacontrol.rubetek.RubetekMapper.toState(code, value) ?: run {
+            _state.update { it.copy(message = "${before.name}: эта команда для Rubetek не поддерживается") }
+            return
+        }
+        if (_state.value.mode == ControlMode.LOCAL) {
+            _state.update { it.copy(message = "${before.name}: Rubetek управляется только через облако") }
+            return
+        }
+        val oldValue = before.status[code]
+        updateDevice(before.id) { it.copy(status = it.status + (code to value), pending = it.pending + code) }
+        viewModelScope.launch {
+            try {
+                rubetek.setState(house, device, state)
+                AppLog.i("Rubetek: ${before.name} $code=$value")
+                delay(1200)
+                updateDevice(before.id) { it.copy(pending = it.pending - code) }
+                delay(1500)
+                refreshRubetek(silent = true)
+            } catch (e: Exception) {
+                AppLog.e("Rubetek: команда $code для ${before.name}", e)
+                updateDevice(before.id) { it.copy(status = it.status + (code to oldValue), pending = it.pending - code) }
+                _state.update { it.copy(message = "${before.name}: ${describeRubetek(e)}") }
+            }
+        }
+    }
+
+    fun rubetekSendCode(login: String) {
+        val l = login.trim()
+        if (l.isEmpty()) {
+            _state.update { it.copy(rubetekError = "Введите телефон или почту") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(rubetekBusy = true, rubetekError = null) }
+            try {
+                rubetek.sendCode(l)
+                _state.update { it.copy(rubetekBusy = false, rubetekCodeSentTo = l) }
+            } catch (e: Exception) {
+                AppLog.e("Rubetek: код не запрошен", e)
+                _state.update { it.copy(rubetekBusy = false, rubetekError = describeRubetek(e)) }
+            }
+        }
+    }
+
+    fun rubetekSignIn(code: String) {
+        val login = _state.value.rubetekCodeSentTo ?: return
+        if (code.trim().length < 4) {
+            _state.update { it.copy(rubetekError = "Введите код из сообщения") }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(rubetekBusy = true, rubetekError = null) }
+            try {
+                rubetek.signIn(login, code)
+                _state.update { it.copy(rubetekBusy = false, rubetekCodeSentTo = null, rubetekLogin = login) }
+                refreshRubetek(silent = false)
+            } catch (e: Exception) {
+                AppLog.e("Rubetek: вход не удался", e)
+                _state.update { it.copy(rubetekBusy = false, rubetekError = describeRubetek(e)) }
+            }
+        }
+    }
+
+    fun rubetekCancelCode() = _state.update { it.copy(rubetekCodeSentTo = null, rubetekError = null) }
+
+    fun rubetekSignOut() {
+        rubetekJob?.cancel()
+        rubetek.signOut()
+        rubetekDevices = emptyList()
+        _state.update { it.copy(rubetekLogin = null, rubetekCount = 0, rubetekError = null) }
+        publish()
+    }
+
+    private fun describeRubetek(e: Throwable): String = when (e) {
+        is app.tuyacontrol.rubetek.RubetekException -> when (e.status) {
+            401 -> "вход устарел — подключите Rubetek заново (${e.message})"
+            400, 422 -> "неверный код или логин (${e.message})"
+            429 -> "слишком часто — подождите и попробуйте позже"
+            else -> "ошибка ${e.status}: ${e.message}"
+        }
+        is java.net.UnknownHostException -> "нет подключения к интернету"
+        is java.net.SocketTimeoutException -> "Rubetek не отвечает (таймаут)"
+        else -> e.message ?: e.javaClass.simpleName
     }
 
     // ---------- Автообновление, пока приложение на экране ----------

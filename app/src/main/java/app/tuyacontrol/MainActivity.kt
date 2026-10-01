@@ -133,6 +133,10 @@ private fun App(
             onBack = { viewModel.back() },
             onOpenLog = { viewModel.open(Screen.Log) },
             onOpenLocal = { viewModel.open(Screen.Local) },
+            onRubetekSendCode = viewModel::rubetekSendCode,
+            onRubetekSignIn = viewModel::rubetekSignIn,
+            onRubetekCancel = viewModel::rubetekCancelCode,
+            onRubetekSignOut = viewModel::rubetekSignOut,
         )
         Screen.Local -> LocalScreen(
             state = state,

@@ -21,7 +21,7 @@ object AppLog {
 
     // Локальные ключи устройств и токены в журнал не пишем
     private val secretPattern =
-        Regex("\"(local_key|localKey|access_token|refresh_token)\"\\s*:\\s*\"[^\"]*\"")
+        Regex("\"(local_key|localKey|access_token|refresh_token|token|phone|email)\"\\s*:\\s*\"[^\"]*\"")
 
     fun i(message: String) = add("I", message)
     fun e(message: String, error: Throwable? = null) =

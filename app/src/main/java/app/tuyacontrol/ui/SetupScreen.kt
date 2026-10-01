@@ -67,6 +67,10 @@ fun SetupScreen(
     onBack: () -> Unit,
     onOpenLog: () -> Unit,
     onOpenLocal: () -> Unit = {},
+    onRubetekSendCode: (String) -> Unit = {},
+    onRubetekSignIn: (String) -> Unit = {},
+    onRubetekCancel: () -> Unit = {},
+    onRubetekSignOut: () -> Unit = {},
 ) {
     val saved = state.credentials
     var accessId by rememberSaveable { mutableStateOf(saved?.accessId.orEmpty()) }
@@ -171,6 +175,7 @@ fun SetupScreen(
                     Text("Устройства в локальной сети (Wi-Fi)")
                 }
                 BackgroundSyncSection()
+                RubetekSection(state, onRubetekSendCode, onRubetekSignIn, onRubetekCancel, onRubetekSignOut)
                 OutlinedButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) {
                     Text("Удалить ключи с телефона")
                 }
@@ -252,6 +257,81 @@ private fun BackgroundSyncSection() {
                 },
                 contentPadding = PaddingValues(0.dp),
             ) { Text("Настройки приложения: автозапуск и батарея →") }
+        }
+    }
+}
+
+
+/** Подключение аккаунта Rubetek: телефон/почта -> код -> готово. */
+@Composable
+private fun RubetekSection(
+    state: UiState,
+    onSendCode: (String) -> Unit,
+    onSignIn: (String) -> Unit,
+    onCancel: () -> Unit,
+    onSignOut: () -> Unit,
+) {
+    var login by rememberSaveable { mutableStateOf("") }
+    var code by rememberSaveable { mutableStateOf("") }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Rubetek", style = MaterialTheme.typography.titleMedium)
+            val connected = state.rubetekLogin
+            val sentTo = state.rubetekCodeSentTo
+            when {
+                connected != null -> {
+                    Text(
+                        "Подключён" + (if (connected.isNotEmpty()) " ($connected)" else "") +
+                            " · устройств: ${state.rubetekCount}. Они показываются в общем списке.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    OutlinedButton(onClick = onSignOut, modifier = Modifier.fillMaxWidth()) { Text("Отключить Rubetek") }
+                }
+                sentTo != null -> {
+                    Text("Код отправлен на $sentTo", style = MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it.filter { c -> c.isDigit() }.take(8) },
+                        label = { Text("Код") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { onSignIn(code) },
+                        enabled = !state.rubetekBusy && code.length >= 4,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (state.rubetekBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Подключить")
+                    }
+                    TextButton(onClick = { code = ""; onCancel() }) { Text("Другой телефон или почта") }
+                }
+                else -> {
+                    Text(
+                        "Телефон или почта от приложения Rubetek. Придёт код — как при входе в само приложение. " +
+                            "Код нужен один раз; часто запрашивать не стоит, Rubetek может временно заблокировать.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = login,
+                        onValueChange = { login = it },
+                        label = { Text("Телефон (+7…) или почта") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(
+                        onClick = { onSendCode(login) },
+                        enabled = !state.rubetekBusy && login.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        if (state.rubetekBusy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Получить код")
+                    }
+                }
+            }
+            state.rubetekError?.let {
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
