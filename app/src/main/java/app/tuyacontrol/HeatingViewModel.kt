@@ -63,7 +63,10 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     /** Термостаты приходят с главного экрана; пустым зонам подбираем устройство по названию. */
     fun setDevices(devices: List<DeviceUi>) {
-        val list = devices.filter { "temp_set" in it.status || "temp_set" in it.spec }.map { d ->
+        // Конвекторы Rubetek пока не в планировщике: расписание пишется в облако Tuya
+        val list = devices.filter {
+            ("temp_set" in it.status || "temp_set" in it.spec) && !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it.id)
+        }.map { d ->
             val cur = d.spec["temp_current"]
             val set = d.spec["temp_set"]
             Thermostat(

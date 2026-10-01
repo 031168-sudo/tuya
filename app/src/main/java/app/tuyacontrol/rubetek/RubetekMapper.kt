@@ -32,6 +32,9 @@ object RubetekMapper {
         if (o.optBoolean("deleted", false) || o.optBoolean("hidden", false) || o.optBoolean("disabled", false)) return null
         val id = o.optString("id").ifEmpty { return null }
         val state = o.optJSONObject("state") ?: JSONObject()
+        val custom = o.optJSONObject("custom_data") ?: JSONObject()
+        // Старые записи-дубликаты («Конвектор» из прежней сети): ни состояния, ни модуля — не показываем
+        if (state.length() == 0 && !custom.has("moduleName")) return null
 
         val status = LinkedHashMap<String, Any?>()
         val spec = LinkedHashMap<String, DpSpec>()
@@ -57,6 +60,30 @@ object RubetekMapper {
         num("pwr:Pact", "cur_power", "Вт", 1)
         num("pwr:Vrms", "cur_voltage", "В", 0)
         num("pwr:Irms", "cur_current", "А", 2)
+
+        // Конвекторы (Rusklimat: Electrolux, Ballu) через Wi-Fi-модуль Rubetek. Модуль умеет «термостат»
+        // (dev:features: hkThermostat): thermostat:temp — в комнате, thermostat:setTemp — уставка,
+        // thermostat:setMode — включение (0 — выключен, как в HomeKit)
+        if (state.has("thermostat:temp")) {
+            status["temp_current"] = state.optInt("thermostat:temp")
+            spec["temp_current"] = DpSpec("temp_current", "Integer", unit = "°C")
+        }
+        if (state.has("thermostat:setTemp")) {
+            status["temp_set"] = state.optLong("thermostat:setTemp")
+            spec["temp_set"] = DpSpec("temp_set", "Integer", unit = "°C", min = 5, max = 35, step = 1, writable = true)
+        }
+        if (state.has("thermostat:setMode")) {
+            status["switch"] = state.optInt("thermostat:setMode") != 0
+            spec["switch"] = DpSpec("switch", "Boolean", writable = true)
+        }
+        if (state.has("rusKlimat:SetPower")) {
+            status["power_level"] = state.optInt("rusKlimat:SetPower")
+            spec["power_level"] = DpSpec("power_level", "Integer")
+        }
+        if (state.has("rusKlimat:Mode")) {
+            status["rk_mode"] = state.optInt("rusKlimat:Mode")
+            spec["rk_mode"] = DpSpec("rk_mode", "Integer")
+        }
 
         // Остальные поля состояния показываем как есть (только чтение): у конвекторов, обогревателей и
         // других «донглов» Rubetek свой набор ключей, его сопоставим по мере знакомства с устройствами
@@ -101,6 +128,14 @@ object RubetekMapper {
             val on = value as? Boolean ?: return null
             return mapOf("relay:on[$i]" to on)
         }
+        if (code == "temp_set") {
+            val v = (value as? Number)?.toInt() ?: return null
+            return mapOf("thermostat:setTemp" to v.coerceIn(5, 35))
+        }
+        if (code == "switch") {
+            val on = value as? Boolean ?: return null
+            return mapOf("thermostat:setMode" to if (on) 1 else 0)
+        }
         if (code == "bright_value") {
             val v = (value as? Number)?.toInt() ?: return null
             return mapOf("rgb:level[1]" to v.coerceIn(0, 100))
@@ -110,10 +145,12 @@ object RubetekMapper {
 
     private val KNOWN = setOf(
         "relay:on[0]", "relay:on[1]", "relay:on[2]", "relay:on[3]", "rgb:level[1]", "pwr:Pact", "pwr:Vrms", "pwr:Irms",
+        "thermostat:temp", "thermostat:setTemp", "thermostat:setMode", "rusKlimat:SetPower", "rusKlimat:Mode",
+        "rusKlimat:RoomTemp", "rusKlimat:SetTemp", "rusKlimat:SetTempComfortable", "stick:type", "ws:online",
     )
     private val SERVICE_PREFIXES = listOf(
         "dev:", "wifi:", "cloud:", "homekit:", "rf868:", "rtc:", "hub:", "health:", "child:", "protect:",
-        "relay:change_src", "relay:off_delay", "relay:on_delay", "relay:state",
+        "relay:change_src", "relay:off_delay", "relay:on_delay", "relay:state", "tmr:",
     )
 
     private fun round(v: Double, digits: Int): Double {

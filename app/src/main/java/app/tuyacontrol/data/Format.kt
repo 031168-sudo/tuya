@@ -38,6 +38,9 @@ object DpLabels {
         "countdown_1" to "Таймер 1",
         "relay_status" to "После подачи питания",
         "fault" to "Ошибка",
+        "power_level" to "Ступень мощности",
+        "rk_mode" to "Режим конвектора",
+        "thermostat:mode" to "Нагрев сейчас",
     )
 
     /** Коды, которые показываем сразу; остальное — под «Подробнее». */
