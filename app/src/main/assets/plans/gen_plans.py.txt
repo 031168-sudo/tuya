@@ -1,0 +1,172 @@
+import json, math
+
+OUT = 350   # наружная стена, мм (по чертежу: 3500 по осям, 3152 в чистоте)
+IN = 150    # перегородка
+
+# ---------- Геометрия (мм, ось Y вниз; оси: 1=0, 2=1500, 3=4000, 4=6000, 5=9000; Д=0, Г=6000, В=7750, Б=9500, А=11500) ----------
+floor1 = {
+  "id": "floor1", "title": "1-й этаж",
+  "bounds": [0, 0, 9000, 11500],
+  "rooms": [
+    {"id": "f1_hall",  "name": "Комната 1", "rect": [0, 0, 3150, 6000]},
+    {"id": "f1_ne",    "name": "Комната 2", "rect": [3150, 0, 6000, 2900]},
+    {"id": "f1_se",    "name": "Комната 3", "rect": [3150, 2900, 6000, 6000]},
+    {"id": "f1_big",   "name": "Комната 4", "rect": [1975, 6000, 9000, 9500]},
+    {"id": "f1_s1",    "name": "Комната 5", "rect": [0, 6000, 1975, 7765]},
+    {"id": "f1_s2",    "name": "Тамбур",    "rect": [0, 7765, 1975, 9500]},
+  ],
+  "terraces": [{"name": "Крыльцо", "rect": [0, 9500, 2628, 11500]}],
+  # стены: [x1,y1,x2,y2,толщина]
+  "walls": [
+    # пристройка
+    [0, 0, 6000, 0, OUT], [0, 0, 0, 6000, OUT], [6000, 0, 6000, 6000, OUT],
+    [3150, 0, 3150, 6000, IN], [3150, 2900, 6000, 2900, IN],
+    # основной дом
+    [0, 6000, 9000, 6000, OUT], [0, 6000, 0, 9500, OUT], [9000, 6000, 9000, 9500, OUT], [0, 9500, 9000, 9500, OUT],
+    [1975, 6000, 1975, 9500, IN], [0, 7765, 1975, 7765, IN],
+  ],
+  # двери: [x1,y1,x2,y2 — проём на стене], шарнир в первой точке, распахивается в сторону side (+1/-1)
+  "doors": [
+    [2050, 6000, 2950, 6000, -1],
+    [3150, 1600, 3150, 2400, 1],
+    [3150, 4300, 3150, 5100, 1],
+    [1975, 6300, 1975, 7100, 1],
+    [1975, 8400, 1975, 9200, 1],
+    [824, 9500, 1724, 9500, 1],
+  ],
+  "windows": [
+    [4220, 9500, 6620, 9500], [7009, 6000, 8149, 6000], [0, 6320, 0, 6900],
+  ],
+}
+
+floor2 = {
+  "id": "floor2", "title": "2-й этаж",
+  "bounds": [0, 0, 9000, 9500],
+  "rooms": [
+    {"id": "f2_w",   "name": "Комната 6",  "rect": [0, 0, 1500, 6000]},
+    {"id": "f2_mid", "name": "Комната 7",  "rect": [1500, 0, 4700, 6000]},
+    {"id": "f2_e",   "name": "Комната 8",  "rect": [4700, 0, 6000, 6000]},
+    {"id": "f2_r1",  "name": "Комната 9",  "rect": [0, 6000, 2900, 9500]},
+    {"id": "f2_cor", "name": "Коридор",    "rect": [2900, 6000, 4380, 9500]},
+    {"id": "f2_r2",  "name": "Комната 10", "rect": [4380, 6000, 9000, 9500]},
+  ],
+  "terraces": [],
+  "walls": [
+    [0, 0, 6000, 0, OUT], [0, 0, 0, 6000, OUT], [6000, 0, 6000, 6000, OUT],
+    [1500, 0, 1500, 6000, IN], [4700, 0, 4700, 6000, IN],
+    [0, 6000, 9000, 6000, OUT], [0, 6000, 0, 9500, OUT], [9000, 6000, 9000, 9500, OUT], [0, 9500, 9000, 9500, OUT],
+    [2900, 6000, 2900, 9500, IN], [4380, 6000, 4380, 9500, IN],
+  ],
+  "doors": [
+    [3050, 6000, 3850, 6000, -1],
+    [2900, 7350, 2900, 6550, -1],
+    [4380, 7900, 4380, 8700, 1],
+  ],
+  "windows": [
+    [650, 9500, 1790, 9500], [3212, 9500, 3794, 9500], [6207, 9500, 7347, 9500], [7009, 6000, 8149, 6000],
+  ],
+}
+
+def wall_on(f, vertical, c, a, b):
+    """Толщина стены, лежащей на линии (x=c или y=c) и перекрывающей отрезок [a,b]."""
+    best = 0
+    for x1, y1, x2, y2, t in f["walls"]:
+        if vertical and x1 == x2 == c and min(y1, y2) < b and max(y1, y2) > a: best = max(best, t)
+        if not vertical and y1 == y2 == c and min(x1, x2) < b and max(x1, x2) > a: best = max(best, t)
+    return best
+
+for f in (floor1, floor2):
+    for r in f["rooms"]:
+        x1, y1, x2, y2 = r["rect"]
+        w = (x2 - x1) - wall_on(f, True, x1, y1, y2) / 2 - wall_on(f, True, x2, y1, y2) / 2
+        h = (y2 - y1) - wall_on(f, False, y1, x1, x2) / 2 - wall_on(f, False, y2, x1, x2) / 2
+        r["area"] = round(w * h / 1e6, 1)
+
+PALETTE = ["#F7C59F", "#A8DCC3", "#ABC4F0", "#F2B8C6", "#C9E4A6", "#C7B8EE", "#F9E2A2", "#A4D8E6"]
+
+def svg(f, scale=0.07, temps=None):
+    m = 60
+    W = int(9000 * scale + 2 * m); H = int(f["bounds"][3] * scale + 2 * m + 50)
+    X = lambda v: m + v * scale
+    Y = lambda v: m + 30 + v * scale
+    o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="Inter, Roboto, DejaVu Sans, sans-serif">',
+         f'<rect width="{W}" height="{H}" fill="#FBFAF7"/>',
+         f'<text x="{m}" y="{m - 8}" font-size="22" font-weight="600" fill="#2B2B2B">{f["title"]}</text>']
+    # крыльцо
+    for t in f["terraces"]:
+        x1, y1, x2, y2 = t["rect"]
+        o.append(f'<rect x="{X(x1)}" y="{Y(y1)}" width="{(x2-x1)*scale}" height="{(y2-y1)*scale}" fill="#EFEBE3" stroke="#B9B1A3" stroke-dasharray="5 4" stroke-width="1.5"/>')
+        o.append(f'<text x="{X((x1+x2)/2)}" y="{Y((y1+y2)/2)+5}" text-anchor="middle" font-size="13" fill="#8A8273">{t["name"]}</text>')
+    # комнаты
+    for i, r in enumerate(f["rooms"]):
+        x1, y1, x2, y2 = r["rect"]
+        fill = PALETTE[i % len(PALETTE)] if temps is None else temps.get(r["id"], "#E5E5E5")
+        o.append(f'<rect x="{X(x1)}" y="{Y(y1)}" width="{(x2-x1)*scale}" height="{(y2-y1)*scale}" fill="{fill}"/>')
+    # стены
+    for x1, y1, x2, y2, t in f["walls"]:
+        h = t / 2
+        if y1 == y2:
+            o.append(f'<rect x="{X(min(x1,x2)-h)}" y="{Y(y1-h)}" width="{(abs(x2-x1)+t)*scale}" height="{t*scale}" fill="#33363B"/>')
+        else:
+            o.append(f'<rect x="{X(x1-h)}" y="{Y(min(y1,y2)-h)}" width="{t*scale}" height="{(abs(y2-y1)+t)*scale}" fill="#33363B"/>')
+    # окна
+    for x1, y1, x2, y2 in f["windows"]:
+        if y1 == y2:
+            o.append(f'<rect x="{X(x1)}" y="{Y(y1-OUT/2)}" width="{(x2-x1)*scale}" height="{OUT*scale}" fill="#FFFFFF"/>')
+            for d in (-35, 35):
+                o.append(f'<line x1="{X(x1)}" y1="{Y(y1+d)}" x2="{X(x2)}" y2="{Y(y1+d)}" stroke="#6FA8DC" stroke-width="1.6"/>')
+        else:
+            o.append(f'<rect x="{X(x1-OUT/2)}" y="{Y(y1)}" width="{OUT*scale}" height="{(y2-y1)*scale}" fill="#FFFFFF"/>')
+            for d in (-35, 35):
+                o.append(f'<line x1="{X(x1+d)}" y1="{Y(y1)}" x2="{X(x1+d)}" y2="{Y(y2)}" stroke="#6FA8DC" stroke-width="1.6"/>')
+    # двери: проём + полотно + дуга
+    for x1, y1, x2, y2, side in f["doors"]:
+        L = math.hypot(x2 - x1, y2 - y1)
+        T = wall_on(f, x1 == x2, x1 if x1 == x2 else y1, min(y1, y2) if x1 == x2 else min(x1, x2), max(y1, y2) if x1 == x2 else max(x1, x2)) or OUT
+        if y1 == y2:
+            o.append(f'<rect x="{X(min(x1,x2))}" y="{Y(y1-T/2)}" width="{abs(x2-x1)*scale}" height="{T*scale}" fill="#FBFAF7"/>')
+            ex, ey = x1, y1 + side * L
+        else:
+            o.append(f'<rect x="{X(x1-T/2)}" y="{Y(min(y1,y2))}" width="{T*scale}" height="{abs(y2-y1)*scale}" fill="#FBFAF7"/>')
+            ex, ey = x1 + side * L, y1
+        o.append(f'<line x1="{X(x1)}" y1="{Y(y1)}" x2="{X(ex)}" y2="{Y(ey)}" stroke="#33363B" stroke-width="2"/>')
+        sweep = 1 if ((x2 - x1) * (ey - y1) - (y2 - y1) * (ex - x1)) < 0 else 0
+        o.append(f'<path d="M {X(ex)} {Y(ey)} A {L*scale} {L*scale} 0 0 {sweep} {X(x2)} {Y(y2)}" fill="none" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3 3"/>')
+    # подписи
+    for r in f["rooms"]:
+        x1, y1, x2, y2 = r["rect"]
+        cx, cy = X((x1 + x2) / 2), Y((y1 + y2) / 2)
+        fs = max(10, min(15, int(((x2 - x1) - 300) * scale / 7.5)))
+        label = r["name"]
+        if temps is not None and r["id"] in TEMP_VAL:
+            o.append(f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" font-size="{fs+8}" font-weight="700" fill="#2B2B2B">{str(TEMP_VAL[r["id"]]).replace(".", ",")}°</text>')
+            o.append(f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" font-size="{fs-1}" fill="#3C3C3C">{label}</text>')
+        else:
+            o.append(f'<text x="{cx}" y="{cy}" text-anchor="middle" font-size="{fs}" font-weight="600" fill="#2B2B2B">{label}</text>')
+            o.append(f'<text x="{cx}" y="{cy + 17}" text-anchor="middle" font-size="{fs-2}" fill="#5A5A5A">{r["area"]:.1f} м²</text>'.replace(".", ",", 1) if False else
+                     f'<text x="{cx}" y="{cy + 17}" text-anchor="middle" font-size="{fs-2}" fill="#5A5A5A">{str(r["area"]).replace(".", ",")} м²</text>')
+    # размеры
+    o.append(f'<line x1="{X(0)}" y1="{Y(f["bounds"][3])+44}" x2="{X(9000)}" y2="{Y(f["bounds"][3])+44}" stroke="#B0B0B0"/>')
+    o.append(f'<text x="{X(4500)}" y="{Y(f["bounds"][3])+38}" text-anchor="middle" font-size="11" fill="#8A8A8A">9 000</text>')
+    o.append('</svg>')
+    return "\n".join(o)
+
+TEMP_VAL = {}
+for f in (floor1, floor2):
+    open(f'{f["id"]}.svg', "w").write(svg(f))
+
+# демонстрация «цвет = температура»
+def tcolor(t):
+    stops = [(16, (110, 160, 230)), (20, (150, 210, 160)), (23, (250, 200, 110)), (26, (235, 110, 90))]
+    if t <= stops[0][0]: c = stops[0][1]
+    elif t >= stops[-1][0]: c = stops[-1][1]
+    else:
+        for (a, ca), (b, cb) in zip(stops, stops[1:]):
+            if a <= t <= b:
+                k = (t - a) / (b - a); c = tuple(int(ca[i] + (cb[i] - ca[i]) * k) for i in range(3)); break
+    return "#%02x%02x%02x" % c
+TEMP_VAL = {"f1_hall": 21.5, "f1_ne": 19.0, "f1_se": 23.0, "f1_big": 20.5, "f1_s1": 17.5, "f1_s2": 15.5}
+open("floor1_temp.svg", "w").write(svg(floor1, temps={k: tcolor(v) for k, v in TEMP_VAL.items()}))
+
+json.dump({"floors": [floor1, floor2]}, open("house.json", "w"), ensure_ascii=False, indent=1)
+print("ok")
