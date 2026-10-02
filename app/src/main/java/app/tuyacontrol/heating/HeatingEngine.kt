@@ -437,8 +437,10 @@ class HeatingEngine(context: Context) {
         fun rubetekZone(zone: HeatZone, deviceSetpoint: Double): HeatZone {
             // Конвектор держит комнату в полосе [S + h, S] (h < 0): гарантировать он может только низ полосы
             val floor = deviceSetpoint + minOf(zone.hyst, 0.0)
+            // Потолок — тоже низ полосы: момент, когда таймер выключит конвектор, может прийтись на любую точку
+            // полосы, «догреть до верха перед выключением» по таймеру нельзя — копить тепло конвектору нечем
             return zone.copy(
-                maxTemp = minOf(zone.maxTemp, deviceSetpoint),
+                maxTemp = minOf(zone.maxTemp, floor),
                 baseTemp = minOf(zone.baseTemp, floor),
                 windows = zone.windows.map { it.copy(temp = minOf(it.temp, floor)) },
             )
