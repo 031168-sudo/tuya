@@ -163,7 +163,9 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     private var lastOutdoorSave = 0L
 
     /** Термостаты приходят с главного экрана; пустым зонам подбираем устройство по названию. */
-    fun setDevices(devices: List<DeviceUi>) {
+    fun setDevices(all: List<DeviceUi>) {
+        // Устройства Xiaomi в отопление автоматически не попадают — ими управляют вручную
+        val devices = all.filterNot { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it.id) }
         engine.store.relayDevices = devices.filter { it.switchIsRelay }.map { it.id }.toSet()
         val list = devices.filter { it.setpointCode != null }.map { d ->
             val cur = d.spec["temp_current"]

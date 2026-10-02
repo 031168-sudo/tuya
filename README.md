@@ -62,3 +62,17 @@ Android-приложение (Kotlin + Jetpack Compose) для просмотр�
 в общем списке и категориях; вкл/выкл и яркость — через облако Rubetek. API неофициальное, по образцу
 [rubetek_socket_api](https://github.com/regenara/rubetek_socket_api). Refresh token хранится только на
 телефоне в зашифрованном хранилище.
+
+## Xiaomi (Mi Home)
+
+Настройки → «Xiaomi (Mi Home)»: логин и пароль Mi-аккаунта, сервер (по умолчанию «Россия») → «Подключить».
+Если Xiaomi попросит, введите символы с картинки или код подтверждения из письма/SMS. Пароль не сохраняется:
+на телефоне в зашифрованном хранилище остаются только сессия (passToken) и список устройств с их token.
+
+Устройства появляются в общем списке. Показания и команды идут **по Wi-Fi напрямую** (протокол miIO,
+UDP 54321, AES с token устройства); если устройство по Wi-Fi не отвечает — в режиме «Авто» через облако Mi Home
+(`/miotspec/prop/get|set`). Сменился IP — приложение само находит устройство в сети (широковещательный hello).
+Набор свойств берётся из описания модели на miot-spec.org (кэшируется); для обогревателя Mi Smart Space Heater S
+(`zhimi.heater.mc2`) описание встроено. В отопление и команды устройства Xiaomi автоматически не попадают.
+API облака неофициальное, по образцу [Xiaomi-cloud-tokens-extractor](https://github.com/PiotrMachowski/Xiaomi-cloud-tokens-extractor)
+и [python-miio](https://github.com/rytilahti/python-miio).

@@ -66,7 +66,8 @@ data class DeviceUi(
 ) {
     /** Можно показать расписание облака: обычный выключатель/розетка Tuya. */
     val hasCloudSchedule: Boolean
-        get() = !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) && !isSensor && !switchIsRelay &&
+        get() = !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) && !app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id) &&
+            !isSensor && !switchIsRelay &&
             MAIN_SWITCHES.any { it in status }
 
     /**
@@ -95,6 +96,7 @@ data class DeviceUi(
                 SensorChannel(code, spec[code]?.scale ?: 0, spec[code]?.unit.orEmpty())
             }
             // Датчик Siren Temperature and Humidity не пишет журнал в облако — истории у него нет
+            if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id)) return null
             if (NO_HISTORY_PRODUCTS.any { productName.contains(it, ignoreCase = true) }) return null
             val temperature = channel(SensorDevice.TEMPERATURE_CODES)
             val humidity = channel(SensorDevice.HUMIDITY_CODES)
@@ -137,6 +139,8 @@ data class DeviceUi(
             if (productName.contains(ALWAYS_ON_PRODUCT) || "heating_temp_start" in status) return main
             // Конвекторы Rubetek: отдельного признака «греет сейчас» модуль не даёт — показываем вкл/выкл
             if (category == app.tuyacontrol.rubetek.RubetekMapper.CATEGORY && "temp_set" in status) return main
+            // Обогреватели Xiaomi: признака «греет сейчас» нет — показываем вкл/выкл
+            if (category == app.tuyacontrol.xiaomi.XiaomiMapper.CATEGORY && "temp_set" in status) return main
             return null
         }
 
@@ -232,6 +236,15 @@ data class UiState(
     val rubetekBusy: Boolean = false,
     val rubetekError: String? = null,
     val rubetekCount: Int = 0,
+    /** Xiaomi: логин подключённого Mi-аккаунта (null — не подключён). */
+    val xiaomiLogin: String? = null,
+    val xiaomiBusy: Boolean = false,
+    val xiaomiError: String? = null,
+    val xiaomiCount: Int = 0,
+    /** Картинка с символами, которые просит ввести Xiaomi. */
+    val xiaomiCaptcha: ByteArray? = null,
+    /** Код подтверждения отправлен: «почту» или «телефон». */
+    val xiaomiVerifyTo: String? = null,
     /** Команды (наборы действий) на экране категорий. */
     val commands: List<app.tuyacontrol.commands.Command> = emptyList(),
     /** Идущее или законченное выполнение команды (окно с шагами); null — окна нет. */
@@ -271,6 +284,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var rubetekDevices: List<DeviceUi> = emptyList()
     private var rubetekJob: Job? = null
     private var rubetekStateLogged = false
+    private val xiaomi = app.tuyacontrol.xiaomi.XiaomiHub(application)
+    /** Устройства Xiaomi (Wi-Fi напрямую или облако Mi Home), показываются вместе с Tuya. */
+    private var xiaomiDevices: List<DeviceUi> = emptyList()
+    private var xiaomiJob: Job? = null
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -284,6 +301,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 commands = commandStore.load(),
                 mode = mode,
                 rubetekLogin = if (rubetek.connected) rubetekStore.login ?: "" else null,
+                xiaomiLogin = if (xiaomi.connected) xiaomi.store.login ?: "" else null,
             )
         }
         // Локальные данные сразу накладываем на список устройств
@@ -293,6 +311,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 publish()
             }
         }
+        if (xiaomi.connected) refreshXiaomi(silent = true)
         val saved = store.load()
         if (saved != null) {
             client = TuyaCloudClient(saved)
@@ -339,7 +358,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.map { d -> timersCache[d.id]?.let { d.copy(cloudTimers = it) } ?: d }
         // Rubetek работает только через своё облако
         val rubetekShown = if (s.mode == ControlMode.LOCAL) rubetekDevices.map { it.copy(online = false) } else rubetekDevices
-        val all = if (rubetekShown.isEmpty()) shown else (shown + rubetekShown).sortedBy { it.name.lowercase() }
+        // Xiaomi сам решает, Wi-Fi или облако (по режиму), поэтому показываем как есть
+        val extra = rubetekShown + xiaomiDevices
+        val all = if (extra.isEmpty()) shown else (shown + extra).sortedBy { it.name.lowercase() }
         _state.update { it.copy(devices = all) }
     }
 
@@ -539,6 +560,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         thingModelDevices.clear()
         _state.value = UiState(
             screen = Screen.Setup,
+            xiaomiLogin = _state.value.xiaomiLogin,
+            xiaomiCount = _state.value.xiaomiCount,
             categories = _state.value.categories,
             devicePrefs = _state.value.devicePrefs,
         )
@@ -547,6 +570,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ---------- Устройства ----------
 
     fun refresh(silent: Boolean = false) {
+        refreshXiaomi(silent)
         // Режим «только Wi-Fi»: облако не трогаем, обновляем локальные данные
         if (_state.value.mode == ControlMode.LOCAL) {
             if (!silent) viewModelScope.launch { localManager.queryAll() }
@@ -678,6 +702,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val before = _state.value.devices.find { it.id == deviceId } ?: return
         if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(deviceId)) {
             sendRubetek(before, code, value)
+            return
+        }
+        if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(deviceId)) {
+            sendXiaomi(before, code, value)
             return
         }
         val oldValue = before.status[code]
@@ -817,6 +845,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun updateDevice(id: String, transform: (DeviceUi) -> DeviceUi) {
         if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) {
             rubetekDevices = rubetekDevices.map { if (it.id == id) transform(it) else it }
+        } else if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id)) {
+            xiaomiDevices = xiaomiDevices.map { if (it.id == id) transform(it) else it }
         } else {
             baseDevices = baseDevices.map { if (it.id == id) transform(it) else it }
         }
@@ -962,6 +992,112 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         else -> e.message ?: e.javaClass.simpleName
     }
 
+    // ---------- Xiaomi ----------
+
+    /** silent = false (обновление свайпом, вход) — заодно заново берём список устройств из облака. */
+    private fun refreshXiaomi(silent: Boolean) {
+        if ((!xiaomi.connected && xiaomi.store.devices.isEmpty()) || xiaomiJob?.isActive == true) return
+        xiaomiJob = viewModelScope.launch {
+            try {
+                val list = xiaomi.poll(_state.value.mode, reloadList = !silent)
+                // Не затираем значения, по которым ещё ждём подтверждения команды
+                val old = xiaomiDevices.associateBy { it.id }
+                xiaomiDevices = list.map { d ->
+                    val o = old[d.id]
+                    if (o != null && o.pending.isNotEmpty()) d.copy(status = d.status + o.status.filterKeys { it in o.pending }, pending = o.pending) else d
+                }
+                _state.update { it.copy(xiaomiCount = list.size, xiaomiError = null) }
+                publish()
+            } catch (e: Exception) {
+                AppLog.e("Xiaomi: список не обновлён", e)
+                val msg = describeXiaomi(e)
+                if (e is app.tuyacontrol.xiaomi.XiaomiException && e.authExpired) _state.update { it.copy(xiaomiLogin = null) }
+                _state.update { it.copy(xiaomiError = msg, message = if (silent) it.message else "Xiaomi: $msg") }
+            }
+        }
+    }
+
+    private fun sendXiaomi(before: DeviceUi, code: String, value: Any) {
+        val oldValue = before.status[code]
+        val mode = _state.value.mode
+        updateDevice(before.id) { it.copy(status = it.status + (code to value), pending = it.pending + code) }
+        viewModelScope.launch {
+            try {
+                val via = xiaomi.send(before.id, code, value, mode)
+                AppLog.i("Xiaomi ($via): ${before.name} $code=$value")
+                delay(800)
+                val fresh = runCatching { xiaomi.readOne(before.id, mode) }.getOrNull()
+                updateDevice(before.id) { d ->
+                    if (fresh != null && fresh.online) fresh.copy(pending = d.pending - code) else d.copy(pending = d.pending - code)
+                }
+            } catch (e: Exception) {
+                AppLog.e("Xiaomi: команда $code для ${before.name}", e)
+                updateDevice(before.id) { it.copy(status = it.status + (code to oldValue), pending = it.pending - code) }
+                _state.update { it.copy(message = "${before.name}: ${describeXiaomi(e)}") }
+            }
+        }
+    }
+
+    /** Вход: логин и пароль; дальше может понадобиться капча или код подтверждения. */
+    fun xiaomiSignIn(login: String, password: String, country: String) {
+        if (login.isBlank() || password.isEmpty()) {
+            _state.update { it.copy(xiaomiError = "Введите логин и пароль Mi-аккаунта") }
+            return
+        }
+        xiaomiStep { xiaomi.cloud.signIn(login, password, country) }
+    }
+
+    fun xiaomiCaptcha(text: String) {
+        if (text.isBlank()) return
+        xiaomiStep { xiaomi.cloud.signIn("", null, xiaomi.store.country, captcha = text) }
+    }
+
+    fun xiaomiVerify(code: String) {
+        if (code.isBlank()) return
+        xiaomiStep { xiaomi.cloud.verify(code) }
+    }
+
+    private fun xiaomiStep(step: suspend () -> app.tuyacontrol.xiaomi.MiLoginStep) {
+        viewModelScope.launch {
+            _state.update { it.copy(xiaomiBusy = true, xiaomiError = null) }
+            try {
+                when (val r = step()) {
+                    is app.tuyacontrol.xiaomi.MiLoginStep.Captcha ->
+                        _state.update { it.copy(xiaomiBusy = false, xiaomiCaptcha = r.image, xiaomiVerifyTo = null) }
+                    is app.tuyacontrol.xiaomi.MiLoginStep.Verify ->
+                        _state.update { it.copy(xiaomiBusy = false, xiaomiCaptcha = null, xiaomiVerifyTo = r.sentTo) }
+                    app.tuyacontrol.xiaomi.MiLoginStep.Done -> {
+                        _state.update {
+                            it.copy(xiaomiBusy = false, xiaomiCaptcha = null, xiaomiVerifyTo = null, xiaomiLogin = xiaomi.store.login ?: "")
+                        }
+                        refreshXiaomi(silent = false)
+                    }
+                }
+            } catch (e: Exception) {
+                AppLog.e("Xiaomi: вход не удался", e)
+                _state.update { it.copy(xiaomiBusy = false, xiaomiError = describeXiaomi(e)) }
+            }
+        }
+    }
+
+    fun xiaomiCancel() = _state.update { it.copy(xiaomiCaptcha = null, xiaomiVerifyTo = null, xiaomiError = null) }
+
+    fun xiaomiSignOut() {
+        xiaomiJob?.cancel()
+        xiaomi.signOut()
+        xiaomiDevices = emptyList()
+        _state.update { it.copy(xiaomiLogin = null, xiaomiCount = 0, xiaomiError = null, xiaomiCaptcha = null, xiaomiVerifyTo = null) }
+        publish()
+    }
+
+    private fun describeXiaomi(e: Throwable): String = when (e) {
+        is app.tuyacontrol.xiaomi.XiaomiException -> e.message ?: "ошибка Xiaomi"
+        is app.tuyacontrol.xiaomi.MiioException -> "Wi-Fi: ${e.message}"
+        is java.net.UnknownHostException -> "нет подключения к интернету"
+        is java.net.SocketTimeoutException -> "Xiaomi не отвечает (таймаут)"
+        else -> e.message ?: e.javaClass.simpleName
+    }
+
     // ---------- Автообновление, пока приложение на экране ----------
 
     fun setForeground(foreground: Boolean) {
@@ -970,7 +1106,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         autoRefreshJob = null
         // Соединения по Wi-Fi держим, только пока приложение на экране
         if (foreground) ensureLocal() else localManager.stopAll()
-        if (!foreground || client == null) return
+        if (!foreground || (client == null && !xiaomi.connected)) return
         autoRefreshJob = viewModelScope.launch {
             // Сразу обновляем при возврате в приложение, если данные старше 30 секунд
             val last = _state.value.lastUpdated ?: 0L

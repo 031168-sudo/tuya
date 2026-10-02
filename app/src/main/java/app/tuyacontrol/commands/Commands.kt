@@ -131,7 +131,9 @@ fun groupDevices(
     return when (target) {
         Target.ZONES, Target.ZONE -> emptyList()
         Target.RUBETEK -> devices.filter { rubetek(it) && it.setpointCode != null }
-        Target.HEATING -> byCategory("отоплен").filter { !rubetek(it) && it.heatingPresetOn == null }
+        Target.HEATING -> byCategory("отоплен").filter {
+            !rubetek(it) && !app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it.id) && it.heatingPresetOn == null
+        }
         Target.BATH -> devices.filter { it.heatingPresetOn != null }
         Target.WATER -> byCategory("водогр")
     }.sortedBy { it.name.lowercase() }

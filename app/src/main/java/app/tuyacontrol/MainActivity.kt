@@ -151,6 +151,11 @@ private fun App(
             onRubetekSignIn = viewModel::rubetekSignIn,
             onRubetekCancel = viewModel::rubetekCancelCode,
             onRubetekSignOut = viewModel::rubetekSignOut,
+            onXiaomiSignIn = viewModel::xiaomiSignIn,
+            onXiaomiCaptcha = viewModel::xiaomiCaptcha,
+            onXiaomiVerify = viewModel::xiaomiVerify,
+            onXiaomiCancel = viewModel::xiaomiCancel,
+            onXiaomiSignOut = viewModel::xiaomiSignOut,
         )
         Screen.Local -> LocalScreen(
             state = state,

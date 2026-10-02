@@ -50,7 +50,14 @@ object DpLabels {
         "temp_set", "floor_temp", "mode", "work_state", "battery_percentage", "battery_state",
     )
 
-    fun label(code: String): String = labels[code] ?: code
+    /** Подписи, которые устройства сообщают сами (например, свойства Xiaomi MIoT). */
+    private val extra = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun register(code: String, label: String) {
+        if (label.isNotEmpty() && code !in labels) extra[code] = label
+    }
+
+    fun label(code: String): String = labels[code] ?: extra[code] ?: code
 
     fun isPrimary(code: String, spec: DpSpec?): Boolean =
         code in primary || (spec?.writable == true && spec.type == "Boolean" && code.startsWith("switch"))
