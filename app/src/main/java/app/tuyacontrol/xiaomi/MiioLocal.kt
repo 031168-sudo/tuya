@@ -122,14 +122,23 @@ class MiioDevice(val ip: String, tokenHex: String) {
 
     private fun handshake(s: DatagramSocket, addr: InetAddress) {
         val h = MiioPacket.hello()
-        s.send(DatagramPacket(h, h.size, addr, MiioPacket.PORT))
         val buf = ByteArray(64)
         val p = DatagramPacket(buf, buf.size)
-        try {
-            s.receive(p)
-        } catch (e: SocketTimeoutException) {
-            throw MiioException("$ip не отвечает на hello")
+        // UDP по Wi-Fi теряется: hello до трёх раз
+        var got = false
+        val old = s.soTimeout
+        s.soTimeout = 1500
+        for (attempt in 1..3) {
+            s.send(DatagramPacket(h, h.size, addr, MiioPacket.PORT))
+            try {
+                s.receive(p)
+                got = true
+                break
+            } catch (_: SocketTimeoutException) {
+            }
         }
+        s.soTimeout = old
+        if (!got) throw MiioException("$ip не отвечает на hello")
         val hdr = MiioPacket.parseHeader(buf.copyOf(p.length)) ?: throw MiioException("$ip: непонятный ответ на hello")
         deviceId = hdr.deviceId
         stamp = hdr.stamp

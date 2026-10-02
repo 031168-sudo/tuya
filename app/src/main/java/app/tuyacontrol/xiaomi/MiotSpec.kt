@@ -4,6 +4,7 @@ import android.content.Context
 import app.tuyacontrol.data.AppLog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -44,17 +45,18 @@ data class MiProp(
 class MiotSpec(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("miot_spec", Context.MODE_PRIVATE)
     private val http = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
-    private val memory = HashMap<String, List<MiProp>>()
+    private val memory = java.util.concurrent.ConcurrentHashMap<String, List<MiProp>>()
+    /** Реестр моделей большой — качаем по одной модели за раз, чтобы не тянуть его параллельно дважды. */
+    private val downloadMutex = kotlinx.coroutines.sync.Mutex()
 
     /** Свойства модели; пустой список — описания нет. */
     suspend fun props(model: String): List<MiProp> {
         memory[model]?.let { return it }
-        val cached = prefs.getString("spec:$model", null)
-        val json = cached ?: runCatching { download(model) }
+        val cached = prefs.getString("spec:$model", null) ?: BUILT_IN[model]
+        val json = cached ?: downloadMutex.withLock { prefs.getString("spec:$model", null) ?: runCatching { download(model) }
             .onFailure { AppLog.e("Xiaomi: описание модели $model не скачано", it) }
             .getOrNull()
-            ?.also { prefs.edit().putString("spec:$model", it).apply() }
-            ?: BUILT_IN[model]
+            ?.also { prefs.edit().putString("spec:$model", it).apply() } }
             ?: return emptyList()
         val list = runCatching { parse(JSONObject(json), model) }.onFailure { AppLog.e("Xiaomi: описание $model не разобрано", it) }.getOrDefault(emptyList())
         if (list.isNotEmpty()) memory[model] = list
