@@ -49,6 +49,11 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -178,6 +183,9 @@ fun MapScreen(
                     floor = floor,
                     names = floor.rooms.associate { it.id to (settings[it.id]?.name ?: it.name) },
                     temps = floor.rooms.associate { it.id to tempOf(it) },
+                    heating = floor.rooms.associate { r ->
+                        r.id to settings[r.id]?.deviceId?.let { byId[it] }?.heatingNow
+                    },
                     onRoom = { editing = it },
                 )
             }
@@ -212,9 +220,12 @@ private fun FloorPlan(
     floor: PlanFloor,
     names: Map<String, String>,
     temps: Map<String, RoomTemp>,
+    /** Греет ли устройство комнаты; null — устройство таких данных не даёт (значок не рисуем). */
+    heating: Map<String, Boolean?>,
     onRoom: (PlanRoom) -> Unit,
 ) {
     val measurer = rememberTextMeasurer()
+    val heatIcon = rememberVectorPainter(DeviceIcons.vector("heat_wave"))
     // Поле вокруг дома, мм: стены стоят осью на линии, наружу выступает половина толщины
     val pad = PlanFloor.OUTER_WALL / 2 + 150f
     val totalW = floor.width + 2 * pad
@@ -318,10 +329,11 @@ private fun FloorPlan(
             drawLabels(
                 measurer, tl, sz,
                 listOf(
-                    Label(formatTemp(temp?.value), 20.sp, FontWeight.Bold, TextMain),
+                    Label(formatTemp(temp?.value), 20.sp, FontWeight.Bold, TextMain, heating = heating[r.id]),
                     Label(names[r.id] ?: r.name, 12.sp, FontWeight.Normal, TextMain),
                     Label(formatArea(r.area), 11.sp, FontWeight.Normal, TextSub),
                 ),
+                heatIcon,
             )
         }
     }
@@ -330,31 +342,76 @@ private fun FloorPlan(
 /** Доля места внутри комнаты под подписи (по 6% — поля до стен). */
 private const val FILL = 0.88f
 
-private class Label(val text: String, val size: TextUnit, val weight: FontWeight, val color: Color)
+/** heating != null — справа от строки значок «греет / не греет» (в 2 раза меньше шрифта строки). */
+private class Label(
+    val text: String,
+    val size: TextUnit,
+    val weight: FontWeight,
+    val color: Color,
+    val heating: Boolean? = null,
+)
+
+/** Значок «греет» — половина размера шрифта; зазор до текста — четверть значка. */
+private const val BADGE_RATIO = 0.5f
+private val HeatOnColor = Color(0xFFE5483B)   // как в карточке устройства
+private val HeatOffColor = Color(0x8C2B2B2B)
 
 /** Строки по центру прямоугольника с полями 6%; если не влезают — шрифт уменьшается (не меньше 45%), длинное обрезается «…». */
-private fun DrawScope.drawLabels(measurer: TextMeasurer, tl: Offset, sz: Size, lines: List<Label>) {
-    val maxW = (sz.width * FILL).toInt().coerceAtLeast(1)
+private fun DrawScope.drawLabels(
+    measurer: TextMeasurer,
+    tl: Offset,
+    sz: Size,
+    lines: List<Label>,
+    heatIcon: Painter? = null,
+) {
+    // Место под значок справа от строки (значок + зазор), px
+    fun badge(l: Label, k: Float) = if (l.heating != null && heatIcon != null) l.size.toPx() * k * BADGE_RATIO else 0f
+    fun extra(l: Label, k: Float) = badge(l, k) * 1.25f
+    val maxW = sz.width * FILL
     fun layout(k: Float) = lines.map { l ->
         measurer.measure(
             l.text,
             style = TextStyle(fontSize = l.size * k, fontWeight = l.weight, color = l.color),
             overflow = TextOverflow.Ellipsis,
             maxLines = 1,
-            constraints = Constraints(maxWidth = maxW),
+            constraints = Constraints(maxWidth = (maxW - extra(l, k)).toInt().coerceAtLeast(1)),
         )
     }
     val natural = lines.map { l ->
         measurer.measure(l.text, style = TextStyle(fontSize = l.size, fontWeight = l.weight)).size
     }
-    val needW = natural.maxOf { it.width }.toFloat()
+    val needW = lines.indices.maxOf { natural[it].width + extra(lines[it], 1f) }
     val needH = natural.sumOf { it.height }.toFloat()
-    val k = minOf(1f, sz.width * FILL / needW, sz.height * FILL / needH).coerceAtLeast(0.45f)
+    val k = minOf(1f, maxW / needW, sz.height * FILL / needH).coerceAtLeast(0.45f)
     val laid = layout(k)
     var y = tl.y + (sz.height - laid.sumOf { it.size.height }) / 2
-    laid.forEach { t ->
-        drawText(t, topLeft = Offset(tl.x + (sz.width - t.size.width) / 2, y))
+    laid.forEachIndexed { i, t ->
+        val l = lines[i]
+        val ex = extra(l, k)
+        val x = tl.x + (sz.width - t.size.width - ex) / 2
+        drawText(t, topLeft = Offset(x, y))
+        if (ex > 0f && heatIcon != null && l.heating != null) {
+            val s = badge(l, k)
+            heatBadge(heatIcon, l.heating, Offset(x + t.size.width + s * 0.25f, y + (t.size.height - s) / 2), s)
+        }
         y += t.size.height
+    }
+}
+
+/** Значок «греет» (красный) / «не греет» (серый, перечёркнут) — как в карточке устройства. */
+private fun DrawScope.heatBadge(icon: Painter, on: Boolean, at: Offset, s: Float) {
+    val color = if (on) HeatOnColor else HeatOffColor
+    translate(at.x, at.y) {
+        with(icon) { draw(Size(s, s), colorFilter = ColorFilter.tint(color)) }
+    }
+    if (!on) {
+        drawLine(
+            HeatOffColor,
+            at + Offset(s * 0.12f, s * 0.12f),
+            at + Offset(s * 0.88f, s * 0.88f),
+            strokeWidth = maxOf(1.dp.toPx(), s * 0.1f),
+            cap = StrokeCap.Round,
+        )
     }
 }
 
