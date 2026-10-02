@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="530" viewBox="0 0 200 530" font-family="Inter, Roboto, DejaVu Sans, sans-serif">
+<rect width="200" height="530" fill="#FBFAF7"/>
+<text x="26" y="40" font-size="15" font-weight="600" fill="#2B2B2B">Температура</text>
+<defs><linearGradient id="tg" x1="0" y1="1" x2="0" y2="0">
+<stop offset="0.000" stop-color="#78a0eb"/>
+<stop offset="0.333" stop-color="#8ccde1"/>
+<stop offset="0.583" stop-color="#9bd7a0"/>
+<stop offset="0.792" stop-color="#facd6e"/>
+<stop offset="1.000" stop-color="#ee785f"/>
+</linearGradient></defs>
+<rect x="30" y="70" width="26" height="420" rx="6" fill="url(#tg)"/>
+<line x1="56" y1="490.0" x2="62" y2="490.0" stroke="#6A6A6A"/>
+<text x="66" y="494.0" font-size="12" fill="#3C3C3C">≤14°</text>
+<line x1="56" y1="420.0" x2="62" y2="420.0" stroke="#6A6A6A"/>
+<text x="66" y="424.0" font-size="12" fill="#3C3C3C">16°</text>
+<line x1="56" y1="350.0" x2="62" y2="350.0" stroke="#6A6A6A"/>
+<text x="66" y="354.0" font-size="12" fill="#3C3C3C">18°</text>
+<line x1="56" y1="280.0" x2="62" y2="280.0" stroke="#6A6A6A"/>
+<text x="66" y="284.0" font-size="12" fill="#3C3C3C">20°</text>
+<line x1="56" y1="210.0" x2="62" y2="210.0" stroke="#6A6A6A"/>
+<text x="66" y="214.0" font-size="12" fill="#3C3C3C">22°</text>
+<line x1="56" y1="140.0" x2="62" y2="140.0" stroke="#6A6A6A"/>
+<text x="66" y="144.0" font-size="12" fill="#3C3C3C">24°</text>
+<line x1="56" y1="70.0" x2="62" y2="70.0" stroke="#6A6A6A"/>
+<text x="66" y="74.0" font-size="12" fill="#3C3C3C">≥26°</text>
+<text x="108" y="109.0" font-size="12" fill="#8A8A8A">жарко</text>
+<text x="108" y="248.99999999999997" font-size="12" fill="#8A8A8A">комфорт</text>
+<text x="108" y="424.0" font-size="12" fill="#8A8A8A">холодно</text>
+</svg>

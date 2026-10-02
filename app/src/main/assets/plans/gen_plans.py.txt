@@ -167,18 +167,46 @@ TEMP_VAL = {}
 for f in (floor1, floor2):
     open(f'{f["id"]}.svg', "w").write(svg(f))
 
-# демонстрация «цвет = температура»
+# ---------- Цветовая шкала температур ----------
+# Пастельные цвета, чтобы тёмный текст читался на любом: холодно — синий, комфорт — зелёный, жарко — красный.
+T_STOPS = [(14, (120, 160, 235)), (18, (140, 205, 225)), (21, (155, 215, 160)), (23.5, (250, 205, 110)), (26, (238, 120, 95))]
+T_MIN, T_MAX = T_STOPS[0][0], T_STOPS[-1][0]
+
 def tcolor(t):
-    stops = [(16, (110, 160, 230)), (20, (150, 210, 160)), (23, (250, 200, 110)), (26, (235, 110, 90))]
-    if t <= stops[0][0]: c = stops[0][1]
-    elif t >= stops[-1][0]: c = stops[-1][1]
-    else:
-        for (a, ca), (b, cb) in zip(stops, stops[1:]):
-            if a <= t <= b:
-                k = (t - a) / (b - a); c = tuple(int(ca[i] + (cb[i] - ca[i]) * k) for i in range(3)); break
-    return "#%02x%02x%02x" % c
-TEMP_VAL = {"f1_hall": 21.5, "f1_ne": 19.0, "f1_se": 23.0, "f1_big": 20.5, "f1_s1": 17.5, "f1_s2": 15.5}
-open("floor1_temp.svg", "w").write(svg(floor1, temps={k: tcolor(v) for k, v in TEMP_VAL.items()}))
+    t = max(T_MIN, min(T_MAX, t))
+    for (a, ca), (b, cb) in zip(T_STOPS, T_STOPS[1:]):
+        if a <= t <= b:
+            k = (t - a) / (b - a)
+            return "#%02x%02x%02x" % tuple(round(ca[i] + (cb[i] - ca[i]) * k) for i in range(3))
+
+def legend_svg(h=420):
+    """Вертикальная шкала: сверху жарко, снизу холодно."""
+    W, top, bar_x, bar_w = 200, 70, 30, 26
+    H = top + h + 40
+    o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="Inter, Roboto, DejaVu Sans, sans-serif">',
+         f'<rect width="{W}" height="{H}" fill="#FBFAF7"/>',
+         f'<text x="{bar_x - 4}" y="{top - 30}" font-size="15" font-weight="600" fill="#2B2B2B">Температура</text>',
+         '<defs><linearGradient id="tg" x1="0" y1="1" x2="0" y2="0">']
+    for t, c in T_STOPS:
+        o.append(f'<stop offset="{(t - T_MIN) / (T_MAX - T_MIN):.3f}" stop-color="#%02x%02x%02x"/>' % c)
+    o.append('</linearGradient></defs>')
+    o.append(f'<rect x="{bar_x}" y="{top}" width="{bar_w}" height="{h}" rx="6" fill="url(#tg)"/>')
+    ty = lambda t: top + h - (t - T_MIN) / (T_MAX - T_MIN) * h
+    for t in range(T_MIN, T_MAX + 1, 2):
+        lab = f"≤{t}°" if t == T_MIN else f"≥{t}°" if t == T_MAX else f"{t}°"
+        o.append(f'<line x1="{bar_x + bar_w}" y1="{ty(t)}" x2="{bar_x + bar_w + 6}" y2="{ty(t)}" stroke="#6A6A6A"/>')
+        o.append(f'<text x="{bar_x + bar_w + 10}" y="{ty(t) + 4}" font-size="12" fill="#3C3C3C">{lab}</text>')
+    for t, name in ((25, "жарко"), (21, "комфорт"), (16, "холодно")):
+        o.append(f'<text x="{bar_x + bar_w + 52}" y="{ty(t) + 4}" font-size="12" fill="#8A8A8A">{name}</text>')
+    o.append('</svg>')
+    return "\n".join(o)
+
+# Пример для показа: случайные температуры в комнатах (не реальные данные)
+TEMP_VAL = {"f1_hall": 21.5, "f1_ne": 19.0, "f1_se": 23.0, "f1_big": 20.5, "f1_s1": 17.5, "f1_s2": 15.5,
+            "f2_w": 14.5, "f2_mid": 22.0, "f2_e": 16.0, "f2_r1": 24.5, "f2_cor": 19.5, "f2_r2": 26.5}
+for f in (floor1, floor2):
+    open(f'{f["id"]}_temp.svg', "w").write(svg(f, temps={k: tcolor(v) for k, v in TEMP_VAL.items()}))
+open("temp_legend.svg", "w").write(legend_svg())
 
 json.dump({"floors": [floor1, floor2]}, open("house.json", "w"), ensure_ascii=False, indent=1)
 print("ok")
