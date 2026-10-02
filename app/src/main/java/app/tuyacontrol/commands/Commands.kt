@@ -10,6 +10,7 @@ enum class Target(val title: String) {
     ZONES("Отопление: все зоны"),
     ZONE("Отопление: зона"),
     RUBETEK("Rubetek"),
+    XIAOMI("Xiaomi"),
     HEATING("Отопление (кроме ванны)"),
     BATH("Ванна"),
     WATER("Водогрейки"),
@@ -26,6 +27,10 @@ enum class ActionKind(val target: Target, val title: String, val needsTemp: Bool
     RUBETEK_OFF(Target.RUBETEK, "Выключить"),
     RUBETEK_CLEAR_TIMERS(Target.RUBETEK, "Удалить все расписания"),
     RUBETEK_SET_TEMP(Target.RUBETEK, "Установить температуру", needsTemp = true),
+
+    XIAOMI_ON(Target.XIAOMI, "Включить"),
+    XIAOMI_OFF(Target.XIAOMI, "Выключить"),
+    XIAOMI_SET_TEMP(Target.XIAOMI, "Установить температуру", needsTemp = true),
 
     HEATING_ON(Target.HEATING, "Включить"),
     HEATING_OFF(Target.HEATING, "Выключить"),
@@ -131,6 +136,7 @@ fun groupDevices(
     return when (target) {
         Target.ZONES, Target.ZONE -> emptyList()
         Target.RUBETEK -> devices.filter { rubetek(it) && it.setpointCode != null }
+        Target.XIAOMI -> devices.filter { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it.id) && it.setpointCode != null }
         Target.HEATING -> byCategory("отоплен").filter {
             !rubetek(it) && !app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it.id) && it.heatingPresetOn == null
         }

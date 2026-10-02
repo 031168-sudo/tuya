@@ -31,6 +31,7 @@ class CommandRunner(context: Context) {
     private val engine = HeatingEngine(app)
     private val tuya: TuyaCloudClient? by lazy { CredentialsStore(app).load()?.let { TuyaCloudClient(it) } }
     private val rubetek: RubetekClient by lazy { RubetekClient(RubetekStore(app)) }
+    private val xiaomi by lazy { app.tuyacontrol.xiaomi.XiaomiHub(app) }
 
     /** Единица работы: заголовок строки и само выполнение (null — подтверждено, текст — почему нет). */
     private class Job(val title: String, val run: suspend () -> String?)
@@ -102,6 +103,12 @@ class CommandRunner(context: Context) {
     private suspend fun perform(a: Action, d: DeviceUi): String? { return when (a.kind) {
         ActionKind.RUBETEK_ON, ActionKind.RUBETEK_OFF -> rubetekSet(d, "switch", a.kind == ActionKind.RUBETEK_ON)
         ActionKind.RUBETEK_SET_TEMP -> rubetekSet(d, "temp_set", (a.temp ?: return "не задана температура").roundToLong())
+        ActionKind.XIAOMI_ON, ActionKind.XIAOMI_OFF -> xiaomiSet(d, "switch", a.kind == ActionKind.XIAOMI_ON)
+        ActionKind.XIAOMI_SET_TEMP -> {
+            val code = d.setpointCode ?: return "у устройства нет уставки"
+            // Уставка в пределах прибора (у обогревателя Mi S — 18…28°)
+            xiaomiSet(d, code, encodeTemp(d, code, a.temp ?: return "не задана температура"))
+        }
         ActionKind.RUBETEK_CLEAR_TIMERS -> {
             engine.clearRubetekTimers(d.id)
             null
@@ -210,6 +217,19 @@ class CommandRunner(context: Context) {
             if (got != null && same(got, value)) return null
         }
         return "модуль показывает $code=$got"
+    }
+
+    /** Xiaomi: команда (Wi-Fi, иначе облако) и проверка, что прибор сообщает новое значение. */
+    private suspend fun xiaomiSet(d: DeviceUi, code: String, value: Any): String? {
+        val mode = app.tuyacontrol.ControlMode.AUTO
+        xiaomi.send(d.id, code, value, mode)
+        var got: Any? = null
+        repeat(5) {
+            delay(1500)
+            got = xiaomi.readOne(d.id, mode)?.takeIf { it.online }?.status?.get(code)
+            if (got != null && same(got, value)) return null
+        }
+        return "устройство показывает $code=$got"
     }
 
     /** Все облачные таймеры розетки включить/выключить и проверить. */
