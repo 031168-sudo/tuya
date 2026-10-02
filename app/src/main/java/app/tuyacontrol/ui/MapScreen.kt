@@ -137,6 +137,7 @@ private fun formatArea(a: Double): String = String.format(Locale("ru"), "%.1f м
 @Composable
 fun MapScreen(
     devices: List<DeviceUi>,
+    heating: app.tuyacontrol.HeatingUiState,
     bottomBar: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -152,7 +153,12 @@ fun MapScreen(
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Карта") }) },
+        topBar = {
+            TopAppBar(
+                title = { Text("Карта") },
+                actions = { OutdoorWeather(devices, heating, Modifier.padding(end = 16.dp)) },
+            )
+        },
         bottomBar = bottomBar,
     ) { padding ->
         Column(

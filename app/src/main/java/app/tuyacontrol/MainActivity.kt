@@ -218,6 +218,7 @@ private fun App(
         )
         Screen.Map -> app.tuyacontrol.ui.MapScreen(
             devices = state.devices,
+            heating = heating,
             bottomBar = { bottomBar(3) },
         )
         Screen.Sensor -> SensorScreen(
