@@ -503,6 +503,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         AppLog.i("DP «${d.name}» (${d.productName}): " + d.status.entries.joinToString { "${it.key}=${it.value}" } +
                             " | уставка=${d.setpointCode} греет=${d.heatingNow}")
                     }
+                    logWaterHeaterTimers(c, devices)
                 }
                 deviceCache.save(baseDevices)
                 _state.update { it.copy(loading = false, lastUpdated = System.currentTimeMillis()) }
@@ -636,6 +637,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch { sendViaCloud(before, code, value, oldValue) }
+    }
+
+    /**
+     * Разведка: где у устройств категории «Водогрейки» хранятся таймеры — в облаке Tuya (список таймеров)
+     * или в самом приборе (поля вроде cycle_time / random_time в модели). Только чтение, в журнал.
+     */
+    private fun logWaterHeaterTimers(c: TuyaCloudClient, devices: List<DeviceUi>) {
+        val cats = categoryStore.categories().filter { it.name.contains("водогр", ignoreCase = true) }.map { it.id }.toSet()
+        if (cats.isEmpty()) return
+        val prefs = categoryStore.devicePrefs()
+        val targets = devices.filter { prefs[it.id]?.categoryId in cats }
+        AppLog.i("Водогрейки: ${targets.joinToString { it.name }}")
+        viewModelScope.launch {
+            for (d in targets) {
+                val timers = runCatching { c.timersRaw(d.id) }.getOrElse { "ошибка: ${it.message}" }
+                AppLog.i("Таймеры облака «${d.name}»: $timers")
+                val model = runCatching { c.getThingModel(d.id) }.getOrNull()
+                if (model != null) {
+                    AppLog.i("Модель «${d.name}»: " + model.values.joinToString { "${it.code}#${it.dpId}:${it.type}${if (it.writable) "(rw)" else ""}" })
+                }
+                val shadow = runCatching { c.getShadowProperties(d.id) }.getOrDefault(emptyMap())
+                AppLog.i("Все свойства «${d.name}»: " + shadow.entries.joinToString { "${it.key}=${it.value.toString().take(120)}" })
+            }
+        }
     }
 
     /**
