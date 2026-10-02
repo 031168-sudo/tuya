@@ -79,6 +79,23 @@ private val OkGreen = Color(0xFF2E9D4F)
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CommandsBlock(commands: List<Command>, onOpenEditor: () -> Unit, onRun: (String) -> Unit) {
+    // Защита от случайного нажатия: сначала спрашиваем
+    var confirm by remember { mutableStateOf<Command?>(null) }
+    confirm?.let { c ->
+        AlertDialog(
+            onDismissRequest = { confirm = null },
+            title = { Text("Выполнить «${c.name.ifEmpty { "Без названия" }}»?") },
+            text = {
+                Text(
+                    if (c.actions.isEmpty()) "В команде нет действий"
+                    else c.actions.mapIndexed { i, a -> "${i + 1}. ${a.text()}" }.joinToString("\n"),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            },
+            confirmButton = { TextButton(onClick = { confirm = null; onRun(c.id) }) { Text("Да") } },
+            dismissButton = { TextButton(onClick = { confirm = null }) { Text("Нет") } },
+        )
+    }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable(onClick = onOpenEditor).padding(vertical = 4.dp),
@@ -103,7 +120,7 @@ fun CommandsBlock(commands: List<Command>, onOpenEditor: () -> Unit, onRun: (Str
                         modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
                             .background(Pastel.accent(c.color))
-                            .clickable { onRun(c.id) }
+                            .clickable { confirm = c }
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                     )
                 }
