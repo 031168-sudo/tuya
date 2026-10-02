@@ -62,23 +62,19 @@ class CommandRunner(context: Context) {
 
     // ---------- Разворачивание действий по устройствам ----------
 
-    private fun categoryDevices(devices: List<DeviceUi>, categories: List<Category>, prefs: Map<String, DevicePref>, hint: String): List<DeviceUi> {
-        val ids = categories.filter { it.name.contains(hint, ignoreCase = true) }.map { it.id }.toSet()
-        return devices.filter { prefs[it.id]?.categoryId in ids }
-    }
-
     private fun expand(a: Action, devices: List<DeviceUi>, categories: List<Category>, prefs: Map<String, DevicePref>): List<Job> {
-        val group: List<DeviceUi> = when (a.kind.target) {
-            Target.ZONES -> emptyList()
-            Target.RUBETEK -> devices.filter { RubetekMapper.isRubetek(it.id) && it.setpointCode != null }
-            Target.HEATING -> categoryDevices(devices, categories, prefs, "отоплен")
-                .filter { !RubetekMapper.isRubetek(it.id) && it.heatingPresetOn == null }
-            Target.BATH -> devices.filter { it.heatingPresetOn != null }
-            Target.WATER -> categoryDevices(devices, categories, prefs, "водогр")
-        }
         if (a.kind.target == Target.ZONES) return zoneJobs(a.kind == ActionKind.ZONES_CONTROL_ON)
+        val label = "${a.kind.title}${a.temp?.let { " ${fmt(it)}°" } ?: ""}"
+        // Конкретное устройство
+        if (a.deviceId != null) {
+            val d = devices.firstOrNull { it.id == a.deviceId }
+                ?: return listOf(Job("${a.deviceName ?: a.deviceId}: $label") { "устройство не найдено в списке — обновите устройства" })
+            return listOf(Job("${d.name}: $label") { perform(a, d) })
+        }
+        // Старые команды: вся группа
+        val group = groupDevices(a.kind.target, devices, categories, prefs)
         if (group.isEmpty()) return listOf(Job("${a.text()} — нет устройств") { "в группе «${a.kind.target.title}» нет устройств" })
-        return group.map { d -> Job("${d.name}: ${a.kind.title}${a.temp?.let { " ${fmt(it)}°" } ?: ""}") { perform(a, d) } }
+        return group.map { d -> Job("${d.name}: $label") { perform(a, d) } }
     }
 
     private fun zoneJobs(on: Boolean): List<Job> {

@@ -185,6 +185,9 @@ private fun App(
         )
         Screen.Commands -> app.tuyacontrol.ui.CommandsScreen(
             commands = state.commands,
+            devices = state.devices,
+            categories = state.categories,
+            prefs = state.devicePrefs,
             onBack = { viewModel.back() },
             onSave = viewModel::saveCommand,
             onDelete = viewModel::deleteCommand,

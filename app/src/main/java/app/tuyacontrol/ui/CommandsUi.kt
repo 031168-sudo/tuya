@@ -109,7 +109,7 @@ fun CommandsBlock(commands: List<Command>, onOpenEditor: () -> Unit, onRun: (Str
                 }
             }
         }
-        HorizontalDivider(Modifier.padding(top = 6.dp))
+        Text("Категории", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 12.dp))
     }
 }
 
@@ -169,11 +169,18 @@ fun CommandRunDialog(run: CommandRun, onOk: () -> Unit) {
 @Composable
 fun CommandsScreen(
     commands: List<Command>,
+    devices: List<app.tuyacontrol.DeviceUi>,
+    categories: List<app.tuyacontrol.data.Category>,
+    prefs: Map<String, app.tuyacontrol.data.DevicePref>,
     onBack: () -> Unit,
     onSave: (Command) -> Unit,
     onDelete: (String) -> Unit,
 ) {
     var editing by remember { mutableStateOf<Command?>(null) }
+    // Группы устройств для выбора в действиях: устройство выбирается отдельно, группы лишь объединяют
+    val groups = remember(devices, categories, prefs) {
+        Target.entries.filter { it != Target.ZONES }.associateWith { app.tuyacontrol.commands.groupDevices(it, devices, categories, prefs) }
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -215,6 +222,7 @@ fun CommandsScreen(
     }
     editing?.let { c ->
         CommandEditDialog(
+            groups = groups,
             initial = c,
             isNew = commands.none { it.id == c.id },
             onDismiss = { editing = null },
@@ -227,6 +235,7 @@ fun CommandsScreen(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CommandEditDialog(
+    groups: Map<Target, List<app.tuyacontrol.DeviceUi>>,
     initial: Command,
     isNew: Boolean,
     onDismiss: () -> Unit,
@@ -300,7 +309,7 @@ private fun CommandEditDialog(
     }
 
     if (picking) {
-        ActionPicker(onDismiss = { picking = false }, onPick = { actions.add(it); picking = false })
+        ActionPicker(groups, onDismiss = { picking = false }, onPick = { actions.add(it); picking = false })
     }
     if (confirmDelete) {
         AlertDialog(
@@ -312,52 +321,88 @@ private fun CommandEditDialog(
     }
 }
 
-/** Выбор действия: группы устройств и что с ними сделать; для температуры — поле ввода. */
+/**
+ * Выбор действия: «все зоны отопления» — сразу действие; для устройств — сначала само устройство
+ * (сгруппированы по Rubetek / отопление / ванна / водогрейки), потом что с ним сделать, для температуры — число.
+ */
 @Composable
-private fun ActionPicker(onDismiss: () -> Unit, onPick: (Action) -> Unit) {
+private fun ActionPicker(
+    groups: Map<Target, List<app.tuyacontrol.DeviceUi>>,
+    onDismiss: () -> Unit,
+    onPick: (Action) -> Unit,
+) {
+    var device by remember { mutableStateOf<Pair<Target, app.tuyacontrol.DeviceUi>?>(null) }
     var kind by remember { mutableStateOf<ActionKind?>(null) }
     var temp by remember { mutableStateOf("21") }
     val k = kind
+    val dev = device
+    fun pick(a: ActionKind) {
+        if (a.needsTemp) kind = a else onPick(Action(a, null, dev?.second?.id, dev?.second?.name))
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (k == null) "Действие" else k.target.title) },
+        title = { Text(dev?.second?.name ?: "Действие") },
         text = {
-            if (k == null) {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Target.entries.forEach { t ->
-                        Text(t.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
-                        ActionKind.entries.filter { it.target == t }.forEach { a ->
-                            Text(
-                                a.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { if (a.needsTemp) kind = a else onPick(Action(a)) }
-                                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                            )
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                when {
+                    k != null -> {
+                        Text(k.title)
+                        Spacer(Modifier.size(8.dp))
+                        OutlinedTextField(
+                            temp, { temp = it },
+                            label = { Text("Температура, °C") },
+                            singleLine = true,
+                            isError = temp.replace(',', '.').toDoubleOrNull() == null,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        )
+                    }
+                    dev != null -> ActionKind.entries.filter { it.target == dev.first }.forEach { a ->
+                        PickRow(a.title) { pick(a) }
+                    }
+                    else -> {
+                        Text(Target.ZONES.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 6.dp, bottom = 2.dp))
+                        ActionKind.entries.filter { it.target == Target.ZONES }.forEach { a -> PickRow(a.title) { onPick(Action(a)) } }
+                        groups.forEach { (t, list) ->
+                            Text(t.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp))
+                            if (list.isEmpty()) {
+                                Text("нет устройств", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            list.forEach { d -> PickRow(d.name) { device = t to d } }
                         }
                     }
-                }
-            } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(k.title)
-                    OutlinedTextField(
-                        temp, { temp = it },
-                        label = { Text("Температура, °C") },
-                        singleLine = true,
-                        isError = temp.replace(',', '.').toDoubleOrNull() == null,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    )
                 }
             }
         },
         confirmButton = {
             if (k != null) {
                 val t = temp.replace(',', '.').toDoubleOrNull()
-                TextButton(onClick = { onPick(Action(k, t)) }, enabled = t != null && t in 5.0..35.0) { Text("Добавить") }
+                TextButton(
+                    onClick = { onPick(Action(k, t, dev?.second?.id, dev?.second?.name)) },
+                    enabled = t != null && t in 5.0..35.0,
+                ) { Text("Добавить") }
             }
         },
-        dismissButton = { TextButton(onClick = { if (k != null) kind = null else onDismiss() }) { Text(if (k != null) "Назад" else "Отмена") } },
+        dismissButton = {
+            TextButton(onClick = {
+                when {
+                    k != null -> kind = null
+                    dev != null -> device = null
+                    else -> onDismiss()
+                }
+            }) { Text(if (k != null || dev != null) "Назад" else "Отмена") }
+        },
+    )
+}
+
+@Composable
+private fun PickRow(text: String, onClick: () -> Unit) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodyMedium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 9.dp),
     )
 }

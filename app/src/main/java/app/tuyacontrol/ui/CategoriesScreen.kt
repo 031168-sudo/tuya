@@ -129,7 +129,7 @@ fun CategoriesScreen(
     val uncategorized = counts[null] ?: 0
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Категории") }) },
+        topBar = { TopAppBar(title = { Text("Мой дом") }) },
         bottomBar = bottomBar,
     ) { padding ->
         LazyVerticalGrid(

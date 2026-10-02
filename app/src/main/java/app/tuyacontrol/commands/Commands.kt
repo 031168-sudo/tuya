@@ -39,8 +39,17 @@ enum class ActionKind(val target: Target, val title: String, val needsTemp: Bool
     WATER_TIMERS_OFF(Target.WATER, "Выключить все события расписания"),
 }
 
-data class Action(val kind: ActionKind, val temp: Double? = null) {
-    fun text(): String = "${kind.target.title}: ${kind.title}" +
+/**
+ * Одно действие. [deviceId] — конкретное устройство (имя запоминаем для показа); null — вся группа
+ * (так только «все зоны отопления» и старые команды).
+ */
+data class Action(
+    val kind: ActionKind,
+    val temp: Double? = null,
+    val deviceId: String? = null,
+    val deviceName: String? = null,
+) {
+    fun text(): String = "${deviceName ?: kind.target.title}: ${kind.title}" +
         (if (kind.needsTemp && temp != null) " ${fmt(temp)}°" else "")
 
     private fun fmt(t: Double) = if (t % 1.0 == 0.0) t.toInt().toString() else t.toString().replace('.', ',')
@@ -70,7 +79,12 @@ class CommandStore(context: Context) {
                 actions = (0 until acts.length()).mapNotNull { j ->
                     val a = acts.optJSONObject(j) ?: return@mapNotNull null
                     val kind = runCatching { ActionKind.valueOf(a.optString("kind")) }.getOrNull() ?: return@mapNotNull null
-                    Action(kind, if (a.has("temp") && !a.isNull("temp")) a.optDouble("temp") else null)
+                    Action(
+                        kind,
+                        if (a.has("temp") && !a.isNull("temp")) a.optDouble("temp") else null,
+                        a.optString("device").ifEmpty { null },
+                        a.optString("device_name").ifEmpty { null },
+                    )
                 },
             )
         }
@@ -85,11 +99,37 @@ class CommandStore(context: Context) {
                 JSONObject().put("id", c.id).put("name", c.name).put("color", c.color).put(
                     "actions",
                     JSONArray().apply {
-                        c.actions.forEach { a -> put(JSONObject().put("kind", a.kind.name).put("temp", a.temp ?: JSONObject.NULL)) }
+                        c.actions.forEach { a ->
+                            put(
+                                JSONObject().put("kind", a.kind.name).put("temp", a.temp ?: JSONObject.NULL)
+                                    .put("device", a.deviceId ?: "").put("device_name", a.deviceName ?: ""),
+                            )
+                        }
                     },
                 ),
             )
         }
         prefs.edit().putString("list", arr.toString()).apply()
     }
+}
+
+/** Устройства группы: Rubetek — все конвекторы; «Отопление» и «Водогрейки» — по названию категории пользователя. */
+fun groupDevices(
+    target: Target,
+    devices: List<app.tuyacontrol.DeviceUi>,
+    categories: List<app.tuyacontrol.data.Category>,
+    prefs: Map<String, app.tuyacontrol.data.DevicePref>,
+): List<app.tuyacontrol.DeviceUi> {
+    fun byCategory(hint: String): List<app.tuyacontrol.DeviceUi> {
+        val ids = categories.filter { it.name.contains(hint, ignoreCase = true) }.map { it.id }.toSet()
+        return devices.filter { prefs[it.id]?.categoryId in ids }
+    }
+    val rubetek = { d: app.tuyacontrol.DeviceUi -> app.tuyacontrol.rubetek.RubetekMapper.isRubetek(d.id) }
+    return when (target) {
+        Target.ZONES -> emptyList()
+        Target.RUBETEK -> devices.filter { rubetek(it) && it.setpointCode != null }
+        Target.HEATING -> byCategory("отоплен").filter { !rubetek(it) && it.heatingPresetOn == null }
+        Target.BATH -> devices.filter { it.heatingPresetOn != null }
+        Target.WATER -> byCategory("водогр")
+    }.sortedBy { it.name.lowercase() }
 }
