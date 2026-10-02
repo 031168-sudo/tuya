@@ -66,6 +66,7 @@ fun AppBottomBar(
     onDevices: () -> Unit,
     onCategories: () -> Unit,
     onHeating: () -> Unit,
+    onMap: () -> Unit = {},
 ) {
     NavigationBar {
         NavigationBarItem(
@@ -79,6 +80,12 @@ fun AppBottomBar(
             onClick = onDevices,
             icon = { Icon(DeviceIcons.vector("devices_other"), contentDescription = null) },
             label = { Text("Устройства") },
+        )
+        NavigationBarItem(
+            selected = selected == 3,
+            onClick = onMap,
+            icon = { Icon(DeviceIcons.vector("home"), contentDescription = null) },
+            label = { Text("Карта") },
         )
         NavigationBarItem(
             selected = selected == 2,

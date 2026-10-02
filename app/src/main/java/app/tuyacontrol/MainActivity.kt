@@ -135,6 +135,7 @@ private fun App(
             onDevices = { viewModel.open(Screen.Devices) },
             onCategories = { viewModel.open(Screen.Categories) },
             onHeating = { viewModel.open(Screen.Heating) },
+            onMap = { viewModel.open(Screen.Map) },
         )
     }
 
@@ -214,6 +215,10 @@ private fun App(
             onInTotal = heatingViewModel::setInTotal,
             onMessageShown = heatingViewModel::messageShown,
             bottomBar = { bottomBar(2) },
+        )
+        Screen.Map -> app.tuyacontrol.ui.MapScreen(
+            devices = state.devices,
+            bottomBar = { bottomBar(3) },
         )
         Screen.Sensor -> SensorScreen(
             state = sensor,
