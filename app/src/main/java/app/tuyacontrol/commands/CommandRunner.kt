@@ -1,7 +1,9 @@
 package app.tuyacontrol.commands
 
 import android.content.Context
+import app.tuyacontrol.ControlMode
 import app.tuyacontrol.DeviceUi
+import app.tuyacontrol.xiaomi.XiaomiHub
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.Category
@@ -31,7 +33,7 @@ class CommandRunner(context: Context) {
     private val engine = HeatingEngine(app)
     private val tuya: TuyaCloudClient? by lazy { CredentialsStore(app).load()?.let { TuyaCloudClient(it) } }
     private val rubetek: RubetekClient by lazy { RubetekClient(RubetekStore(app)) }
-    private val xiaomi by lazy { app.tuyacontrol.xiaomi.XiaomiHub(app) }
+    private val xiaomi by lazy { XiaomiHub(app) }
 
     /** Единица работы: заголовок строки и само выполнение (null — подтверждено, текст — почему нет). */
     private class Job(val title: String, val run: suspend () -> String?)
@@ -221,7 +223,7 @@ class CommandRunner(context: Context) {
 
     /** Xiaomi: команда (Wi-Fi, иначе облако) и проверка, что прибор сообщает новое значение. */
     private suspend fun xiaomiSet(d: DeviceUi, code: String, value: Any): String? {
-        val mode = app.tuyacontrol.ControlMode.AUTO
+        val mode = ControlMode.AUTO
         xiaomi.send(d.id, code, value, mode)
         var got: Any? = null
         repeat(5) {
