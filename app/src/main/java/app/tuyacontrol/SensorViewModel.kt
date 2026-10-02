@@ -102,6 +102,10 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     v?.let { ch.code to BigDecimal.valueOf(it).movePointLeft(ch.scale).toDouble() }
                 }.toMap()
                 _state.update { it.copy(current = current, currentTime = System.currentTimeMillis()) }
+                // Текущее значение — тоже точка истории (у некоторых устройств облако журнал не пишет)
+                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { db.insert(device.id, app.tuyacontrol.sensor.LocalHistory.readingsOf(device, raw, System.currentTimeMillis())) }
+                }
 
                 sync.sync(client, device) { p -> _state.update { it.copy(progress = p) } }
                 _state.update { it.copy(syncing = false, progress = null) }

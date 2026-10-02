@@ -58,13 +58,31 @@ object RubetekHistory {
 class RubetekSampleWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
         val store = RubetekStore(applicationContext)
-        if (store.refreshToken == null) return Result.success()
-        return try {
-            RubetekHistory.record(applicationContext, RubetekClient(store).allDevices())
-            Result.success()
-        } catch (e: Exception) {
-            AppLog.e("Rubetek: фоновый замер не удался", e)
-            Result.success()
+        if (store.refreshToken != null) {
+            try {
+                RubetekHistory.record(applicationContext, RubetekClient(store).allDevices())
+            } catch (e: Exception) {
+                AppLog.e("Rubetek: фоновый замер не удался", e)
+            }
         }
+        sampleTuyaZones()
+        return Result.success()
+    }
+
+    /**
+     * Термостаты зон отопления Tuya — раз в 30 минут текущее значение в историю (облако не у всех хранит
+     * журнал). Только устройства зон, чтобы не расходовать лимит запросов Tuya.
+     */
+    private suspend fun sampleTuyaZones() {
+        val prefs = applicationContext.getSharedPreferences("local_history", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        if (now - prefs.getLong("tuya_sample", 0) < 29 * 60_000L) return
+        val creds = app.tuyacontrol.data.CredentialsStore(applicationContext).load() ?: return
+        val ids = app.tuyacontrol.heating.HeatingStore(applicationContext).load().zones
+            .mapNotNull { it.deviceId }.filterNot { RubetekMapper.isRubetek(it) }.toSet()
+        val sensors = app.tuyacontrol.background.SyncTargets(applicationContext).sensors().filter { it.id in ids }
+        if (sensors.isEmpty()) return
+        prefs.edit().putLong("tuya_sample", now).apply()
+        app.tuyacontrol.sensor.LocalHistory.sample(applicationContext, app.tuyacontrol.cloud.TuyaCloudClient(creds), sensors)
     }
 }

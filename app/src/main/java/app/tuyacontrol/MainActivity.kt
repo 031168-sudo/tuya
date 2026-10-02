@@ -97,6 +97,10 @@ private fun App(
     LaunchedEffect(state.devices) {
         if (state.devices.isNotEmpty()) {
             SyncTargets(context).save(energyDevices, state.devices.mapNotNull { it.sensorDevice })
+            // Текущие показания — в свою историю (не у всех устройств облако хранит журнал)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                app.tuyacontrol.sensor.LocalHistory.record(context, state.devices)
+            }
         }
     }
     // Термостаты для экрана «Отопление»

@@ -88,7 +88,19 @@ class SensorSync(private val db: SensorDb) {
         to: Long,
         onPage: (Int) -> Unit,
     ): List<LogEntry> = if (device.thingModel) {
-        client.getReportLogsV2(device.id, codes, from, to, 100, onPage)
+        try {
+            client.getReportLogsV2(device.id, codes, from, to, 100, onPage)
+        } catch (e: TuyaApiException) {
+            // Журнал модели устройства принимают не все (батарея в ванной: «Parameter error») — пробуем v1
+            AppLog.e("${device.name}: журнал v2 недоступен, пробую v1", e)
+            try {
+                client.getDeviceLogs(device.id, codes, from, to, 100, onPage)
+            } catch (e2: TuyaApiException) {
+                // Облако журнала не даёт — графику хватит точек, накопленных в телефоне
+                AppLog.e("${device.name}: журнал облака недоступен, история только из телефона", e2)
+                emptyList()
+            }
+        }
     } else {
         try {
             client.getDeviceLogs(device.id, codes, from, to, 100, onPage)
