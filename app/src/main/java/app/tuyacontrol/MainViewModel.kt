@@ -128,6 +128,8 @@ data class DeviceUi(
                 return v == true || v.toString().lowercase() in setOf("open", "1", "true", "on")
             }
             if (productName.contains(ALWAYS_ON_PRODUCT) || "heating_temp_start" in status) return main
+            // Конвекторы Rubetek: отдельного признака «греет сейчас» модуль не даёт — показываем вкл/выкл
+            if (category == app.tuyacontrol.rubetek.RubetekMapper.CATEGORY && "temp_set" in status) return main
             return null
         }
 
