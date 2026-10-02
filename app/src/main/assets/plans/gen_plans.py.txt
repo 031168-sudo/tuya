@@ -152,7 +152,8 @@ def svg(f, scale=0.07, temps=None):
         label = r["name"]
         if temps is not None and r["id"] in TEMP_VAL:
             o.append(f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" font-size="{fs+8}" font-weight="700" fill="#2B2B2B">{str(TEMP_VAL[r["id"]]).replace(".", ",")}°</text>')
-            o.append(f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" font-size="{fs-1}" fill="#3C3C3C">{label}</text>')
+            o.append(f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" font-size="{max(11, fs-1)}" fill="#3C3C3C">{label}</text>')
+            o.append(f'<text x="{cx}" y="{cy + 31}" text-anchor="middle" font-size="{max(10, fs-3)}" fill="#5A5A5A">{str(r["area"]).replace(".", ",")} м²</text>')
         else:
             o.append(f'<text x="{cx}" y="{cy}" text-anchor="middle" font-size="{fs}" font-weight="600" fill="#2B2B2B">{label}</text>')
             o.append(f'<text x="{cx}" y="{cy + 17}" text-anchor="middle" font-size="{fs-2}" fill="#5A5A5A">{r["area"]:.1f} м²</text>'.replace(".", ",", 1) if False else
