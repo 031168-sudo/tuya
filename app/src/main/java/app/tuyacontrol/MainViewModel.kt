@@ -248,6 +248,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val dpIdCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, Int>>()
     /** Устройства по данным облака (или кэша); на экран идут с наложением локальных данных. */
     private var baseDevices: List<DeviceUi> = emptyList()
+
+    /** Облачные таймеры, раскрытые в карточках (id -> список). Объявлено до init: publish() вызывается уже там. */
+    private val timersCache = mutableMapOf<String, List<app.tuyacontrol.cloud.CloudTimer>>()
     private var foreground = false
     private var localStartJob: Job? = null
     private var codesLogged = false
@@ -685,9 +688,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Батарея в ванной (пороги нагрева): «включено» — греть с 19° до 20°, «выключено» — с 12° до 13°.
      * Порядок записи такой, чтобы порог включения всегда оставался ниже порога выключения.
      */
-    /** Облачные таймеры, раскрытые в карточках (id -> список). */
-    private val timersCache = mutableMapOf<String, List<app.tuyacontrol.cloud.CloudTimer>>()
-
     private fun loadTimers(deviceId: String, message: String? = null) {
         val c = client ?: return
         val name = _state.value.devices.find { it.id == deviceId }?.name ?: deviceId
