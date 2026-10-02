@@ -179,6 +179,15 @@ private fun App(
             onSave = viewModel::saveCategory,
             onDelete = viewModel::deleteCategory,
             bottomBar = { bottomBar(1) },
+            commands = state.commands,
+            onOpenCommands = { viewModel.open(Screen.Commands) },
+            onRunCommand = viewModel::runCommand,
+        )
+        Screen.Commands -> app.tuyacontrol.ui.CommandsScreen(
+            commands = state.commands,
+            onBack = { viewModel.back() },
+            onSave = viewModel::saveCommand,
+            onDelete = viewModel::deleteCommand,
         )
         Screen.CategoryDevices -> {
             val category = state.categories.firstOrNull { it.id == state.categoryId }
@@ -255,6 +264,15 @@ private fun App(
                 if (!viewModel.back()) viewModel.open(Screen.Setup)
             },
         )
+    }
+
+    // Окно выполнения команды — поверх любого экрана, закрывается только «ОК»
+    state.commandRun?.let { run ->
+        app.tuyacontrol.ui.CommandRunDialog(run, onOk = viewModel::closeCommandRun)
+    }
+    // Команда могла включить/выключить управление зонами — экран «Отопление» перечитывает настройки
+    LaunchedEffect(state.commandRun?.done) {
+        if (state.commandRun?.done == true) heatingViewModel.reloadSettings()
     }
 
     editDevice?.let { d ->

@@ -35,7 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Map }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Map, Commands }
 
 data class DeviceUi(
     val id: String,
@@ -232,12 +232,23 @@ data class UiState(
     val rubetekBusy: Boolean = false,
     val rubetekError: String? = null,
     val rubetekCount: Int = 0,
+    /** Команды (наборы действий) на экране категорий. */
+    val commands: List<app.tuyacontrol.commands.Command> = emptyList(),
+    /** Идущее или законченное выполнение команды (окно с шагами); null — окна нет. */
+    val commandRun: CommandRun? = null,
+)
+
+data class CommandRun(
+    val name: String,
+    val steps: List<app.tuyacontrol.commands.Step> = emptyList(),
+    val done: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = CredentialsStore(application)
     private val categoryStore = CategoryStore(application)
+    private val commandStore = app.tuyacontrol.commands.CommandStore(application)
     private var client: TuyaCloudClient? = null
     private val specCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, DpSpec>>()
     private val thingModelDevices: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
@@ -270,6 +281,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 categories = categoryStore.categories(),
                 devicePrefs = categoryStore.devicePrefs(),
+                commands = commandStore.load(),
                 mode = mode,
                 rubetekLogin = if (rubetek.connected) rubetekStore.login ?: "" else null,
             )
@@ -371,7 +383,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else if ((s.screen == Screen.Sensor || s.screen == Screen.Energy) && s.returnTo != null) {
             // Обратно туда, откуда открыли: в список устройств или в ту же категорию
             _state.update { it.copy(screen = s.returnTo, returnTo = null) }; true
-        } else if (s.screen == Screen.CategoryDevices) {
+        } else if (s.screen == Screen.CategoryDevices || s.screen == Screen.Commands) {
             open(Screen.Categories); true
         } else if (s.screen != Screen.Categories && s.credentials != null) {
             // Главный экран — категории
@@ -382,6 +394,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun messageShown() = _state.update { it.copy(message = null) }
+
+    // ---------- Команды ----------
+
+    fun saveCommand(c: app.tuyacontrol.commands.Command) {
+        val list = _state.value.commands
+        val updated = if (list.any { it.id == c.id }) list.map { if (it.id == c.id) c else it } else list + c
+        commandStore.save(updated)
+        _state.update { it.copy(commands = updated) }
+    }
+
+    fun deleteCommand(id: String) {
+        val updated = _state.value.commands.filterNot { it.id == id }
+        commandStore.save(updated)
+        _state.update { it.copy(commands = updated) }
+    }
+
+    /** Выполнить команду: окно с шагами, каждый шаг подтверждается устройством. */
+    fun runCommand(id: String) {
+        if (_state.value.commandRun?.done == false) return
+        val cmd = _state.value.commands.firstOrNull { it.id == id } ?: return
+        _state.update { it.copy(commandRun = CommandRun(cmd.name)) }
+        val s = _state.value
+        viewModelScope.launch {
+            try {
+                app.tuyacontrol.commands.CommandRunner(getApplication()).run(cmd, s.devices, s.categories, s.devicePrefs) { steps ->
+                    _state.update { it.copy(commandRun = it.commandRun?.copy(steps = steps)) }
+                }
+            } catch (e: Exception) {
+                AppLog.e("Команда «${cmd.name}» прервана", e)
+                _state.update {
+                    it.copy(commandRun = it.commandRun?.copy(steps = it.commandRun.steps + app.tuyacontrol.commands.Step(
+                        "Команда прервана", app.tuyacontrol.commands.StepStatus.FAIL, e.message,
+                    )))
+                }
+            }
+            _state.update { it.copy(commandRun = it.commandRun?.copy(done = true)) }
+            refresh(silent = true)
+            refreshRubetek(silent = true)
+        }
+    }
+
+    fun closeCommandRun() = _state.update { if (it.commandRun?.done == true) it.copy(commandRun = null) else it }
 
     // ---------- Локальная сеть ----------
 

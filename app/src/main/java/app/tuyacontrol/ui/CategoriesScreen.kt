@@ -120,6 +120,9 @@ fun CategoriesScreen(
     onSave: (Category) -> Unit,
     onDelete: (String) -> Unit,
     bottomBar: @Composable () -> Unit,
+    commands: List<app.tuyacontrol.commands.Command> = emptyList(),
+    onOpenCommands: () -> Unit = {},
+    onRunCommand: (String) -> Unit = {},
 ) {
     var editing by remember { mutableStateOf<Category?>(null) }
     val counts = devices.groupingBy { prefs[it.id]?.categoryId }.eachCount()
@@ -138,6 +141,9 @@ fun CategoriesScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            item(key = "commands", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(2) }) {
+                CommandsBlock(commands, onOpenCommands, onRunCommand)
+            }
             items(categories, key = { it.id }) { c ->
                 Card(
                     onClick = { onOpen(c.id) },

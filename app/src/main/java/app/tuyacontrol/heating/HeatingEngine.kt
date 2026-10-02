@@ -357,6 +357,9 @@ class HeatingEngine(context: Context) {
      * Значение = (дни недели битами << 16) | минуты от полуночи; 127 — каждый день; -1 — пусто.
      * Пустой список — все 20 ячеек очищаются.
      */
+    /** Снять все таймеры модуля конвектора Rubetek (с проверкой; исключение — если модуль не подтвердил). */
+    suspend fun clearRubetekTimers(id: String) = writeRubetekTimers(RubetekClient(RubetekStore(app)), id, emptyList())
+
     private suspend fun writeRubetekTimers(rubetek: RubetekClient, id: String, events: List<Pair<Int, Boolean>>) {
         val (house, device) = RubetekMapper.parseId(id) ?: return
         val ons = events.filter { it.second }.map { it.first }.take(10)

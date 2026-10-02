@@ -248,6 +248,22 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** Настройки могли поменяться не отсюда (команда включила/выключила управление зонами) — перечитать. */
+    fun reloadSettings() {
+        _state.update {
+            it.copy(
+                settings = engine.store.load(),
+                deployedAt = engine.store.deployedAt,
+                deployResult = engine.store.deployResult,
+                deployedTimers = engine.store.deployedTimers(),
+                deployedPrograms = engine.store.deployedPrograms(),
+            )
+        }
+        reloadModuleTimers(force = true)
+        reloadPrograms(force = true)
+        recompute()
+    }
+
     private var timersReadAt = 0L
 
     /** Прочитать из облака Rubetek, какие таймеры сейчас стоят в модулях конвекторов зон. */
