@@ -64,6 +64,10 @@ class CommandRunner(context: Context) {
 
     private fun expand(a: Action, devices: List<DeviceUi>, categories: List<Category>, prefs: Map<String, DevicePref>): List<Job> {
         if (a.kind.target == Target.ZONES) return zoneJobs(a.kind == ActionKind.ZONES_CONTROL_ON)
+        if (a.kind == ActionKind.ZONE_CONTROL_ON) {
+            val one = zoneJobs(true, a.deviceId)
+            return one.ifEmpty { listOf(Job("Зона «${a.deviceName}»: управление по плану вкл") { "зона не найдена" }) }
+        }
         val label = "${a.kind.title}${a.temp?.let { " ${fmt(it)}°" } ?: ""}"
         // Конкретное устройство
         if (a.deviceId != null) {
@@ -77,9 +81,9 @@ class CommandRunner(context: Context) {
         return group.map { d -> Job("${d.name}: $label") { perform(a, d) } }
     }
 
-    private fun zoneJobs(on: Boolean): List<Job> {
-        val zones = engine.store.load().zones.filter { it.deviceId != null }
-        if (zones.isEmpty()) return listOf(Job("Отопление: зон нет") { "нет зон отопления" })
+    private fun zoneJobs(on: Boolean, onlyId: String? = null): List<Job> {
+        val zones = engine.store.load().zones.filter { it.deviceId != null && (onlyId == null || it.id == onlyId) }
+        if (zones.isEmpty()) return if (onlyId != null) emptyList() else listOf(Job("Отопление: зон нет") { "нет зон отопления" })
         return zones.map { z ->
             Job("Зона «${z.name}»: управление по плану ${if (on) "вкл" else "выкл"}") {
                 val c = tuya ?: return@Job "нет ключей Tuya"
@@ -130,7 +134,7 @@ class CommandRunner(context: Context) {
         }
 
         ActionKind.WATER_TIMERS_ON, ActionKind.WATER_TIMERS_OFF -> waterTimers(d, a.kind == ActionKind.WATER_TIMERS_ON)
-        ActionKind.ZONES_CONTROL_ON, ActionKind.ZONES_CONTROL_OFF -> "не для устройства"
+        ActionKind.ZONES_CONTROL_ON, ActionKind.ZONES_CONTROL_OFF, ActionKind.ZONE_CONTROL_ON -> "не для устройства"
     } }
 
     /** Ручной и «по программе» режимы термостата: спальня — manual/auto, «Temp» — cold/hot. */

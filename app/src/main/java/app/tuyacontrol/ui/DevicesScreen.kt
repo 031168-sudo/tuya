@@ -636,3 +636,28 @@ private fun CloudScheduleBlock(device: DeviceUi, onCommand: (String, String, Any
         Text("Скрыть расписание")
     }
 }
+
+/** Значок «включено / выключено»: зелёная кнопка питания или серая перечёркнутая. */
+@Composable
+fun PowerIndicator(on: Boolean, size: androidx.compose.ui.unit.Dp = 20.dp) {
+    val grey = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    Box(Modifier.size(size), contentAlignment = Alignment.Center) {
+        Icon(
+            DeviceIcons.vector("power_button"),
+            contentDescription = if (on) "Включено" else "Выключено",
+            tint = if (on) androidx.compose.ui.graphics.Color(0xFF2E9D4F) else grey,
+            modifier = Modifier.size(size),
+        )
+        if (!on) {
+            androidx.compose.foundation.Canvas(Modifier.size(size)) {
+                drawLine(
+                    grey,
+                    start = androidx.compose.ui.geometry.Offset(this.size.width * 0.12f, this.size.height * 0.12f),
+                    end = androidx.compose.ui.geometry.Offset(this.size.width * 0.88f, this.size.height * 0.88f),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+            }
+        }
+    }
+}

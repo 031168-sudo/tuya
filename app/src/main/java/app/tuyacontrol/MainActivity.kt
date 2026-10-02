@@ -188,6 +188,7 @@ private fun App(
             devices = state.devices,
             categories = state.categories,
             prefs = state.devicePrefs,
+            zones = heating.settings.zones.map { it.id to it.name },
             onBack = { viewModel.back() },
             onSave = viewModel::saveCommand,
             onDelete = viewModel::deleteCommand,

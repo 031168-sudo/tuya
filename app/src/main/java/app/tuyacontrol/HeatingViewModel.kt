@@ -33,6 +33,8 @@ data class Thermostat(
     val step: Double,
     /** Греет сейчас (null — устройство не сообщает). */
     val heating: Boolean? = null,
+    /** Включён ли прибор (выключатель; у батареи в ванной — пороги «вкл»). null — неизвестно. */
+    val powerOn: Boolean? = null,
     /** Таймеры, которые сейчас стоят в модуле конвектора Rubetek (null — неизвестно / не Rubetek). */
     val moduleTimers: List<app.tuyacontrol.rubetek.ModuleTimer>? = null,
     /** Когда прочитаны таймеры модуля, мс. */
@@ -175,6 +177,8 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 setpoint = (d.status[code] as? Number)?.toDouble()?.let { it / pow10(set?.scale ?: 0) },
                 step = HeatingEngine.stepOf(set),
                 heating = d.heatingNow,
+                powerOn = if (!d.online) null else d.heatingPresetOn
+                    ?: DeviceUi.MAIN_SWITCHES.firstNotNullOfOrNull { d.status[it] as? Boolean },
                 moduleTimers = d.moduleTimers,
                 timersAt = if (d.moduleTimers != null) d.lastDataTime else 0,
             ).let { t ->

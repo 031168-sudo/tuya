@@ -172,6 +172,7 @@ fun CommandsScreen(
     devices: List<app.tuyacontrol.DeviceUi>,
     categories: List<app.tuyacontrol.data.Category>,
     prefs: Map<String, app.tuyacontrol.data.DevicePref>,
+    zones: List<Pair<String, String>> = emptyList(),
     onBack: () -> Unit,
     onSave: (Command) -> Unit,
     onDelete: (String) -> Unit,
@@ -179,7 +180,7 @@ fun CommandsScreen(
     var editing by remember { mutableStateOf<Command?>(null) }
     // Группы устройств для выбора в действиях: устройство выбирается отдельно, группы лишь объединяют
     val groups = remember(devices, categories, prefs) {
-        Target.entries.filter { it != Target.ZONES }.associateWith { app.tuyacontrol.commands.groupDevices(it, devices, categories, prefs) }
+        Target.entries.filter { it != Target.ZONES && it != Target.ZONE }.associateWith { app.tuyacontrol.commands.groupDevices(it, devices, categories, prefs) }
     }
     Scaffold(
         topBar = {
@@ -223,6 +224,7 @@ fun CommandsScreen(
     editing?.let { c ->
         CommandEditDialog(
             groups = groups,
+            zones = zones,
             initial = c,
             isNew = commands.none { it.id == c.id },
             onDismiss = { editing = null },
@@ -236,6 +238,7 @@ fun CommandsScreen(
 @Composable
 private fun CommandEditDialog(
     groups: Map<Target, List<app.tuyacontrol.DeviceUi>>,
+    zones: List<Pair<String, String>>,
     initial: Command,
     isNew: Boolean,
     onDismiss: () -> Unit,
@@ -309,7 +312,7 @@ private fun CommandEditDialog(
     }
 
     if (picking) {
-        ActionPicker(groups, onDismiss = { picking = false }, onPick = { actions.add(it); picking = false })
+        ActionPicker(groups, zones, onDismiss = { picking = false }, onPick = { actions.add(it); picking = false })
     }
     if (confirmDelete) {
         AlertDialog(
@@ -328,6 +331,7 @@ private fun CommandEditDialog(
 @Composable
 private fun ActionPicker(
     groups: Map<Target, List<app.tuyacontrol.DeviceUi>>,
+    zones: List<Pair<String, String>>,
     onDismiss: () -> Unit,
     onPick: (Action) -> Unit,
 ) {
@@ -362,6 +366,14 @@ private fun ActionPicker(
                     else -> {
                         Text(Target.ZONES.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 6.dp, bottom = 2.dp))
                         ActionKind.entries.filter { it.target == Target.ZONES }.forEach { a -> PickRow(a.title) { onPick(Action(a)) } }
+                        if (zones.isNotEmpty()) {
+                            Text(
+                                "Отопление: одна зона — управление по плану включить",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                            )
+                            zones.forEach { (id, name) -> PickRow(name) { onPick(Action(ActionKind.ZONE_CONTROL_ON, null, id, name)) } }
+                        }
                         groups.forEach { (t, list) ->
                             Text(t.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp))
                             if (list.isEmpty()) {

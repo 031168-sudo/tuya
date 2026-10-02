@@ -315,6 +315,10 @@ private fun ZoneCard(
                             Spacer(Modifier.width(6.dp))
                             HeatingIndicator(it)
                         }
+                        thermostat?.powerOn?.let {
+                            Spacer(Modifier.width(6.dp))
+                            PowerIndicator(it)
+                        }
                     }
                     Text(
                         when {

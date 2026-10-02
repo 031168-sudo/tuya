@@ -8,6 +8,7 @@ import java.util.UUID
 /** Группа устройств, к которой относится действие. */
 enum class Target(val title: String) {
     ZONES("Отопление: все зоны"),
+    ZONE("Отопление: зона"),
     RUBETEK("Rubetek"),
     HEATING("Отопление (кроме ванны)"),
     BATH("Ванна"),
@@ -18,6 +19,8 @@ enum class Target(val title: String) {
 enum class ActionKind(val target: Target, val title: String, val needsTemp: Boolean = false) {
     ZONES_CONTROL_ON(Target.ZONES, "Управление по плану — включить"),
     ZONES_CONTROL_OFF(Target.ZONES, "Управление по плану — выключить"),
+    /** Одна зона (id зоны — в Action.deviceId, название — в deviceName). */
+    ZONE_CONTROL_ON(Target.ZONE, "Управление по плану — включить"),
 
     RUBETEK_ON(Target.RUBETEK, "Включить"),
     RUBETEK_OFF(Target.RUBETEK, "Выключить"),
@@ -126,7 +129,7 @@ fun groupDevices(
     }
     val rubetek = { d: app.tuyacontrol.DeviceUi -> app.tuyacontrol.rubetek.RubetekMapper.isRubetek(d.id) }
     return when (target) {
-        Target.ZONES -> emptyList()
+        Target.ZONES, Target.ZONE -> emptyList()
         Target.RUBETEK -> devices.filter { rubetek(it) && it.setpointCode != null }
         Target.HEATING -> byCategory("отоплен").filter { !rubetek(it) && it.heatingPresetOn == null }
         Target.BATH -> devices.filter { it.heatingPresetOn != null }
