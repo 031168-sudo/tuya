@@ -304,9 +304,10 @@ private fun FloorPlan(
             )
         }
 
-        // Подписи: температура, название, площадь
+        // Подписи: температура, название, площадь — внутри стен, с одинаковыми отступами
         floor.rooms.forEach { r ->
-            val (tl, sz) = rectOf(r.rect.x1, r.rect.y1, r.rect.x2, r.rect.y2)
+            val inner = floor.interior(r.rect)
+            val (tl, sz) = rectOf(inner.x1, inner.y1, inner.x2, inner.y2)
             val temp = temps[r.id]
             drawLabels(
                 measurer, tl, sz,
@@ -320,11 +321,14 @@ private fun FloorPlan(
     }
 }
 
+/** Доля места внутри комнаты под подписи (по 6% — поля до стен). */
+private const val FILL = 0.88f
+
 private class Label(val text: String, val size: TextUnit, val weight: FontWeight, val color: Color)
 
-/** Строки по центру прямоугольника; если не влезают — шрифт уменьшается (не меньше 60%), длинное обрезается «…». */
+/** Строки по центру прямоугольника с полями 6%; если не влезают — шрифт уменьшается (не меньше 45%), длинное обрезается «…». */
 private fun DrawScope.drawLabels(measurer: TextMeasurer, tl: Offset, sz: Size, lines: List<Label>) {
-    val maxW = (sz.width * 0.92f).toInt().coerceAtLeast(1)
+    val maxW = (sz.width * FILL).toInt().coerceAtLeast(1)
     fun layout(k: Float) = lines.map { l ->
         measurer.measure(
             l.text,
@@ -339,7 +343,7 @@ private fun DrawScope.drawLabels(measurer: TextMeasurer, tl: Offset, sz: Size, l
     }
     val needW = natural.maxOf { it.width }.toFloat()
     val needH = natural.sumOf { it.height }.toFloat()
-    val k = minOf(1f, sz.width * 0.92f / needW, sz.height * 0.9f / needH).coerceAtLeast(0.6f)
+    val k = minOf(1f, sz.width * FILL / needW, sz.height * FILL / needH).coerceAtLeast(0.45f)
     val laid = layout(k)
     var y = tl.y + (sz.height - laid.sumOf { it.size.height }) / 2
     laid.forEach { t ->

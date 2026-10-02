@@ -55,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.tuyacontrol.DeviceUi
 import app.tuyacontrol.data.Category
 import app.tuyacontrol.data.DevicePref
@@ -73,27 +74,40 @@ fun AppBottomBar(
             selected = selected == 1,
             onClick = onCategories,
             icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-            label = { Text("Категории") },
+            label = { NavLabel("Категории") },
         )
         NavigationBarItem(
             selected = selected == 0,
             onClick = onDevices,
             icon = { Icon(DeviceIcons.vector("devices_other"), contentDescription = null) },
-            label = { Text("Устройства") },
+            label = { NavLabel("Устройства") },
         )
         NavigationBarItem(
             selected = selected == 3,
             onClick = onMap,
             icon = { Icon(DeviceIcons.vector("home"), contentDescription = null) },
-            label = { Text("Карта") },
+            label = { NavLabel("Карта") },
         )
         NavigationBarItem(
             selected = selected == 2,
             onClick = onHeating,
             icon = { Icon(DeviceIcons.vector("whatshot"), contentDescription = null) },
-            label = { Text("Отопление") },
+            label = { NavLabel("Отопление") },
         )
     }
+}
+
+/** Подпись в нижней панели: мелко и в одну строку, чтобы при крупном шрифте системы не переносилась. */
+@Composable
+private fun NavLabel(text: String) {
+    Text(
+        text,
+        fontSize = 11.sp,
+        letterSpacing = 0.sp,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Visible,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

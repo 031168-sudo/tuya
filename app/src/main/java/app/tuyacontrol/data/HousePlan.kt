@@ -31,19 +31,33 @@ data class PlanFloor(
     val doors: List<MmSeg>,
     val windows: List<MmSeg>,
 ) {
-    /** Толщина стены, на которой лежит проём (как wall_on в gen_plans.py). */
-    fun wallUnder(s: MmSeg): Float {
+    /** Толщина стены на линии x=c (vertical) или y=c, перекрывающей отрезок [a, b]; 0 — стены нет (как wall_on в gen_plans.py). */
+    fun wallOn(vertical: Boolean, c: Float, a: Float, b: Float): Float {
         var best = 0f
         for (w in walls) {
-            if (s.vertical && w.vertical && w.x1 == s.x1 &&
-                minOf(w.y1, w.y2) < maxOf(s.y1, s.y2) && maxOf(w.y1, w.y2) > minOf(s.y1, s.y2)
+            if (vertical && w.vertical && w.x1 == c &&
+                minOf(w.y1, w.y2) < maxOf(a, b) && maxOf(w.y1, w.y2) > minOf(a, b)
             ) best = maxOf(best, w.extra)
-            if (!s.vertical && !w.vertical && w.y1 == s.y1 &&
-                minOf(w.x1, w.x2) < maxOf(s.x1, s.x2) && maxOf(w.x1, w.x2) > minOf(s.x1, s.x2)
+            if (!vertical && !w.vertical && w.y1 == c &&
+                minOf(w.x1, w.x2) < maxOf(a, b) && maxOf(w.x1, w.x2) > minOf(a, b)
             ) best = maxOf(best, w.extra)
         }
-        return if (best > 0f) best else OUTER_WALL
+        return best
     }
+
+    /** Толщина стены, на которой лежит проём. */
+    fun wallUnder(s: MmSeg): Float {
+        val t = if (s.vertical) wallOn(true, s.x1, s.y1, s.y2) else wallOn(false, s.y1, s.x1, s.x2)
+        return if (t > 0f) t else OUTER_WALL
+    }
+
+    /** Комната «в чистоте»: прямоугольник по осям минус половины стен с каждой стороны. */
+    fun interior(r: MmRect): MmRect = MmRect(
+        r.x1 + wallOn(true, r.x1, r.y1, r.y2) / 2,
+        r.y1 + wallOn(false, r.y1, r.x1, r.x2) / 2,
+        r.x2 - wallOn(true, r.x2, r.y1, r.y2) / 2,
+        r.y2 - wallOn(false, r.y2, r.x1, r.x2) / 2,
+    )
 
     companion object {
         const val OUTER_WALL = 350f
