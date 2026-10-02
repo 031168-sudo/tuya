@@ -40,3 +40,27 @@ data class StatType(val code: String, val statType: String)
 data class LogEntry(val code: String, val value: String, val time: Long, val eventId: Int = 7)
 
 class TuyaApiException(val code: Int, message: String) : Exception(message)
+
+/** Облачный таймер Tuya (то, что в Smart Life — «Расписание»): выполняет облако, не устройство. */
+data class CloudTimer(
+    val category: String,
+    val groupId: String,
+    /** «HH:mm». */
+    val time: String,
+    /** Дни недели «1111111» (вс…сб) или пусто — однократно. */
+    val loops: String,
+    /** Команды, например switch_1=true. */
+    val functions: List<Pair<String, Any?>>,
+    val enabled: Boolean,
+) {
+    /** «вкл» / «выкл» для выключателя, иначе код=значение. */
+    fun actionText(): String = functions.joinToString(", ") { (c, v) ->
+        if (v is Boolean && (c.startsWith("switch") || c == "power")) (if (v) "вкл" else "выкл") else "$c=$v"
+    }.ifEmpty { "—" }
+
+    fun daysText(): String = when {
+        loops == "1111111" -> ""
+        loops.isEmpty() || loops == "0000000" -> " (однократно)"
+        else -> " (" + loops.mapIndexedNotNull { i, ch -> if (ch == '1') listOf("вс", "пн", "вт", "ср", "чт", "пт", "сб")[i] else null }.joinToString(",") + ")"
+    }
+}

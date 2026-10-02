@@ -138,6 +138,42 @@ class TuyaCloudClient(private val credentials: Credentials) {
         }
     }
 
+    /** Облачные таймеры устройства (все категории). */
+    suspend fun listTimers(deviceId: String): List<CloudTimer> {
+        val arr = get("/v1.0/devices/$deviceId/timers") as? JSONArray ?: return emptyList()
+        val out = mutableListOf<CloudTimer>()
+        for (i in 0 until arr.length()) {
+            val c = arr.optJSONObject(i) ?: continue
+            val cat = c.optJSONObject("category")?.optString("category").orEmpty()
+            val groups = c.optJSONArray("groups") ?: continue
+            for (g in 0 until groups.length()) {
+                val grp = groups.optJSONObject(g) ?: continue
+                val gid = grp.optString("id")
+                val timers = grp.optJSONArray("timers") ?: continue
+                for (t in 0 until timers.length()) {
+                    val o = timers.optJSONObject(t) ?: continue
+                    val fns = o.optJSONArray("functions")
+                    val functions = (0 until (fns?.length() ?: 0)).mapNotNull { k ->
+                        fns!!.optJSONObject(k)?.let { f -> f.optString("code") to f.opt("value") }
+                    }
+                    out += CloudTimer(cat, gid, o.optString("time"), o.optString("loops"), functions, o.optInt("status", 1) == 1)
+                }
+            }
+        }
+        return out.sortedBy { it.time }
+    }
+
+    /** Включить/выключить группу таймеров, не удаляя её. Пробуем значение числом, затем строкой. */
+    suspend fun setTimerEnabled(deviceId: String, category: String, groupId: String, enabled: Boolean) {
+        val path = "/v1.0/devices/$deviceId/timers/categories/$category/groups/$groupId/status"
+        try {
+            request("PUT", path, emptyMap(), JSONObject().put("value", if (enabled) 1 else 0).toString())
+        } catch (e: TuyaApiException) {
+            AppLog.i("Таймер $groupId: статус числом не принят (${e.code} ${e.message}), пробую строкой")
+            request("PUT", path, emptyMap(), JSONObject().put("value", if (enabled) "1" else "0").toString())
+        }
+    }
+
     /** Все облачные расписания устройства как есть (для разбора формата расписаний из Tuya Smart). */
     suspend fun timersRaw(deviceId: String): String = get("/v1.0/devices/$deviceId/timers")?.toString() ?: "[]"
 

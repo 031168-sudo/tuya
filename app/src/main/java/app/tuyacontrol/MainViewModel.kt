@@ -61,7 +61,14 @@ data class DeviceUi(
     val viaLocal: Boolean = false,
     /** Таймеры вкл/выкл в модуле конвектора Rubetek (null — не Rubetek или модуль без таймеров). */
     val moduleTimers: List<app.tuyacontrol.rubetek.ModuleTimer>? = null,
+    /** Облачные таймеры Tuya («Расписание» Smart Life); null — не загружены (показываются по запросу). */
+    val cloudTimers: List<app.tuyacontrol.cloud.CloudTimer>? = null,
 ) {
+    /** Можно показать расписание облака: обычный выключатель/розетка Tuya. */
+    val hasCloudSchedule: Boolean
+        get() = !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) && !isSensor && !switchIsRelay &&
+            MAIN_SWITCHES.any { it in status }
+
     /**
      * Устройство в сети, но выключено главным переключателем — его показания могут не обновляться.
      * Термостаты «温控仪» (S1TW, батарея в ванной) включены всегда: их switch — реле нагрева.
@@ -175,6 +182,9 @@ data class DeviceUi(
 
         /** Псевдокод команды «вкл/выкл отопление» для батареи с порогами нагрева. */
         const val HEATING_PRESET = "__heating_preset"
+        /** Псевдокоманды расписания облака: показать (true) / скрыть (false); все таймеры вкл/выкл. */
+        const val TIMERS_SHOW = "__timers_show"
+        const val TIMERS_ALL = "__timers_all"
         /** Пороги (включение, выключение), °C. */
         val PRESET_ON = 19.0 to 20.0
         val PRESET_OFF = 12.0 to 13.0
@@ -311,7 +321,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 s.mode == ControlMode.LOCAL -> d.copy(online = false, viaLocal = false)
                 else -> d
             }
-        }
+        }.map { d -> timersCache[d.id]?.let { d.copy(cloudTimers = it) } ?: d }
         // Rubetek работает только через своё облако
         val rubetekShown = if (s.mode == ControlMode.LOCAL) rubetekDevices.map { it.copy(online = false) } else rubetekDevices
         val all = if (rubetekShown.isEmpty()) shown else (shown + rubetekShown).sortedBy { it.name.lowercase() }
@@ -601,6 +611,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             setHeatingPreset(deviceId, value == true)
             return
         }
+        if (code == DeviceUi.TIMERS_SHOW) {
+            if (value == true) loadTimers(deviceId) else { timersCache.remove(deviceId); publish() }
+            return
+        }
+        if (code == DeviceUi.TIMERS_ALL) {
+            setAllTimers(deviceId, value == true)
+            return
+        }
         val before = _state.value.devices.find { it.id == deviceId } ?: return
         if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(deviceId)) {
             sendRubetek(before, code, value)
@@ -667,6 +685,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Батарея в ванной (пороги нагрева): «включено» — греть с 19° до 20°, «выключено» — с 12° до 13°.
      * Порядок записи такой, чтобы порог включения всегда оставался ниже порога выключения.
      */
+    /** Облачные таймеры, раскрытые в карточках (id -> список). */
+    private val timersCache = mutableMapOf<String, List<app.tuyacontrol.cloud.CloudTimer>>()
+
+    private fun loadTimers(deviceId: String, message: String? = null) {
+        val c = client ?: return
+        val name = _state.value.devices.find { it.id == deviceId }?.name ?: deviceId
+        updateDevice(deviceId) { it.copy(pending = it.pending + DeviceUi.TIMERS_SHOW) }
+        viewModelScope.launch {
+            try {
+                val list = c.listTimers(deviceId)
+                timersCache[deviceId] = list
+                AppLog.i("Расписание «$name»: " + list.joinToString { "${it.time} ${it.actionText()} ${if (it.enabled) "вкл" else "выкл"}" })
+                if (message != null) _state.update { it.copy(message = message) }
+            } catch (e: Exception) {
+                AppLog.e("Расписание «$name» не прочитано", e)
+                _state.update { it.copy(message = "$name: расписание не прочитано — ${e.message}") }
+            }
+            updateDevice(deviceId) { it.copy(pending = it.pending - DeviceUi.TIMERS_SHOW) }
+        }
+    }
+
+    /** Все облачные таймеры устройства включить или выключить (сами таймеры не удаляются), затем проверить. */
+    private fun setAllTimers(deviceId: String, on: Boolean) {
+        val c = client ?: return
+        val name = _state.value.devices.find { it.id == deviceId }?.name ?: deviceId
+        val timers = timersCache[deviceId] ?: return
+        updateDevice(deviceId) { it.copy(pending = it.pending + DeviceUi.TIMERS_SHOW) }
+        viewModelScope.launch {
+            val groups = timers.filter { it.enabled != on }.map { it.category to it.groupId }.distinct()
+            var failed = 0
+            for ((cat, gid) in groups) {
+                try {
+                    c.setTimerEnabled(deviceId, cat, gid, on)
+                } catch (e: Exception) {
+                    failed++
+                    AppLog.e("Расписание «$name»: группа $gid не переключена", e)
+                }
+            }
+            delay(1000)
+            val fresh = runCatching { c.listTimers(deviceId) }.getOrNull()
+            if (fresh != null) timersCache[deviceId] = fresh
+            val wrong = fresh?.count { it.enabled != on } ?: -1
+            val msg = when {
+                wrong == 0 -> "$name: все таймеры ${if (on) "включены" else "выключены"} (${fresh!!.size})"
+                wrong > 0 -> "$name: не удалось переключить $wrong из ${fresh!!.size} таймеров"
+                else -> "$name: команды отправлены (ошибок: $failed), но расписание не перечитано"
+            }
+            AppLog.i(msg)
+            _state.update { it.copy(message = msg) }
+            updateDevice(deviceId) { it.copy(pending = it.pending - DeviceUi.TIMERS_SHOW) }
+        }
+    }
+
     private fun setHeatingPreset(deviceId: String, on: Boolean) {
         val d = _state.value.devices.find { it.id == deviceId } ?: return
         val scale = d.spec["heating_temp_stop"]?.scale ?: 1
