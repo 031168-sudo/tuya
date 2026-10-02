@@ -488,13 +488,23 @@ private fun XiaomiVerifyDialog(
                     factory = { ctx ->
                         val cm = android.webkit.CookieManager.getInstance()
                         cm.setAcceptCookie(true)
-                        cm.removeAllCookies(null)
-                        step.cookies.forEach { (url, c) -> cm.setCookie(url, c) }
-                        cm.flush()
                         android.webkit.WebView(ctx).apply {
+                            layoutParams = android.view.ViewGroup.LayoutParams(
+                                android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
                             settings.javaScriptEnabled = true
                             settings.domStorageEnabled = true
+                            settings.databaseEnabled = true
+                            settings.loadWithOverviewMode = true
+                            settings.useWideViewPort = true
                             cm.setAcceptThirdPartyCookies(this, true)
+                            val log = app.tuyacontrol.data.AppLog
+                            webChromeClient = object : android.webkit.WebChromeClient() {
+                                override fun onConsoleMessage(m: android.webkit.ConsoleMessage?): Boolean {
+                                    m?.let { log.i("Xiaomi (браузер) консоль: ${it.message().take(200)} [${it.sourceId()?.substringAfterLast('/')}:${it.lineNumber()}]") }
+                                    return true
+                                }
+                            }
                             fun check(url: String?) {
                                 if (finished) return
                                 val all = listOf("https://account.xiaomi.com", "https://xiaomi.com", "https://sts.api.io.mi.com")
@@ -515,8 +525,20 @@ private fun XiaomiVerifyDialog(
                             webViewClient = object : android.webkit.WebViewClient() {
                                 override fun onPageStarted(view: android.webkit.WebView?, url: String?, favicon: android.graphics.Bitmap?) = check(url)
                                 override fun onPageFinished(view: android.webkit.WebView?, url: String?) = check(url)
+                                override fun onReceivedError(view: android.webkit.WebView?, req: android.webkit.WebResourceRequest?, err: android.webkit.WebResourceError?) {
+                                    log.i("Xiaomi (браузер) ошибка ${err?.errorCode} ${err?.description} — ${req?.url?.toString()?.substringBefore("?")}")
+                                }
+                                override fun onReceivedHttpError(view: android.webkit.WebView?, req: android.webkit.WebResourceRequest?, resp: android.webkit.WebResourceResponse?) {
+                                    log.i("Xiaomi (браузер) HTTP ${resp?.statusCode} — ${req?.url?.toString()?.substringBefore("?")}")
+                                }
                             }
-                            loadUrl(step.url)
+                            log.i("Xiaomi (браузер): открываю ${step.url.substringBefore("?")}, cookie ${step.cookies.size}")
+                            // Сначала дождаться очистки старых cookie, потом поставить наши и только тогда грузить страницу
+                            cm.removeAllCookies {
+                                step.cookies.forEach { (url, c) -> cm.setCookie(url, c) }
+                                cm.flush()
+                                loadUrl(step.url)
+                            }
                         }
                     },
                 )
