@@ -131,6 +131,7 @@ private val ArcColor = Color(0xFF9AA0A6)
 private val TextMain = Color(0xFF2B2B2B)
 private val TextSub = Color(0xFF4A4A4A)
 private val HatchColor = Color(0x8CFFFFFF)
+private val StaleText = Color(0xFF777777)
 
 private fun formatTemp(v: Double?): String =
     if (v == null) "—" else String.format(Locale("ru"), "%.1f°", v)
@@ -329,7 +330,12 @@ private fun FloorPlan(
             drawLabels(
                 measurer, tl, sz,
                 listOf(
-                    Label(formatTemp(temp?.value), 20.sp, FontWeight.Bold, TextMain, heating = heating[r.id]),
+                    Label(
+                        formatTemp(temp?.value), 17.sp, FontWeight.Bold,
+                        // Показания устарели (комната со штриховкой) — температура серым
+                        if (temp?.value != null && temp?.stale == true) StaleText else TextMain,
+                        heating = heating[r.id],
+                    ),
                     Label(names[r.id] ?: r.name, 12.sp, FontWeight.Normal, TextMain),
                     Label(formatArea(r.area), 11.sp, FontWeight.Normal, TextSub),
                 ),
@@ -382,8 +388,14 @@ private fun DrawScope.drawLabels(
     }
     val needW = lines.indices.maxOf { natural[it].width + extra(lines[it], 1f) }
     val needH = natural.sumOf { it.height }.toFloat()
-    val k = minOf(1f, maxW / needW, sz.height * FILL / needH).coerceAtLeast(0.45f)
-    val laid = layout(k)
+    var k = minOf(1f, maxW / needW, sz.height * FILL / needH).coerceAtLeast(0.45f)
+    var laid = layout(k)
+    // Масштаб шрифта не строго линейный: если что-то всё же обрезалось «…» — ещё чуть мельче
+    var tries = 0
+    while (laid.any { it.didOverflowWidth } && k > 0.45f && tries++ < 6) {
+        k = (k * 0.92f).coerceAtLeast(0.45f)
+        laid = layout(k)
+    }
     var y = tl.y + (sz.height - laid.sumOf { it.size.height }) / 2
     laid.forEachIndexed { i, t ->
         val l = lines[i]
