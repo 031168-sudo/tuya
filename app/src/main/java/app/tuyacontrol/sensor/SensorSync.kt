@@ -106,7 +106,13 @@ class SensorSync(private val db: SensorDb) {
             client.getDeviceLogs(device.id, codes, from, to, 100, onPage)
         } catch (e: TuyaApiException) {
             AppLog.e("${device.name}: журнал v1 недоступен, пробую v2", e)
-            client.getReportLogsV2(device.id, codes, from, to, 100, onPage)
+            try {
+                client.getReportLogsV2(device.id, codes, from, to, 100, onPage)
+            } catch (e2: TuyaApiException) {
+                // Облако журнала не даёт — графику хватит точек, накопленных в телефоне
+                AppLog.e("${device.name}: журнал облака недоступен, история только из телефона", e2)
+                emptyList()
+            }
         }
     }
 
