@@ -78,6 +78,7 @@ fun SetupScreen(
     onXiaomiVerify: (String) -> Unit = {},
     onXiaomiCancel: () -> Unit = {},
     onXiaomiSignOut: () -> Unit = {},
+    onXiaomiBrowserDone: (userId: String, passToken: String) -> Unit = { _, _ -> },
 ) {
     val saved = state.credentials
     var accessId by rememberSaveable { mutableStateOf(saved?.accessId.orEmpty()) }
@@ -184,6 +185,7 @@ fun SetupScreen(
                 BackgroundSyncSection()
                 RubetekSection(state, onRubetekSendCode, onRubetekSignIn, onRubetekCancel, onRubetekSignOut)
                 XiaomiSection(state, onXiaomiSignIn, onXiaomiCaptcha, onXiaomiVerify, onXiaomiCancel, onXiaomiSignOut)
+                state.xiaomiBrowser?.let { XiaomiVerifyDialog(it, onXiaomiBrowserDone, onXiaomiCancel) }
                 OutlinedButton(onClick = onClear, modifier = Modifier.fillMaxWidth()) {
                     Text("Удалить ключи с телефона")
                 }
@@ -449,6 +451,75 @@ private fun XiaomiSection(
             }
             state.xiaomiError?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+
+/**
+ * Страница подтверждения входа Xiaomi во встроенном браузере. Когда Xiaomi выдаёт cookie passToken
+ * (вход подтверждён), забираем её и userId и закрываем окно.
+ */
+@android.annotation.SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun XiaomiVerifyDialog(
+    step: app.tuyacontrol.xiaomi.MiLoginStep.Browser,
+    onDone: (String, String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var finished by remember(step) { mutableStateOf(false) }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onCancel,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        androidx.compose.material3.Surface(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize()) {
+                Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Подтвердите вход в Xiaomi",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    )
+                    TextButton(onClick = onCancel) { Text("Отмена") }
+                }
+                androidx.compose.ui.viewinterop.AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        val cm = android.webkit.CookieManager.getInstance()
+                        cm.setAcceptCookie(true)
+                        cm.removeAllCookies(null)
+                        step.cookies.forEach { (url, c) -> cm.setCookie(url, c) }
+                        cm.flush()
+                        android.webkit.WebView(ctx).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            cm.setAcceptThirdPartyCookies(this, true)
+                            fun check(url: String?) {
+                                if (finished) return
+                                val all = listOf("https://account.xiaomi.com", "https://xiaomi.com", "https://sts.api.io.mi.com")
+                                    .mapNotNull { cm.getCookie(it) }.joinToString("; ")
+                                val map = all.split(";").mapNotNull {
+                                    val kv = it.trim().split("=", limit = 2)
+                                    if (kv.size == 2) kv[0] to kv[1] else null
+                                }.toMap()
+                                val uid = map["userId"]?.takeIf { v -> v.isNotEmpty() && v.all { ch -> ch.isDigit() } }
+                                val pass = map["passToken"]?.takeIf { it.isNotEmpty() }
+                                app.tuyacontrol.data.AppLog.i("Xiaomi (браузер): ${url?.substringBefore("?")} userId=${uid != null} passToken=${pass != null}")
+                                if (uid != null && pass != null) {
+                                    finished = true
+                                    stopLoading()
+                                    onDone(uid, pass)
+                                }
+                            }
+                            webViewClient = object : android.webkit.WebViewClient() {
+                                override fun onPageStarted(view: android.webkit.WebView?, url: String?, favicon: android.graphics.Bitmap?) = check(url)
+                                override fun onPageFinished(view: android.webkit.WebView?, url: String?) = check(url)
+                            }
+                            loadUrl(step.url)
+                        }
+                    },
+                )
             }
         }
     }

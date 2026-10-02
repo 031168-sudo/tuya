@@ -245,6 +245,8 @@ data class UiState(
     val xiaomiCaptcha: ByteArray? = null,
     /** Код подтверждения отправлен: «почту» или «телефон». */
     val xiaomiVerifyTo: String? = null,
+    /** Страница подтверждения входа Xiaomi, открытая во встроенном браузере. */
+    val xiaomiBrowser: app.tuyacontrol.xiaomi.MiLoginStep.Browser? = null,
     /** Команды (наборы действий) на экране категорий. */
     val commands: List<app.tuyacontrol.commands.Command> = emptyList(),
     /** Идущее или законченное выполнение команды (окно с шагами); null — окна нет. */
@@ -1064,11 +1066,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 when (val r = step()) {
                     is app.tuyacontrol.xiaomi.MiLoginStep.Captcha ->
                         _state.update { it.copy(xiaomiBusy = false, xiaomiCaptcha = r.image, xiaomiVerifyTo = null) }
+                    is app.tuyacontrol.xiaomi.MiLoginStep.Browser ->
+                        _state.update { it.copy(xiaomiBusy = false, xiaomiCaptcha = null, xiaomiBrowser = r) }
                     is app.tuyacontrol.xiaomi.MiLoginStep.Verify ->
                         _state.update { it.copy(xiaomiBusy = false, xiaomiCaptcha = null, xiaomiVerifyTo = r.sentTo) }
                     app.tuyacontrol.xiaomi.MiLoginStep.Done -> {
                         _state.update {
-                            it.copy(xiaomiBusy = false, xiaomiCaptcha = null, xiaomiVerifyTo = null, xiaomiLogin = xiaomi.store.login ?: "")
+                            it.copy(xiaomiBusy = false, xiaomiCaptcha = null, xiaomiVerifyTo = null, xiaomiBrowser = null, xiaomiLogin = xiaomi.store.login ?: "")
                         }
                         refreshXiaomi(silent = false)
                     }
@@ -1080,7 +1084,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun xiaomiCancel() = _state.update { it.copy(xiaomiCaptcha = null, xiaomiVerifyTo = null, xiaomiError = null) }
+    fun xiaomiCancel() = _state.update { it.copy(xiaomiCaptcha = null, xiaomiVerifyTo = null, xiaomiBrowser = null, xiaomiError = null) }
+
+    /** Браузер увидел, что вход подтверждён (появились cookie userId и passToken). */
+    fun xiaomiBrowserDone(userId: String, passToken: String) {
+        _state.update { it.copy(xiaomiBrowser = null) }
+        xiaomiStep {
+            xiaomi.cloud.finishFromBrowser(userId, passToken)
+            app.tuyacontrol.xiaomi.MiLoginStep.Done
+        }
+    }
 
     fun xiaomiSignOut() {
         xiaomiJob?.cancel()

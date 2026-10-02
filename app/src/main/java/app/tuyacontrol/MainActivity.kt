@@ -156,6 +156,7 @@ private fun App(
             onXiaomiVerify = viewModel::xiaomiVerify,
             onXiaomiCancel = viewModel::xiaomiCancel,
             onXiaomiSignOut = viewModel::xiaomiSignOut,
+            onXiaomiBrowserDone = viewModel::xiaomiBrowserDone,
         )
         Screen.Local -> LocalScreen(
             state = state,

@@ -126,6 +126,8 @@ sealed class MiLoginStep {
     class Captcha(val image: ByteArray) : MiLoginStep()
     /** Нужно подтверждение входа: код отправлен на почту или телефон. */
     class Verify(val sentTo: String) : MiLoginStep()
+    /** Подтвердить вход на странице Xiaomi: адрес и cookie (адрес сайта -> строка Set-Cookie). */
+    class Browser(val url: String, val cookies: List<Pair<String, String>>) : MiLoginStep()
 }
 
 /**
@@ -243,28 +245,27 @@ class XiaomiCloud(private val store: XiaomiStore) {
         MiLoginStep.Done
     }
 
-    /** Подтверждение входа: открыть страницу, отправить код на почту, если не вышло — на телефон. */
-    private suspend fun startVerify(notificationUrl: String): MiLoginStep {
-        exec(http, Request.Builder().url(notificationUrl).get())
-        val context = notificationUrl.toHttpUrl().queryParameter("context")
-            ?: throw XiaomiException("Xiaomi просит подтверждение, но не дал контекст")
-        verifyContext = context
-        for ((kind, flag) in listOf("Email" to 8, "Phone" to 4)) {
-            val url = "$ACCOUNT/identity/auth/send${kind}Ticket".toHttpUrl().newBuilder()
-                .addQueryParameter("sid", "xiaomiio")
-                .addQueryParameter("context", context)
-                .addQueryParameter("_dc", System.currentTimeMillis().toString())
-                .build()
-            val (_, text) = exec(http, Request.Builder().url(url).post(FormBody.Builder().add("retry", "0").add("_json", "true").build()))
-            val o = runCatching { parse(text) }.getOrNull()
-            val code = o?.optInt("code", -1) ?: -1
-            AppLog.i("Xiaomi: код через $kind → $code")
-            if (code == 0) {
-                verifyFlag = flag
-                return MiLoginStep.Verify(if (kind == "Email") "почту" else "телефон")
-            }
+    /**
+     * Подтверждение входа делаем на странице самого Xiaomi (в приложении, во встроенном браузере): она сама
+     * выбирает способ — письмо, SMS, капча. Браузеру передаём наши cookie (deviceId и сессию входа), чтобы
+     * подтверждение относилось к этому телефону.
+     */
+    private fun startVerify(notificationUrl: String): MiLoginStep {
+        verifyContext = notificationUrl.toHttpUrl().queryParameter("context")
+        val list = synchronized(cookies) {
+            cookies.filter { it.domain.endsWith("xiaomi.com") && it.name != "userId" }
+                .map { "https://${it.domain.trimStart('.')}" to "${it.name}=${it.value}; Domain=${it.domain}; Path=${it.path}" }
         }
-        throw XiaomiException("Xiaomi просит подтвердить вход, но код не отправился. Подтвердите вход в приложении Mi Home и повторите")
+        return MiLoginStep.Browser(notificationUrl, list)
+    }
+
+    /** После подтверждения в браузере: cookie userId и passToken -> новая сессия без пароля. */
+    suspend fun finishFromBrowser(userId: String, passToken: String) = authMutex.withLock {
+        AppLog.i("Xiaomi: вход подтверждён в браузере")
+        store.userId = userId
+        store.passToken = passToken
+        relogin()
+        verifyContext = null
     }
 
     /** Код подтверждения из письма или SMS. */
