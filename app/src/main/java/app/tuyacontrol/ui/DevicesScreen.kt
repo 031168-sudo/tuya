@@ -341,6 +341,24 @@ private fun DeviceCard(
                 )
             }
             if (primary.isNotEmpty()) Spacer(Modifier.size(6.dp))
+            // Батарея с порогами нагрева: «Отопление» вкл (19→20°) / выкл (12→13°)
+            device.heatingPresetOn?.let { on ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Отопление", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            if (on) "греть с 19° до 20°" else "дежурно: с 12° до 13°",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = on,
+                        enabled = device.online && "heating_temp_stop" !in device.pending && "heating_temp_start" !in device.pending,
+                        onCheckedChange = { onCommand(device.id, DeviceUi.HEATING_PRESET, it) },
+                    )
+                }
+            }
             primary.forEach { (code, value) ->
                 DpRow(device, code, value, onCommand)
             }

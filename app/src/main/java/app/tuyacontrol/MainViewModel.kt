@@ -133,6 +133,16 @@ data class DeviceUi(
             return null
         }
 
+    /** Пороги нагрева есть — можно «включить/выключить отопление» сменой порогов. null — не такое устройство. */
+    val heatingPresetOn: Boolean?
+        get() {
+            val stop = (status["heating_temp_stop"] as? Number)?.toDouble() ?: return null
+            if ("heating_temp_start" !in status) return null
+            val t = stop / Math.pow(10.0, (spec["heating_temp_stop"]?.scale ?: 1).toDouble())
+            // Выключено — порог выключения около 13°; всё, что выше, считаем включённым
+            return t > PRESET_OFF.second + 0.5
+        }
+
     /** Переключатель этого устройства — не «питание», а реле нагрева: показывается как «греет / не греет». */
     val switchIsRelay: Boolean
         get() = productName.contains(ALWAYS_ON_PRODUCT)
@@ -162,6 +172,12 @@ data class DeviceUi(
         const val SENSOR_CATEGORY = "wsdcg"
         val SENSOR_HINTS = listOf("Temperature and Humidity", "Датчик температуры")
         val MAIN_SWITCHES = listOf("switch", "switch_1", "power")
+
+        /** Псевдокод команды «вкл/выкл отопление» для батареи с порогами нагрева. */
+        const val HEATING_PRESET = "__heating_preset"
+        /** Пороги (включение, выключение), °C. */
+        val PRESET_ON = 19.0 to 20.0
+        val PRESET_OFF = 12.0 to 13.0
     }
 }
 
@@ -580,6 +596,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Отправка одной команды, например switch_1 = true или temp_set = 220. */
     fun sendCommand(deviceId: String, code: String, value: Any) {
+        if (code == DeviceUi.HEATING_PRESET) {
+            setHeatingPreset(deviceId, value == true)
+            return
+        }
         val before = _state.value.devices.find { it.id == deviceId } ?: return
         if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(deviceId)) {
             sendRubetek(before, code, value)
@@ -616,6 +636,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         viewModelScope.launch { sendViaCloud(before, code, value, oldValue) }
+    }
+
+    /**
+     * Батарея в ванной (пороги нагрева): «включено» — греть с 19° до 20°, «выключено» — с 12° до 13°.
+     * Порядок записи такой, чтобы порог включения всегда оставался ниже порога выключения.
+     */
+    private fun setHeatingPreset(deviceId: String, on: Boolean) {
+        val d = _state.value.devices.find { it.id == deviceId } ?: return
+        val scale = d.spec["heating_temp_stop"]?.scale ?: 1
+        fun raw(t: Double) = Math.round(t * Math.pow(10.0, scale.toDouble()))
+        val (start, stop) = if (on) DeviceUi.PRESET_ON else DeviceUi.PRESET_OFF
+        val order = if (on) listOf("heating_temp_stop" to raw(stop), "heating_temp_start" to raw(start))
+        else listOf("heating_temp_start" to raw(start), "heating_temp_stop" to raw(stop))
+        AppLog.i("${d.name}: отопление ${if (on) "вкл" else "выкл"} — пороги ${start}°/${stop}°")
+        viewModelScope.launch {
+            order.forEachIndexed { i, (code, v) ->
+                if (i > 0) delay(2500)
+                sendCommand(deviceId, code, v)
+            }
+        }
     }
 
     private suspend fun sendViaCloud(before: DeviceUi, code: String, value: Any, oldValue: Any?) {
