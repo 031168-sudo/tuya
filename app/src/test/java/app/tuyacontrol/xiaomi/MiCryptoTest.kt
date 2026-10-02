@@ -104,5 +104,11 @@ class MiCryptoTest {
         assertEquals(194L, ui.status["temp_current"])
         assertEquals(18L, ui.spec.getValue("temp_set").min)
         assertEquals(23.0, XiaomiMapper.toMiot(props.getValue("temp_set"), 23L))
+
+        // Индикатор: 0 — горит (переключатель вкл), 1 — погашен
+        val ind = MiProp(7, 3, "indicator", "Индикатор", "uint8", true, true, "%", 0.0, 1.0, 1.0, emptyMap(), invertedSwitch = true)
+        val u2 = XiaomiMapper.toDevice(d, listOf(ind), mapOf((7 to 3) to 0), true, true, 0)
+        assertEquals(true, u2.status["indicator"])
+        assertEquals(1, XiaomiMapper.toMiot(ind, false))
     }
 }

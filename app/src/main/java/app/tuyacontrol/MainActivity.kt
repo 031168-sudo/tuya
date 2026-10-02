@@ -50,6 +50,10 @@ class MainActivity : ComponentActivity() {
         if (app.tuyacontrol.rubetek.RubetekStore(this).refreshToken != null) {
             app.tuyacontrol.rubetek.RubetekHistory.schedule(this)
         }
+        // Замеры температуры устройств Xiaomi (облако Xiaomi истории не отдаёт)
+        if (app.tuyacontrol.xiaomi.XiaomiStore(this).connected) {
+            app.tuyacontrol.xiaomi.XiaomiHistory.schedule(this)
+        }
         // Уведомление «история давно не обновлялась» на Android 13+ требует разрешения
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED

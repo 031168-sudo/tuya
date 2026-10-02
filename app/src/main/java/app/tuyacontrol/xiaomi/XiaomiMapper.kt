@@ -34,6 +34,10 @@ object XiaomiMapper {
             val raw = values[p.siid to p.piid] ?: continue
             val f = 10.0.pow(p.scale)
             when {
+                p.invertedSwitch -> {
+                    status[p.code] = (raw as? Number)?.toInt() == 0 || raw == false
+                    spec[p.code] = DpSpec(p.code, "Boolean", writable = p.writable)
+                }
                 p.format == "bool" -> {
                     status[p.code] = raw == true || raw.toString() == "true" || raw.toString() == "1"
                     spec[p.code] = DpSpec(p.code, "Boolean", writable = p.writable)
@@ -75,6 +79,7 @@ object XiaomiMapper {
     /** Значение из приложения -> значение MIoT; null — свойство нельзя менять. */
     fun toMiot(p: MiProp, value: Any): Any? {
         if (!p.writable) return null
+        if (p.invertedSwitch) return if (value == true) 0 else 1
         if (p.format == "bool") return value as? Boolean
         val n = (value as? Number)?.toDouble() ?: return null
         val v = n / 10.0.pow(p.scale)

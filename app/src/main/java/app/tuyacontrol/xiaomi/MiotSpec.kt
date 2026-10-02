@@ -29,6 +29,8 @@ data class MiProp(
     val step: Double?,
     /** Значение -> описание (для перечислений). */
     val values: Map<Int, String>,
+    /** Число 0/1, показываем переключателем наоборот: 0 — вкл (индикатор обогревателей zhimi). */
+    val invertedSwitch: Boolean = false,
 ) {
     /** Сколько знаков после запятой: 0 для шага 1, 1 для 0,1 и 0,5. */
     val scale: Int
@@ -159,8 +161,12 @@ class MiotSpec(context: Context) {
                     }
                     val label = LABELS[code] ?: PRIVATE_LABELS["$siid.$piid"].takeIf { code.startsWith("mi_") && model.startsWith("zhimi.heater") }
                         ?: if (code.startsWith("mi_")) p.optString("description").ifEmpty { pType } else ""
+                    // Яркость индикатора обогревателей zhimi: 0 — горит, 1 — погашен (как «Индикатор» в Mi Home)
+                    val inverted = code == "indicator" && model.startsWith("zhimi.heater") &&
+                        range != null && range.optDouble(0) == 0.0 && range.optDouble(1) == 1.0
                     out += MiProp(
-                        siid = siid, piid = piid, code = code, label = label, format = format,
+                        invertedSwitch = inverted,
+                        siid = siid, piid = piid, code = code, label = if (inverted) "Индикатор" else label, format = format,
                         readable = true, writable = "write" in access,
                         unit = UNITS[p.optString("unit")] ?: "",
                         min = range?.optDouble(0)?.takeIf { !it.isNaN() },

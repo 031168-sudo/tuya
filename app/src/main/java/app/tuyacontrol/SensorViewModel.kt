@@ -86,6 +86,10 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             refreshRubetek(device)
             return
         }
+        if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(device.id)) {
+            refreshXiaomi(device)
+            return
+        }
         val creds = credentials.load() ?: return
         val client = TuyaCloudClient(creds)
         syncJob = viewModelScope.launch {
@@ -114,6 +118,28 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 _state.update {
                     it.copy(syncing = false, progress = null, message = e.message ?: e.javaClass.simpleName)
                 }
+            }
+            reload()
+        }
+    }
+
+    /** Xiaomi: истории в облаке нет — текущее значение (Wi-Fi или облако) в историю и показать накопленное. */
+    private fun refreshXiaomi(device: SensorDevice) {
+        syncJob = viewModelScope.launch {
+            _state.update { it.copy(syncing = true, progress = "Текущие показания…") }
+            try {
+                val ctx = getApplication<android.app.Application>()
+                val d = app.tuyacontrol.xiaomi.XiaomiHub(ctx).readOne(device.id, app.tuyacontrol.ControlMode.AUTO)
+                    ?: throw IllegalStateException("устройство не найдено")
+                if (!d.online) throw IllegalStateException("нет связи ни по Wi-Fi, ни через облако")
+                app.tuyacontrol.xiaomi.XiaomiHistory.write(ctx, d)
+                val current = device.channels.mapNotNull { ch ->
+                    (d.status[ch.code] as? Number)?.toDouble()?.let { ch.code to BigDecimal.valueOf(it).movePointLeft(ch.scale).toDouble() }
+                }.toMap()
+                _state.update { it.copy(current = current, currentTime = System.currentTimeMillis(), syncing = false, progress = null) }
+            } catch (e: Exception) {
+                AppLog.e("${device.name}: Xiaomi не ответил", e)
+                _state.update { it.copy(syncing = false, progress = null, message = e.message ?: e.javaClass.simpleName) }
             }
             reload()
         }

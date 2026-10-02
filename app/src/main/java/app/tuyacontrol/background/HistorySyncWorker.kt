@@ -80,7 +80,7 @@ class HistorySyncWorker(context: Context, params: WorkerParameters) : CoroutineW
                 .onFailure { errors += "${d.name}: ${it.message ?: it.javaClass.simpleName}" }
             delay(3_000)
         }
-        for (d in sensors.filterNot { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it.id) }) {
+        for (d in sensors.filterNot { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it.id) || app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it.id) }) {
             runCatching { sensorSync.sync(client, d) {} }
                 .onFailure { errors += "${d.name}: ${it.message ?: it.javaClass.simpleName}" }
             delay(3_000)

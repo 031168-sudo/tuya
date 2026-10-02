@@ -31,9 +31,9 @@ class XiaomiHub(context: Context) {
     val connected: Boolean get() = cloud.connected
 
     /** Обновить показания всех устройств. reloadList — заново взять список из облака. */
-    suspend fun poll(mode: ControlMode, reloadList: Boolean): List<DeviceUi> {
+    suspend fun poll(mode: ControlMode, reloadList: Boolean, allowListRefresh: Boolean = true): List<DeviceUi> {
         var inventory = store.devices
-        val stale = System.currentTimeMillis() - listAt > LIST_TTL_MS
+        val stale = allowListRefresh && System.currentTimeMillis() - listAt > LIST_TTL_MS
         if (cloud.connected && mode != ControlMode.LOCAL && (inventory.isEmpty() || reloadList || stale)) {
             val fresh = runCatching { cloud.devices() }
                 .onFailure { AppLog.e("Xiaomi: список устройств не обновлён", it) }

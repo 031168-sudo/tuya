@@ -96,7 +96,6 @@ data class DeviceUi(
                 SensorChannel(code, spec[code]?.scale ?: 0, spec[code]?.unit.orEmpty())
             }
             // Датчик Siren Temperature and Humidity не пишет журнал в облако — истории у него нет
-            if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id)) return null
             if (NO_HISTORY_PRODUCTS.any { productName.contains(it, ignoreCase = true) }) return null
             val temperature = channel(SensorDevice.TEMPERATURE_CODES)
             val humidity = channel(SensorDevice.HUMIDITY_CODES)
@@ -1074,6 +1073,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         _state.update {
                             it.copy(xiaomiBusy = false, xiaomiCaptcha = null, xiaomiVerifyTo = null, xiaomiBrowser = null, xiaomiLogin = xiaomi.store.login ?: "")
                         }
+                        app.tuyacontrol.xiaomi.XiaomiHistory.schedule(getApplication<android.app.Application>())
                         refreshXiaomi(silent = false)
                     }
                 }
@@ -1098,6 +1098,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun xiaomiSignOut() {
         xiaomiJob?.cancel()
         xiaomi.signOut()
+        app.tuyacontrol.xiaomi.XiaomiHistory.cancel(getApplication<android.app.Application>())
         xiaomiDevices = emptyList()
         _state.update { it.copy(xiaomiLogin = null, xiaomiCount = 0, xiaomiError = null, xiaomiCaptcha = null, xiaomiVerifyTo = null) }
         publish()
