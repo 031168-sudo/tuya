@@ -231,6 +231,7 @@ private fun App(
             onDeploy = heatingViewModel::deploy,
             onZoneControl = heatingViewModel::setZoneControl,
             onTestStudio = heatingViewModel::testStudioTimer,
+            onLearn = heatingViewModel::learnNow,
             onSaveZone = heatingViewModel::saveZone,
             onDeleteZone = heatingViewModel::deleteZone,
             onLocation = heatingViewModel::setLocation,

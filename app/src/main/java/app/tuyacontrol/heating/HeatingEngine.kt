@@ -357,6 +357,35 @@ class HeatingEngine(context: Context) {
      * Значение = (дни недели битами << 16) | минуты от полуночи; 127 — каждый день; -1 — пусто.
      * Пустой список — все 20 ячеек очищаются.
      */
+    /**
+     * Подобрать параметры всех зон по истории. Где подобрано и включено «подбирать» — параметры зоны
+     * обновляются (за раз не больше чем вдвое, чтобы один странный день не ломал план).
+     */
+    suspend fun learnAll(client: TuyaCloudClient?): String {
+        val s = store.load()
+        val learner = ZoneLearner(app)
+        val relays = store.relayDevices
+        val results = store.learned().toMutableMap()
+        var zones = s.zones
+        val lines = mutableListOf<String>()
+        for (z in s.zones) {
+            if (z.deviceId == null) continue
+            var info = runCatching { learner.learn(z, s, client, z.deviceId in relays) }
+                .getOrElse { LearnInfo(System.currentTimeMillis(), null, null, 0, 0, 0, it.message ?: it.javaClass.simpleName) }
+            if (z.autoTune && (info.heatRate != null || info.lossRate != null)) {
+                fun limit(new: Double?, old: Double) = new?.coerceIn(old / 2, old * 2) ?: old
+                val updated = z.copy(heatRate = limit(info.heatRate, z.heatRate), lossRate = limit(info.lossRate, z.lossRate))
+                zones = zones.map { if (it.id == z.id) updated else it }
+                info = info.copy(applied = true)
+            }
+            results[z.id] = info
+            lines += "${z.name}: " + (info.problem ?: "нагрев %.1f°/ч, остывание %.1f%%/ч".format(info.heatRate, (info.lossRate ?: 0.0) * 100))
+        }
+        if (zones != s.zones) store.save(s.copy(zones = zones))
+        store.saveLearned(results)
+        return lines.joinToString("\n").ifEmpty { "Нет зон" }
+    }
+
     /** Снять все таймеры модуля конвектора Rubetek (с проверкой; исключение — если модуль не подтвердил). */
     suspend fun clearRubetekTimers(id: String) = writeRubetekTimers(RubetekClient(RubetekStore(app)), id, emptyList())
 

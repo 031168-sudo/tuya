@@ -89,6 +89,10 @@ class HistorySyncWorker(context: Context, params: WorkerParameters) : CoroutineW
         // Автопилот отопления: после загрузки истории (в ней и уличный датчик для поправки прогноза)
         // пересчитать план по свежему прогнозу и перезаписать расписание
         val heating = HeatingEngine(ctx)
+        // Сначала подобрать параметры зон по свежей истории — план посчитается уже по ним
+        runCatching { heating.learnAll(TuyaCloudClient(creds)) }
+            .onSuccess { AppLog.i("Фон: подбор параметров зон\n$it") }
+            .onFailure { AppLog.e("Фон: подбор параметров зон не удался", it) }
         val heatingSettings = heating.store.load()
         if (heatingSettings.zones.any { it.control }) {
             runCatching { heating.deploy(TuyaCloudClient(creds), heatingSettings) }

@@ -79,6 +79,10 @@ data class HeatingUiState(
     val message: String? = null,
     /** Что приложение записало и проверило в модулях Rubetek: id -> (минуты, вкл?). */
     val deployedTimers: Map<String, List<Pair<Int, Boolean>>> = emptyMap(),
+    /** Итоги подбора параметров зон по истории: id зоны -> итог. */
+    val learned: Map<String, app.tuyacontrol.heating.LearnInfo> = emptyMap(),
+    /** Идёт подбор параметров. */
+    val learning: Boolean = false,
     /** Что приложение записало и проверило в программах термостатов: id -> base64. */
     val deployedPrograms: Map<String, String> = emptyMap(),
 )
@@ -95,6 +99,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             deployResult = engine.store.deployResult,
             deployedTimers = engine.store.deployedTimers(),
             deployedPrograms = engine.store.deployedPrograms(),
+            learned = engine.store.learned(),
         )
     )
     val state: StateFlow<HeatingUiState> = _state.asStateFlow()
@@ -263,11 +268,28 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 deployResult = engine.store.deployResult,
                 deployedTimers = engine.store.deployedTimers(),
                 deployedPrograms = engine.store.deployedPrograms(),
+                learned = engine.store.learned(),
             )
         }
         reloadModuleTimers(force = true)
         reloadPrograms(force = true)
         recompute()
+    }
+
+    /** Подобрать параметры всех зон по истории сейчас (обычно это делается каждую ночь). */
+    fun learnNow() {
+        if (_state.value.learning) return
+        val creds = credentials.load()
+        viewModelScope.launch {
+            _state.update { it.copy(learning = true) }
+            val report = try {
+                engine.learnAll(creds?.let { TuyaCloudClient(it) })
+            } catch (e: Exception) {
+                "Ошибка: ${e.message ?: e.javaClass.simpleName}"
+            }
+            _state.update { it.copy(learning = false, message = "Подбор по истории:\n$report") }
+            reloadSettings()
+        }
     }
 
     private var timersReadAt = 0L

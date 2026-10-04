@@ -121,6 +121,7 @@ fun HeatingScreen(
     onZoneControl: (String, Boolean) -> Unit,
     onTestStudio: (String) -> Unit,
     onSaveZone: (HeatZone) -> Unit,
+    onLearn: () -> Unit = {},
     onDeleteZone: (String) -> Unit,
     onLocation: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
     onAddRubetek: () -> Unit,
@@ -168,6 +169,9 @@ fun HeatingScreen(
                         busy = state.deploying,
                         deployed = plan.zone.deviceId?.let { state.deployedTimers[it] },
                         deployedProgram = plan.zone.deviceId?.let { state.deployedPrograms[it] },
+                        learned = state.learned[plan.zone.id],
+                        learning = state.learning,
+                        onLearn = onLearn,
                     )
                 }
                 item {
@@ -303,6 +307,9 @@ private fun ZoneCard(
     busy: Boolean,
     deployed: List<Pair<Int, Boolean>>? = null,
     deployedProgram: String? = null,
+    learned: app.tuyacontrol.heating.LearnInfo? = null,
+    learning: Boolean = false,
+    onLearn: () -> Unit = {},
 ) {
     val zone = plan.zone
     Card {
@@ -379,6 +386,7 @@ private fun ZoneCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             PlanChart(plan, prices)
+            LearnLine(zone, learned, learning, onLearn)
             if (plan.shortSteps > 0) {
                 Text(
                     "Мощности не хватает, чтобы держать комфорт ≈ ${num(plan.shortSteps / 4.0)} ч в сутки — " +
@@ -551,6 +559,30 @@ private class WindowDraft(from: String, to: String, temp: String) {
 
 private fun parse(s: String): Double? = s.trim().replace(',', '.').toDoubleOrNull()
 private fun fieldText(d: Double) = if (d % 1.0 == 0.0) d.toLong().toString() else d.toString().replace('.', ',')
+
+/** Подбор параметров по истории: что подобрано и применено, или почему ещё нет. */
+@Composable
+private fun LearnLine(zone: HeatZone, info: app.tuyacontrol.heating.LearnInfo?, learning: Boolean, onLearn: () -> Unit) {
+    val now = "нагрев ${num(zone.heatRate)}°/ч, остывание ${num(zone.lossRate * 100)}%/ч"
+    val date = info?.let { SimpleDateFormat("d MMM HH:mm", Locale("ru")).format(Date(it.at)) }
+    val text = when {
+        info == null -> "Параметры ($now) типовые — подберутся по истории этой ночью"
+        info.problem == null && info.applied -> "Параметры по истории за ${info.days} дн.: $now ($date)"
+        info.problem == null -> "По истории за ${info.days} дн.: нагрев ${num(info.heatRate ?: 0.0)}°/ч, остывание " +
+            "${num((info.lossRate ?: 0.0) * 100)}%/ч — не применено (подбор выключен в настройках зоны). Сейчас: $now"
+        info.applied -> "По истории ($date) подобрано частично: ${info.problem}. Сейчас: $now"
+        else -> "По истории пока не подобрать ($date): ${info.problem}. Сейчас: $now"
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (info?.problem == null && info != null) Color(0xFF43A047) else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onLearn, enabled = !learning) { Text(if (learning) "Подбираю…" else "Подобрать") }
+    }
+}
 
 /** Ряд периодов программы, окрашенных по тарифу. */
 @OptIn(ExperimentalLayoutApi::class)
@@ -757,6 +789,7 @@ private fun ZoneDialog(
     var peakHeat by remember { mutableStateOf(initial.peakHeat) }
     var hyst by remember { mutableStateOf(fieldText(initial.hyst)) }
     var storeHeat by remember { mutableStateOf(initial.storeHeat ?: initial.isFloor) }
+    var autoTune by remember { mutableStateOf(initial.autoTune) }
     var advanced by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
 
@@ -781,6 +814,7 @@ private fun ZoneDialog(
             peakHeat = peakHeat,
             hysteresis = (parse(hyst) ?: return null).coerceIn(-3.0, 3.0),
             storeHeat = storeHeat,
+            autoTune = autoTune,
         )
     }
     val result = build()
@@ -905,6 +939,16 @@ private fun ZoneDialog(
                 val what = if (initial.isFloor) "пола" else "обогревателя"
                 TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "Скрыть параметры $what" else "Параметры $what…") }
                 if (advanced) {
+                    Row(Modifier.fillMaxWidth().clickable { autoTune = !autoTune }, verticalAlignment = Alignment.CenterVertically) {
+                        Text("Подбирать по истории", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        Switch(checked = autoTune, onCheckedChange = { autoTune = it })
+                    }
+                    Text(
+                        "Каждую ночь скорость нагрева и остывания подбираются по последней неделе: как менялась " +
+                            "температура, когда прибор грел и когда нет, и сколько было на улице. Выключите, если хотите задать вручную.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     NumberField(power, { power = it }, "Мощность, кВт", Modifier.fillMaxWidth())
                     NumberField(heat, { heat = it }, "Нагрев, °C в час при полной мощности", Modifier.fillMaxWidth())
                     NumberField(loss, { loss = it }, "Остывание, % разницы с улицей в час", Modifier.fillMaxWidth())

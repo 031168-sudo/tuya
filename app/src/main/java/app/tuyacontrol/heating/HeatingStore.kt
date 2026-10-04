@@ -72,6 +72,36 @@ class HeatingStore(context: Context) {
         prefs.edit().putString("programs_deployed", o.toString()).apply()
     }
 
+    /** Итоги подбора параметров по истории: id зоны -> итог. */
+    fun learned(): Map<String, LearnInfo> = try {
+        val o = JSONObject(prefs.getString("learned", "{}")!!)
+        o.keys().asSequence().associateWith { k ->
+            val j = o.getJSONObject(k)
+            LearnInfo(
+                at = j.optLong("at"),
+                heatRate = if (j.isNull("heat")) null else j.optDouble("heat"),
+                lossRate = if (j.isNull("loss")) null else j.optDouble("loss"),
+                coolHours = j.optInt("cool"),
+                heatHours = j.optInt("hot"),
+                days = j.optInt("days"),
+                problem = if (j.isNull("problem")) null else j.optString("problem"),
+                applied = j.optBoolean("applied"),
+            )
+        }
+    } catch (e: Exception) {
+        emptyMap()
+    }
+
+    fun saveLearned(m: Map<String, LearnInfo>) {
+        val o = JSONObject()
+        m.forEach { (k, v) ->
+            o.put(k, JSONObject().put("at", v.at).put("heat", v.heatRate ?: JSONObject.NULL).put("loss", v.lossRate ?: JSONObject.NULL)
+                .put("cool", v.coolHours).put("hot", v.heatHours).put("days", v.days)
+                .put("problem", v.problem ?: JSONObject.NULL).put("applied", v.applied))
+        }
+        prefs.edit().putString("learned", o.toString()).apply()
+    }
+
     /** Незавершённый тест таймера Rubetek: «id|слот» — при следующем запуске слот очищается. */
     var rubetekTest: String?
         get() = prefs.getString("rubetek_test", null)
@@ -117,6 +147,7 @@ class HeatingStore(context: Context) {
                     .put("peak_heat", z.peakHeat)
                     .put("hyst", z.hysteresis ?: JSONObject.NULL)
                     .put("store_heat", z.storeHeat ?: JSONObject.NULL)
+                    .put("auto_tune", z.autoTune)
                     .put("windows", JSONArray().apply {
                         z.windows.forEach { w ->
                             put(JSONObject().put("from", w.from).put("to", w.to).put("temp", w.temp))
@@ -150,6 +181,7 @@ class HeatingStore(context: Context) {
                 peakHeat = z.optBoolean("peak_heat", false),
                 hysteresis = if (z.isNull("hyst") || !z.has("hyst")) null else z.optDouble("hyst"),
                 storeHeat = if (z.isNull("store_heat") || !z.has("store_heat")) null else z.optBoolean("store_heat"),
+                autoTune = z.optBoolean("auto_tune", true),
             )
         }
         return HeatingSettings(

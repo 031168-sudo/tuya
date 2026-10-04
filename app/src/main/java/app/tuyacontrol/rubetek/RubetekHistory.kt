@@ -36,7 +36,9 @@ object RubetekHistory {
             last[d.id] = now
             // Минуты округляем: точки разных запусков ложатся ровно
             val time = now / 60_000 * 60_000
-            runCatching { db.insert(d.id, listOf(Reading("temp_current", time, t))) }
+            // Вкл/выкл — для подбора параметров зоны (у Rubetek это и есть «греет»)
+            val on = (d.status["switch"] as? Boolean)?.let { Reading("heating", time, if (it) 1.0 else 0.0) }
+            runCatching { db.insert(d.id, listOfNotNull(Reading("temp_current", time, t), on)) }
                 .onFailure { AppLog.e("Rubetek: точка истории не записана", it) }
         }
     }
