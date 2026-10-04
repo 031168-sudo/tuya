@@ -107,7 +107,8 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 }.toMap()
                 _state.update { it.copy(current = current, currentTime = System.currentTimeMillis()) }
                 // Текущее значение — тоже точка истории (у некоторых устройств облако журнал не пишет)
-                withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val off = device.onlyWhenOn && device.switchCode?.let { raw[it] as? Boolean } == false
+                if (!off) withContext(kotlinx.coroutines.Dispatchers.IO) {
                     runCatching { db.insert(device.id, app.tuyacontrol.sensor.LocalHistory.readingsOf(device, raw, System.currentTimeMillis())) }
                 }
 

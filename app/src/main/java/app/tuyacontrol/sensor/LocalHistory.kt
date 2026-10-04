@@ -31,9 +31,14 @@ object LocalHistory {
             val at = d.lastDataTime.takeIf { it > 0 } ?: continue
             if (now - at > MAX_AGE_MS) continue
             if (now - (last[d.id] ?: 0L) < MIN_GAP_MS) continue
-            // «Греет / не греет» тоже копим: по нему подбираются параметры зон отопления
-            val readings = readingsOf(sensor, d.status, at) +
-                listOfNotNull(d.heatingNow?.let { Reading("heating", at / 60_000 * 60_000, if (it) 1.0 else 0.0) })
+            // «Греет / не греет» и вкл/выкл тоже копим: по ним подбираются параметры зон и чистится график
+            val t = at / 60_000 * 60_000
+            val off = d.tempOnlyWhenOn && d.mainSwitchOn == false
+            val readings = (if (off) emptyList() else readingsOf(sensor, d.status, at)) +
+                listOfNotNull(
+                    d.heatingNow?.let { Reading("heating", t, if (it) 1.0 else 0.0) },
+                    d.mainSwitchOn?.let { Reading("power", t, if (it) 1.0 else 0.0) },
+                )
             if (readings.isEmpty()) continue
             last[d.id] = now
             runCatching { db.insert(d.id, readings) }.onFailure { AppLog.e("${d.name}: точка истории не записана", it) }
@@ -48,7 +53,13 @@ object LocalHistory {
                 val raw = if (s.thingModel) client.getShadowProperties(s.id) else
                     runCatching { client.getStatus(s.id) }.getOrNull()?.takeIf { it.isNotEmpty() } ?: client.getShadowProperties(s.id)
                 val now = System.currentTimeMillis()
-                val readings = readingsOf(s, raw, now) + listOfNotNull(heatingOf(raw)?.let { Reading("heating", now / 60_000 * 60_000, if (it) 1.0 else 0.0) })
+                val t = now / 60_000 * 60_000
+                val power = s.switchCode?.let { raw[it] as? Boolean }
+                val off = s.onlyWhenOn && power == false
+                val readings = (if (off) emptyList() else readingsOf(s, raw, now)) + listOfNotNull(
+                    heatingOf(raw)?.let { Reading("heating", t, if (it) 1.0 else 0.0) },
+                    power?.let { Reading("power", t, if (it) 1.0 else 0.0) },
+                )
                 db.insert(s.id, readings)
             } catch (e: Exception) {
                 AppLog.e("${s.name}: фоновый замер не удался", e)

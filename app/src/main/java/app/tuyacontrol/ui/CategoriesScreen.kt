@@ -319,6 +319,8 @@ fun DeviceSettingsDialog(
 ) {
     var icon by remember { mutableStateOf(pref?.icon ?: device.defaultIcon) }
     var categoryId by remember { mutableStateOf(pref?.categoryId?.takeIf { id -> categories.any { it.id == id } }) }
+    var tempWhenOn by remember { mutableStateOf(pref?.tempWhenOn ?: device.defaultTempOnlyWhenOn) }
+    val askTemp = app.tuyacontrol.sensor.SensorDevice.TEMPERATURE_CODES.any { it in device.status } && device.mainSwitchOn != null
     val color = categories.firstOrNull { it.id == categoryId }?.color
 
     AlertDialog(
@@ -351,6 +353,19 @@ fun DeviceSettingsDialog(
                         }
                     }
                 }
+                if (askTemp) {
+                    Text("Текущая температура верна", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        FilterChip(selected = !tempWhenOn, onClick = { tempWhenOn = false }, label = { Text("Всегда") })
+                        FilterChip(selected = tempWhenOn, onClick = { tempWhenOn = true }, label = { Text("Только когда включён") })
+                    }
+                    Text(
+                        if (tempWhenOn) "Пока прибор выключен, температура на графике не пишется, а в карточке и на карте показывается как устаревшая"
+                        else "Температура пишется и показывается всегда, даже у выключенного прибора",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text("Иконка", style = MaterialTheme.typography.labelMedium)
                 IconPicker(selected = icon, accent = Pastel.accent(color), onSelect = { icon = it })
             }
@@ -358,7 +373,13 @@ fun DeviceSettingsDialog(
         confirmButton = {
             TextButton(onClick = {
                 // Иконку по умолчанию не сохраняем — она подберётся автоматически
-                onSave(DevicePref(icon = icon.takeIf { it != device.defaultIcon }, categoryId = categoryId))
+                onSave(
+                    DevicePref(
+                        icon = icon.takeIf { it != device.defaultIcon },
+                        categoryId = categoryId,
+                        tempWhenOn = tempWhenOn.takeIf { askTemp && it != device.defaultTempOnlyWhenOn },
+                    ),
+                )
             }) { Text("Сохранить") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },

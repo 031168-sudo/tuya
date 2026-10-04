@@ -92,4 +92,40 @@ class SensorDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
         "SELECT MIN(time) FROM readings WHERE device_id = ?",
         arrayOf(deviceId),
     ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null }
+
+    /**
+     * Удалить показания [codes], снятые, пока прибор был выключен (по точкам «power»: 1 — вкл, 0 — выкл),
+     * начиная с [from]. Точку в момент выключения оставляем (в ней ещё верное значение).
+     */
+    fun purgeWhileOff(deviceId: String, codes: Collection<String>, from: Long): Int {
+        if (codes.isEmpty()) return 0
+        val power = readableDatabase.rawQuery(
+            "SELECT time, value FROM readings WHERE device_id = ? AND code = 'power' AND time >= ? ORDER BY time",
+            arrayOf(deviceId, (from - 24 * 3600_000L).toString()),
+        ).use { c ->
+            val l = mutableListOf<Pair<Long, Boolean>>()
+            while (c.moveToNext()) l += c.getLong(0) to (c.getDouble(1) >= 0.5)
+            l
+        }
+        if (power.isEmpty()) return 0
+        val db = writableDatabase
+        val inList = codes.joinToString(",") { "?" }
+        var removed = 0
+        var offAt: Long? = null
+        fun purge(a: Long, b: Long) {
+            val start = maxOf(a + 60_000L, from)
+            if (b <= start) return
+            removed += db.delete(
+                "readings",
+                "device_id = ? AND code IN ($inList) AND time > ? AND time < ?",
+                arrayOf(deviceId) + codes.toTypedArray() + arrayOf(start.toString(), b.toString()),
+            )
+        }
+        for ((t, on) in power) {
+            if (!on && offAt == null) offAt = t
+            if (on && offAt != null) { purge(offAt!!, t); offAt = null }
+        }
+        offAt?.let { purge(it, Long.MAX_VALUE) }
+        return removed
+    }
 }

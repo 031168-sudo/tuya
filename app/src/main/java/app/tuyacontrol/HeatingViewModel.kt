@@ -33,6 +33,8 @@ data class Thermostat(
     val step: Double,
     /** Греет сейчас (null — устройство не сообщает). */
     val heating: Boolean? = null,
+    /** Показанная температура устарела (прибор выключен, а верна она только у включённого, или не в сети). */
+    val tempStale: Boolean = false,
     /** Включён ли прибор (выключатель; у батареи в ванной — пороги «вкл»). null — неизвестно. */
     val powerOn: Boolean? = null,
     /** Таймеры, которые сейчас стоят в модуле конвектора Rubetek (null — неизвестно / не Rubetek). */
@@ -58,6 +60,9 @@ data class Thermostat(
     }
 }
 
+/** Прибор, который может мерить температуру в зоне: текущее значение и устарело ли оно. */
+data class TempSource(val id: String, val name: String, val current: Double?, val stale: Boolean)
+
 data class HeatingUiState(
     val settings: HeatingSettings = HeatingSettings.defaults(),
     val thermostats: List<Thermostat> = emptyList(),
@@ -79,6 +84,8 @@ data class HeatingUiState(
     val message: String? = null,
     /** Что приложение записало и проверило в модулях Rubetek: id -> (минуты, вкл?). */
     val deployedTimers: Map<String, List<Pair<Int, Boolean>>> = emptyMap(),
+    /** Все приборы с температурой — для выбора «прибора для измерения» в зоне. */
+    val tempSources: List<TempSource> = emptyList(),
     /** Итоги подбора параметров зон по истории: id зоны -> итог. */
     val learned: Map<String, app.tuyacontrol.heating.LearnInfo> = emptyMap(),
     /** Идёт подбор параметров. */
@@ -184,6 +191,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 setpoint = (d.status[code] as? Number)?.toDouble()?.let { it / pow10(set?.scale ?: 0) },
                 step = HeatingEngine.stepOf(set),
                 heating = d.heatingNow,
+                tempStale = d.tempStale,
                 powerOn = if (!d.online) null else d.heatingPresetOn
                     ?: DeviceUi.MAIN_SWITCHES.firstNotNullOfOrNull { d.status[it] as? Boolean },
                 moduleTimers = d.moduleTimers,
@@ -247,6 +255,11 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         _state.update {
             it.copy(
                 thermostats = list,
+                tempSources = devices.mapNotNull { d ->
+                    val ch = d.sensorDevice?.temperature ?: return@mapNotNull null
+                    val v = (d.status[ch.code] as? Number)?.toDouble()?.let { it / pow10(ch.scale) }
+                    TempSource(d.id, d.name, v, d.tempStale)
+                }.sortedBy { it.name.lowercase() },
                 settings = settings,
                 outdoorSensors = sensors,
                 outdoorNow = outdoorNow?.takeIf { outdoorDevice?.online == true },

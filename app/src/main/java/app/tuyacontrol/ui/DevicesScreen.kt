@@ -314,6 +314,12 @@ private fun DeviceCard(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
+                        // Датчик с выключателем, температура верна только у включённого
+                        device.tempOnlyWhenOn && device.mainSwitchOn == false && !device.switchedOff -> Text(
+                            "Выключен — температура не обновляется, $since",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = SwitchedOffColor,
+                        )
                         // Выключено — показания могут не обновляться
                         device.switchedOff -> Text(
                             "Выключено, $since",

@@ -170,6 +170,7 @@ fun HeatingScreen(
                         deployed = plan.zone.deviceId?.let { state.deployedTimers[it] },
                         deployedProgram = plan.zone.deviceId?.let { state.deployedPrograms[it] },
                         learned = state.learned[plan.zone.id],
+                        measure = plan.zone.tempDeviceId?.let { id -> state.tempSources.firstOrNull { it.id == id } },
                         learning = state.learning,
                         onLearn = onLearn,
                     )
@@ -210,6 +211,7 @@ fun HeatingScreen(
         ZoneDialog(
             initial = z,
             thermostats = state.thermostats,
+            tempSources = state.tempSources,
             isNew = state.settings.zones.none { it.id == z.id },
             onDismiss = { editing = null },
             onSave = { onSaveZone(it); editing = null },
@@ -308,6 +310,7 @@ private fun ZoneCard(
     deployed: List<Pair<Int, Boolean>>? = null,
     deployedProgram: String? = null,
     learned: app.tuyacontrol.heating.LearnInfo? = null,
+    measure: app.tuyacontrol.TempSource? = null,
     learning: Boolean = false,
     onLearn: () -> Unit = {},
 ) {
@@ -332,7 +335,13 @@ private fun ZoneCard(
                             thermostat == null -> "Термостат не выбран"
                             else -> buildString {
                                 append(thermostat.name)
-                                thermostat.current?.let { append(" · сейчас ${deg(it)}") }
+                                if (measure != null) {
+                                    measure.current?.let { append(" · сейчас ${deg(Math.round(it * 10) / 10.0)} по «${measure.name}»") }
+                                    if (measure.stale) append(" (устарело)")
+                                } else {
+                                    thermostat.current?.let { append(" · сейчас ${deg(it)}") }
+                                    if (thermostat.tempStale && thermostat.online) append(" (устарело — прибор выключен)")
+                                }
                                 thermostat.setpoint?.let { append(", уставка ${deg(it)}") }
                                 if (!thermostat.online) append(" · не в сети")
                             }
@@ -768,6 +777,7 @@ private fun ModuleTimersBlock(
 private fun ZoneDialog(
     initial: HeatZone,
     thermostats: List<Thermostat>,
+    tempSources: List<app.tuyacontrol.TempSource> = emptyList(),
     isNew: Boolean,
     onDismiss: () -> Unit,
     onSave: (HeatZone) -> Unit,
@@ -775,6 +785,7 @@ private fun ZoneDialog(
 ) {
     var name by remember { mutableStateOf(initial.name) }
     var device by remember { mutableStateOf(initial.deviceId) }
+    var tempDevice by remember { mutableStateOf(initial.tempDeviceId) }
     val windows = remember {
         mutableStateListOf<WindowDraft>().apply {
             initial.windows.forEach { add(WindowDraft(it.from.toString(), it.to.toString(), fieldText(it.temp))) }
@@ -815,6 +826,7 @@ private fun ZoneDialog(
             hysteresis = (parse(hyst) ?: return null).coerceIn(-3.0, 3.0),
             storeHeat = storeHeat,
             autoTune = autoTune,
+            tempDeviceId = tempDevice?.takeIf { it != device },
         )
     }
     val result = build()
@@ -848,6 +860,27 @@ private fun ZoneDialog(
                     ) {
                         RadioButton(selected = device == t.id, onClick = { device = t.id })
                         Text(t.name, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+
+                Text("Измерение температуры", style = MaterialTheme.typography.labelMedium)
+                Text(
+                    "Отдельный прибор, по которому показывается температура в зоне и подбираются параметры. " +
+                        "Нагревом он не управляет: термостат держит уставку по своему датчику.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(Modifier.fillMaxWidth().clickable { tempDevice = null }, verticalAlignment = Alignment.CenterVertically) {
+                    RadioButton(selected = tempDevice == null || tempDevice == device, onClick = { tempDevice = null })
+                    Text("Как у нагревательного прибора", style = MaterialTheme.typography.bodyMedium)
+                }
+                tempSources.filter { it.id != device }.forEach { t ->
+                    Row(Modifier.fillMaxWidth().clickable { tempDevice = t.id }, verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = tempDevice == t.id, onClick = { tempDevice = t.id })
+                        Text(
+                            t.name + (t.current?.let { " · ${deg(Math.round(it * 10) / 10.0)}" } ?: ""),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
                     }
                 }
 

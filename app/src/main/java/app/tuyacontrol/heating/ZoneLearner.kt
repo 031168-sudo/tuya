@@ -30,6 +30,9 @@ data class LearnInfo(
 class ZoneLearner(context: Context) {
 
     private val db = SensorDb(context.applicationContext)
+    /** Код температуры по устройству (у датчиков va_temperature и т.п.). */
+    private val tempCodes: Map<String, String> = app.tuyacontrol.background.SyncTargets(context.applicationContext).sensors()
+        .mapNotNull { s -> s.temperature?.let { s.id to it.code } }.toMap()
 
     suspend fun learn(zone: HeatZone, s: HeatingSettings, client: TuyaCloudClient?, relay: Boolean): LearnInfo = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
@@ -38,7 +41,10 @@ class ZoneLearner(context: Context) {
         val oid = s.outdoorSensorId?.takeIf { it != "-" } ?: return@withContext fail("не выбран уличный датчик")
         val ocode = s.outdoorCode ?: return@withContext fail("не выбран уличный датчик")
         val from = now - 7 * DAY
-        val temps = db.series(id, "temp_current", from, now, HOUR).associate { it.time to it.avg }
+        // Температура — с прибора для измерения, если он выбран; «греет» — всегда с нагревательного
+        val tid = zone.tempDeviceId ?: id
+        val tcode = tempCodes[tid] ?: "temp_current"
+        val temps = db.series(tid, tcode, from, now, HOUR).associate { it.time to it.avg }
         if (temps.size < 24) return@withContext fail("мало истории температуры (${temps.size} ч)")
         val outdoor = db.series(oid, ocode, from, now, HOUR).associate { it.time to it.avg }
         if (outdoor.size < 24) return@withContext fail("мало истории уличного датчика (${outdoor.size} ч)")

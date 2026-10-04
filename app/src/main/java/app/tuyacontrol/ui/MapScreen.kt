@@ -93,7 +93,7 @@ fun deviceTemperature(d: DeviceUi): RoomTemp? {
     val raw = d.status[code]
     val number = (raw as? Number)?.toDouble() ?: raw?.toString()?.toDoubleOrNull()
     val scale = d.spec[code]?.scale ?: 0
-    return RoomTemp(number?.let { it / 10.0.pow(scale) }, stale = !d.online || d.switchedOff)
+    return RoomTemp(number?.let { it / 10.0.pow(scale) }, stale = d.tempStale)
 }
 
 /** Цветовая шкала температур (та же, что T_STOPS в gen_plans.py.txt). */

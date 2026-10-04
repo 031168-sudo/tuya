@@ -23,6 +23,10 @@ data class SensorDevice(
     val thingModel: Boolean,
     val temperature: SensorChannel?,
     val humidity: SensorChannel?,
+    /** Показания верны только когда прибор включён: пока выключен — точки не пишем, ложные удаляем. */
+    val onlyWhenOn: Boolean = false,
+    /** Код главного выключателя (switch / switch_1), если есть. */
+    val switchCode: String? = null,
 ) {
     val channels: List<SensorChannel> get() = listOfNotNull(temperature, humidity)
 
@@ -49,7 +53,9 @@ class SensorSync(private val db: SensorDb) {
     private suspend fun syncLocked(client: TuyaCloudClient, device: SensorDevice, progress: (String) -> Unit) {
         val channels = device.channels.associateBy { it.code }
         if (channels.isEmpty()) return
-        val codes = channels.keys.joinToString(",")
+        // Приборам «верно только включённым» качаем и выключатель — по нему убираем ложные точки
+        val switchCode = device.switchCode?.takeIf { device.onlyWhenOn }
+        val codes = (channels.keys + listOfNotNull(switchCode)).joinToString(",")
         val now = System.currentTimeMillis()
         val windowStart = now - 7L * 24 * 3600 * 1000 + 60_000
         val saved = withContext(Dispatchers.IO) { db.cursor(device.id) }
@@ -65,8 +71,11 @@ class SensorSync(private val db: SensorDb) {
                 progress("${device.name}: журнал с $label, стр. $n")
             }
             val readings = logs.mapNotNull { e ->
-                val ch = channels[e.code] ?: return@mapNotNull null
                 if (e.time !in chunkStart until chunkEnd) return@mapNotNull null
+                if (e.code == switchCode) {
+                    return@mapNotNull Reading("power", e.time, if (e.value.equals("true", true)) 1.0 else 0.0)
+                }
+                val ch = channels[e.code] ?: return@mapNotNull null
                 val raw = e.value.toDoubleOrNull() ?: return@mapNotNull null
                 Reading(e.code, e.time, BigDecimal.valueOf(raw).movePointLeft(ch.scale).toDouble())
             }
@@ -78,6 +87,10 @@ class SensorSync(private val db: SensorDb) {
             chunkStart = chunkEnd
         }
         AppLog.i("${device.name}: загружено показаний датчика: $total")
+        if (device.onlyWhenOn) {
+            val removed = withContext(Dispatchers.IO) { db.purgeWhileOff(device.id, channels.keys, windowStart) }
+            if (removed > 0) AppLog.i("${device.name}: убрано показаний, снятых при выключенном приборе: $removed")
+        }
     }
 
     private suspend fun fetch(

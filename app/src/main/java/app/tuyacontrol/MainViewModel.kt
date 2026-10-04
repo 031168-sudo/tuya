@@ -63,7 +63,22 @@ data class DeviceUi(
     val moduleTimers: List<app.tuyacontrol.rubetek.ModuleTimer>? = null,
     /** Облачные таймеры Tuya («Расписание» Smart Life); null — не загружены (показываются по запросу). */
     val cloudTimers: List<app.tuyacontrol.cloud.CloudTimer>? = null,
+    /** Текущая температура верна только когда прибор включён (из настроек устройства или по типу). */
+    val tempOnlyWhenOn: Boolean = false,
 ) {
+    /** Главный выключатель прибора: true/false, null — выключателя нет. */
+    val mainSwitchOn: Boolean?
+        get() = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
+
+    /** По умолчанию: у приборов с выключателем (полы, Xiaomi) температура верна только когда включены. */
+    val defaultTempOnlyWhenOn: Boolean
+        get() = !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) && !switchIsRelay && heatingPresetOn == null &&
+            mainSwitchOn != null
+
+    /** Показанная температура устарела: нет связи или прибор выключен, а верна она только у включённого. */
+    val tempStale: Boolean
+        get() = !online || (tempOnlyWhenOn && mainSwitchOn == false)
+
     /** Можно показать расписание облака: обычный выключатель/розетка Tuya. */
     val hasCloudSchedule: Boolean
         get() = !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) && !app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id) &&
@@ -100,7 +115,11 @@ data class DeviceUi(
             val temperature = channel(SensorDevice.TEMPERATURE_CODES)
             val humidity = channel(SensorDevice.HUMIDITY_CODES)
             if (temperature == null && humidity == null) return null
-            return SensorDevice(id, name, thingModel, temperature, humidity)
+            return SensorDevice(
+                id, name, thingModel, temperature, humidity,
+                onlyWhenOn = tempOnlyWhenOn,
+                switchCode = MAIN_SWITCHES.firstOrNull { it in status },
+            )
         }
 
     /** Иконка по умолчанию, если пользователь не выбрал свою. */
@@ -361,7 +380,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val rubetekShown = if (s.mode == ControlMode.LOCAL) rubetekDevices.map { it.copy(online = false) } else rubetekDevices
         // Xiaomi сам решает, Wi-Fi или облако (по режиму), поэтому показываем как есть
         val extra = rubetekShown + xiaomiDevices
-        val all = if (extra.isEmpty()) shown else (shown + extra).sortedBy { it.name.lowercase() }
+        val all = (if (extra.isEmpty()) shown else (shown + extra).sortedBy { it.name.lowercase() })
+            .map { d -> d.copy(tempOnlyWhenOn = s.devicePrefs[d.id]?.tempWhenOn ?: d.defaultTempOnlyWhenOn) }
         _state.update { it.copy(devices = all) }
     }
 
@@ -516,6 +536,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val prefs = _state.value.devicePrefs + (deviceId to pref)
         categoryStore.saveDevicePrefs(prefs)
         _state.update { it.copy(devicePrefs = prefs) }
+        publish()
     }
 
     // ---------- Настройка ключей ----------

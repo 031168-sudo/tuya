@@ -148,6 +148,7 @@ class HeatingStore(context: Context) {
                     .put("hyst", z.hysteresis ?: JSONObject.NULL)
                     .put("store_heat", z.storeHeat ?: JSONObject.NULL)
                     .put("auto_tune", z.autoTune)
+                    .put("temp_device", z.tempDeviceId ?: JSONObject.NULL)
                     .put("windows", JSONArray().apply {
                         z.windows.forEach { w ->
                             put(JSONObject().put("from", w.from).put("to", w.to).put("temp", w.temp))
@@ -182,6 +183,7 @@ class HeatingStore(context: Context) {
                 hysteresis = if (z.isNull("hyst") || !z.has("hyst")) null else z.optDouble("hyst"),
                 storeHeat = if (z.isNull("store_heat") || !z.has("store_heat")) null else z.optBoolean("store_heat"),
                 autoTune = z.optBoolean("auto_tune", true),
+                tempDeviceId = if (z.isNull("temp_device") || !z.has("temp_device")) null else z.optString("temp_device").ifEmpty { null },
             )
         }
         return HeatingSettings(

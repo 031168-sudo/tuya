@@ -29,7 +29,8 @@ class SyncTargets(context: Context) {
         sensors.forEach { d ->
             s.put(
                 JSONObject().put("id", d.id).put("name", d.name).put("thing", d.thingModel)
-                    .put("temp", d.temperature?.let(::channelJson)).put("hum", d.humidity?.let(::channelJson)),
+                    .put("temp", d.temperature?.let(::channelJson)).put("hum", d.humidity?.let(::channelJson))
+                    .put("only_on", d.onlyWhenOn).put("switch", d.switchCode ?: ""),
             )
         }
         prefs.edit().putString("energy", e.toString()).putString("sensors", s.toString()).apply()
@@ -63,6 +64,8 @@ class SyncTargets(context: Context) {
                 thingModel = o.optBoolean("thing"),
                 temperature = o.optJSONObject("temp")?.let(::channel),
                 humidity = o.optJSONObject("hum")?.let(::channel),
+                onlyWhenOn = o.optBoolean("only_on"),
+                switchCode = o.optString("switch").ifEmpty { null },
             )
         }
     } catch (e: Exception) {
