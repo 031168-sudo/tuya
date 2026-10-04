@@ -87,6 +87,19 @@ class SensorSync(private val db: SensorDb) {
             chunkStart = chunkEnd
         }
         AppLog.i("${device.name}: загружено показаний датчика: $total")
+        if (device.onlyWhenOn && switchCode != null) {
+            // Переключения вкл/выкл — со своего места: показания уже могли быть скачаны раньше без них
+            val pFrom = maxOf(db.powerCursor(device.id) ?: windowStart, windowStart)
+            val sw = runCatching { fetch(client, device, switchCode, pFrom, now) {} }
+                .onFailure { AppLog.e("${device.name}: журнал вкл/выкл не прочитан", it) }
+                .getOrNull()
+            if (sw != null) withContext(Dispatchers.IO) {
+                db.insert(device.id, sw.filter { it.code == switchCode }.map {
+                    Reading("power", it.time, if (it.value.equals("true", true)) 1.0 else 0.0)
+                })
+                db.setPowerCursor(device.id, now)
+            }
+        }
         if (device.onlyWhenOn) {
             val removed = withContext(Dispatchers.IO) { db.purgeWhileOff(device.id, channels.keys, windowStart) }
             if (removed > 0) AppLog.i("${device.name}: убрано показаний, снятых при выключенном приборе: $removed")

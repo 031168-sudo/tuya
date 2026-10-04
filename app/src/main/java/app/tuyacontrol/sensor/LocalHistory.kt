@@ -15,6 +15,9 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object LocalHistory {
 
+    /** Свои отметки вкл/выкл (раз в 5–30 мин); переключения из журнала облака пишутся кодом «power». */
+    const val POWER_SAMPLE = "power_s"
+
     /** Не чаще одной точки в 5 минут на устройство. */
     private const val MIN_GAP_MS = 5 * 60_000L
     /** Показания старше получаса считаем несвежими и не пишем. */
@@ -37,7 +40,7 @@ object LocalHistory {
             val readings = (if (off) emptyList() else readingsOf(sensor, d.status, at)) +
                 listOfNotNull(
                     d.heatingNow?.let { Reading("heating", t, if (it) 1.0 else 0.0) },
-                    d.mainSwitchOn?.let { Reading("power", t, if (it) 1.0 else 0.0) },
+                    d.mainSwitchOn?.let { Reading(POWER_SAMPLE, t, if (it) 1.0 else 0.0) },
                 )
             if (readings.isEmpty()) continue
             last[d.id] = now
@@ -58,7 +61,7 @@ object LocalHistory {
                 val off = s.onlyWhenOn && power == false
                 val readings = (if (off) emptyList() else readingsOf(s, raw, now)) + listOfNotNull(
                     heatingOf(raw)?.let { Reading("heating", t, if (it) 1.0 else 0.0) },
-                    power?.let { Reading("power", t, if (it) 1.0 else 0.0) },
+                    power?.let { Reading(POWER_SAMPLE, t, if (it) 1.0 else 0.0) },
                 )
                 db.insert(s.id, readings)
             } catch (e: Exception) {

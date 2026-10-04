@@ -52,6 +52,11 @@ class SensorDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
         arrayOf(deviceId),
     ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null }
 
+    /** До какого момента скачан журнал вкл/выкл прибора. */
+    fun powerCursor(deviceId: String): Long? = cursor("power:$deviceId")
+
+    fun setPowerCursor(deviceId: String, cursor: Long) = setCursor("power:$deviceId", cursor)
+
     fun setCursor(deviceId: String, cursor: Long) {
         writableDatabase.execSQL(
             "INSERT OR REPLACE INTO sensor_meta (device_id, log_cursor) VALUES (?, ?)",
@@ -94,38 +99,52 @@ class SensorDb(context: Context) : SQLiteOpenHelper(context.applicationContext, 
     ).use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null }
 
     /**
-     * Удалить показания [codes], снятые, пока прибор был выключен (по точкам «power»: 1 — вкл, 0 — выкл),
-     * начиная с [from]. Точку в момент выключения оставляем (в ней ещё верное значение).
+     * Удалить показания [codes], снятые, пока прибор был выключен, начиная с [from].
+     * Переключения — из журнала облака (код «power»: 1 — включили, 0 — выключили), свои отметки —
+     * «power_s». Состояние до первого переключения — обратное ему; если переключений нет, а по своим
+     * отметкам прибор выключен, считаем его выключенным весь период. Точку в момент выключения оставляем.
      */
     fun purgeWhileOff(deviceId: String, codes: Collection<String>, from: Long): Int {
         if (codes.isEmpty()) return 0
-        val power = readableDatabase.rawQuery(
-            "SELECT time, value FROM readings WHERE device_id = ? AND code = 'power' AND time >= ? ORDER BY time",
-            arrayOf(deviceId, (from - 24 * 3600_000L).toString()),
+        fun load(code: String) = readableDatabase.rawQuery(
+            "SELECT time, value FROM readings WHERE device_id = ? AND code = ? AND time >= ? ORDER BY time",
+            arrayOf(deviceId, code, from.toString()),
         ).use { c ->
             val l = mutableListOf<Pair<Long, Boolean>>()
             while (c.moveToNext()) l += c.getLong(0) to (c.getDouble(1) >= 0.5)
             l
         }
-        if (power.isEmpty()) return 0
+        val transitions = load("power")
+        val samples = load("power_s")
+        // Состояние с начала периода
+        val initial: Boolean = when {
+            transitions.isNotEmpty() -> !transitions.first().second
+            samples.isNotEmpty() -> samples.last().second
+            else -> return 0
+        }
+        // Шкала: переключения облака + свои отметки после последнего переключения
+        val lastT = transitions.lastOrNull()?.first ?: Long.MIN_VALUE
+        val events = (transitions + samples.filter { it.first > lastT }).sortedBy { it.first }
+
         val db = writableDatabase
         val inList = codes.joinToString(",") { "?" }
         var removed = 0
-        var offAt: Long? = null
         fun purge(a: Long, b: Long) {
-            val start = maxOf(a + 60_000L, from)
+            val start = if (a <= from) from else a + 60_000L
             if (b <= start) return
             removed += db.delete(
                 "readings",
-                "device_id = ? AND code IN ($inList) AND time > ? AND time < ?",
+                "device_id = ? AND code IN ($inList) AND time >= ? AND time < ?",
                 arrayOf(deviceId) + codes.toTypedArray() + arrayOf(start.toString(), b.toString()),
             )
         }
-        for ((t, on) in power) {
-            if (!on && offAt == null) offAt = t
-            if (on && offAt != null) { purge(offAt!!, t); offAt = null }
+        var on = initial
+        var offAt: Long? = if (initial) null else from
+        for ((t, state) in events) {
+            if (!state && on) { offAt = t; on = false }
+            if (state && !on) { purge(offAt ?: from, t); offAt = null; on = true }
         }
-        offAt?.let { purge(it, Long.MAX_VALUE) }
+        if (!on) purge(offAt ?: from, Long.MAX_VALUE)
         return removed
     }
 }
