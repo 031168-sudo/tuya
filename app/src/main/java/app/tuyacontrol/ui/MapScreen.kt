@@ -272,6 +272,12 @@ private fun FloorPlan(
             drawRect(WallColor, tl, sz)
         }
 
+        // Проёмы во второй стене под дверью (пристройка и дом — две стены вплотную)
+        floor.holes.forEach { h ->
+            val (tl, sz) = rectOf(h.x1, h.y1, h.x2, h.y2)
+            drawRect(PlanBackground, tl, sz)
+        }
+
         // Окна: проём во всю толщину стены и две линии стекла (на 1/10 толщины от оси)
         val glass = 1.6.dp.toPx()
         floor.windows.forEach { win ->

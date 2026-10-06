@@ -1,59 +1,61 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="750" height="835" viewBox="0 0 750 835" font-family="Inter, Roboto, DejaVu Sans, sans-serif">
-<rect width="750" height="835" fill="#FBFAF7"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="750" height="856" viewBox="0 0 750 856" font-family="Inter, Roboto, DejaVu Sans, sans-serif">
+<rect width="750" height="856" fill="#FBFAF7"/>
 <text x="60" y="52" font-size="22" font-weight="600" fill="#2B2B2B">2-й этаж</text>
-<rect x="66.125" y="96.125" width="98.87500000000001" height="420.00000000000006" fill="#F7C59F"/>
-<rect x="165.0" y="96.125" width="210.00000000000003" height="420.00000000000006" fill="#A8DCC3"/>
-<rect x="375.00000000000006" y="96.125" width="98.87500000000001" height="420.00000000000006" fill="#ABC4F0"/>
-<rect x="66.125" y="516.125" width="196.87500000000003" height="232.75000000000003" fill="#F2B8C6"/>
-<rect x="263.0" y="516.125" width="103.60000000000001" height="232.75000000000003" fill="#C9E4A6"/>
-<rect x="366.6" y="516.125" width="317.27500000000003" height="232.75000000000003" fill="#C7B8EE"/>
-<rect x="60.0" y="90.0" width="420.00000000000006" height="12.250000000000002" fill="#33363B"/>
-<rect x="60.0" y="90.0" width="12.250000000000002" height="432.25000000000006" fill="#33363B"/>
-<rect x="467.75000000000006" y="90.0" width="12.250000000000002" height="432.25000000000006" fill="#33363B"/>
-<rect x="159.75" y="90.875" width="10.500000000000002" height="430.50000000000006" fill="#33363B"/>
-<rect x="369.75000000000006" y="90.875" width="10.500000000000002" height="430.50000000000006" fill="#33363B"/>
-<rect x="60.0" y="510.00000000000006" width="630.0000000000001" height="12.250000000000002" fill="#33363B"/>
-<rect x="60.0" y="510.00000000000006" width="12.250000000000002" height="245.00000000000003" fill="#33363B"/>
-<rect x="677.7500000000001" y="510.00000000000006" width="12.250000000000002" height="245.00000000000003" fill="#33363B"/>
-<rect x="60.0" y="742.7500000000001" width="630.0000000000001" height="12.250000000000002" fill="#33363B"/>
-<rect x="257.75" y="510.87500000000006" width="10.500000000000002" height="243.25000000000003" fill="#33363B"/>
-<rect x="361.35" y="510.87500000000006" width="10.500000000000002" height="243.25000000000003" fill="#33363B"/>
-<rect x="105.5" y="742.7500000000001" width="79.80000000000001" height="12.250000000000002" fill="#FFFFFF"/>
-<line x1="105.5" y1="747.6500000000001" x2="185.3" y2="747.6500000000001" stroke="#6FA8DC" stroke-width="1.6"/>
-<line x1="105.5" y1="750.1" x2="185.3" y2="750.1" stroke="#6FA8DC" stroke-width="1.6"/>
-<rect x="284.84000000000003" y="742.7500000000001" width="40.74" height="12.250000000000002" fill="#FFFFFF"/>
-<line x1="284.84000000000003" y1="747.6500000000001" x2="325.58000000000004" y2="747.6500000000001" stroke="#6FA8DC" stroke-width="1.6"/>
-<line x1="284.84000000000003" y1="750.1" x2="325.58000000000004" y2="750.1" stroke="#6FA8DC" stroke-width="1.6"/>
-<rect x="494.49000000000007" y="742.7500000000001" width="79.80000000000001" height="12.250000000000002" fill="#FFFFFF"/>
-<line x1="494.49000000000007" y1="747.6500000000001" x2="574.2900000000001" y2="747.6500000000001" stroke="#6FA8DC" stroke-width="1.6"/>
-<line x1="494.49000000000007" y1="750.1" x2="574.2900000000001" y2="750.1" stroke="#6FA8DC" stroke-width="1.6"/>
-<rect x="550.6300000000001" y="510.00000000000006" width="79.80000000000001" height="12.250000000000002" fill="#FFFFFF"/>
-<line x1="550.6300000000001" y1="514.9000000000001" x2="630.4300000000001" y2="514.9000000000001" stroke="#6FA8DC" stroke-width="1.6"/>
-<line x1="550.6300000000001" y1="517.35" x2="630.4300000000001" y2="517.35" stroke="#6FA8DC" stroke-width="1.6"/>
-<rect x="230.10000000000002" y="90.0" width="79.80000000000001" height="12.250000000000002" fill="#FFFFFF"/>
-<line x1="230.10000000000002" y1="94.9" x2="309.90000000000003" y2="94.9" stroke="#6FA8DC" stroke-width="1.6"/>
-<line x1="230.10000000000002" y1="97.35" x2="309.90000000000003" y2="97.35" stroke="#6FA8DC" stroke-width="1.6"/>
-<rect x="273.5" y="510.00000000000006" width="56.00000000000001" height="12.250000000000002" fill="#FBFAF7"/>
-<line x1="273.5" y1="516.125" x2="273.5" y2="572.125" stroke="#33363B" stroke-width="2"/>
-<path d="M 273.5 572.125 A 56.00000000000001 56.00000000000001 0 0 0 329.5 516.125" fill="none" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3 3"/>
-<rect x="257.75" y="548.5" width="10.500000000000002" height="56.00000000000001" fill="#FBFAF7"/>
-<line x1="263.0" y1="548.5" x2="207.0" y2="548.5" stroke="#33363B" stroke-width="2"/>
-<path d="M 207.0 548.5 A 56.00000000000001 56.00000000000001 0 0 0 263.0 604.5" fill="none" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3 3"/>
-<rect x="361.35" y="643.0" width="10.500000000000002" height="56.00000000000001" fill="#FBFAF7"/>
-<line x1="366.6" y1="699.0000000000001" x2="422.6" y2="699.0000000000001" stroke="#33363B" stroke-width="2"/>
-<path d="M 422.6 699.0000000000001 A 56.00000000000001 56.00000000000001 0 0 0 366.6 643.0" fill="none" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3 3"/>
-<text x="115.5625" y="306.125" text-anchor="middle" font-size="10" font-weight="600" fill="#2B2B2B">Комната 6</text>
-<text x="115.5625" y="323.125" text-anchor="middle" font-size="8" fill="#5A5A5A">7,3 м²</text>
-<text x="270.0" y="306.125" text-anchor="middle" font-size="15" font-weight="600" fill="#2B2B2B">Комната 7</text>
-<text x="270.0" y="323.125" text-anchor="middle" font-size="13" fill="#5A5A5A">16,6 м²</text>
-<text x="424.43750000000006" y="306.125" text-anchor="middle" font-size="10" font-weight="600" fill="#2B2B2B">Комната 8</text>
-<text x="424.43750000000006" y="323.125" text-anchor="middle" font-size="8" fill="#5A5A5A">7,3 м²</text>
-<text x="164.5625" y="632.5" text-anchor="middle" font-size="15" font-weight="600" fill="#2B2B2B">Комната 9</text>
-<text x="164.5625" y="649.5" text-anchor="middle" font-size="13" fill="#5A5A5A">8,3 м²</text>
-<text x="314.8" y="632.5" text-anchor="middle" font-size="11" font-weight="600" fill="#2B2B2B">Коридор</text>
-<text x="314.8" y="649.5" text-anchor="middle" font-size="9" fill="#5A5A5A">4,2 м²</text>
-<text x="525.2375000000001" y="632.5" text-anchor="middle" font-size="15" font-weight="600" fill="#2B2B2B">Комната 10</text>
-<text x="525.2375000000001" y="649.5" text-anchor="middle" font-size="13" fill="#5A5A5A">13,8 м²</text>
-<line x1="60.0" y1="799.0000000000001" x2="690.0000000000001" y2="799.0000000000001" stroke="#B0B0B0"/>
-<text x="375.00000000000006" y="793.0000000000001" text-anchor="middle" font-size="11" fill="#8A8A8A">9 000</text>
+<rect x="69.45" y="99.45" width="100.80000000000001" height="422.1" fill="#F7C59F"/>
+<rect x="170.25" y="99.45" width="220.50000000000003" height="422.1" fill="#A8DCC3"/>
+<rect x="390.75000000000006" y="99.45" width="100.80000000000001" height="422.1" fill="#ABC4F0"/>
+<rect x="66.09" y="537.09" width="195.93" height="232.82000000000002" fill="#F2B8C6"/>
+<rect x="262.02" y="537.09" width="101.78000000000002" height="232.82000000000002" fill="#C9E4A6"/>
+<rect x="363.8" y="537.09" width="320.11" height="232.82000000000002" fill="#C7B8EE"/>
+<rect x="60.0" y="90.0" width="441.00000000000006" height="18.900000000000002" fill="#33363B"/>
+<rect x="60.0" y="90.0" width="18.900000000000002" height="441.00000000000006" fill="#33363B"/>
+<rect x="482.1" y="90.0" width="18.900000000000002" height="441.00000000000006" fill="#33363B"/>
+<rect x="60.0" y="512.1" width="441.00000000000006" height="18.900000000000002" fill="#33363B"/>
+<rect x="165.0" y="94.2" width="10.500000000000002" height="432.6" fill="#33363B"/>
+<rect x="385.50000000000006" y="94.2" width="10.500000000000002" height="432.6" fill="#33363B"/>
+<rect x="60.0" y="531.0" width="630.0000000000001" height="12.180000000000001" fill="#33363B"/>
+<rect x="60.0" y="531.0" width="12.180000000000001" height="245.00000000000003" fill="#33363B"/>
+<rect x="677.82" y="531.0" width="12.180000000000001" height="245.00000000000003" fill="#33363B"/>
+<rect x="60.0" y="763.82" width="630.0000000000001" height="12.180000000000001" fill="#33363B"/>
+<rect x="257.68" y="532.75" width="8.680000000000001" height="241.50000000000003" fill="#33363B"/>
+<rect x="359.46000000000004" y="532.75" width="8.680000000000001" height="241.50000000000003" fill="#33363B"/>
+<rect x="273.5" y="512.1" width="56.00000000000001" height="18.900000000000002" fill="#FBFAF7"/>
+<rect x="105.5" y="763.82" width="79.80000000000001" height="12.180000000000001" fill="#FFFFFF"/>
+<line x1="105.5" y1="768.6920000000001" x2="185.3" y2="768.6920000000001" stroke="#6FA8DC" stroke-width="1.6"/>
+<line x1="105.5" y1="771.128" x2="185.3" y2="771.128" stroke="#6FA8DC" stroke-width="1.6"/>
+<rect x="284.84000000000003" y="763.82" width="40.74" height="12.180000000000001" fill="#FFFFFF"/>
+<line x1="284.84000000000003" y1="768.6920000000001" x2="325.58000000000004" y2="768.6920000000001" stroke="#6FA8DC" stroke-width="1.6"/>
+<line x1="284.84000000000003" y1="771.128" x2="325.58000000000004" y2="771.128" stroke="#6FA8DC" stroke-width="1.6"/>
+<rect x="494.49000000000007" y="763.82" width="79.80000000000001" height="12.180000000000001" fill="#FFFFFF"/>
+<line x1="494.49000000000007" y1="768.6920000000001" x2="574.2900000000001" y2="768.6920000000001" stroke="#6FA8DC" stroke-width="1.6"/>
+<line x1="494.49000000000007" y1="771.128" x2="574.2900000000001" y2="771.128" stroke="#6FA8DC" stroke-width="1.6"/>
+<rect x="550.6300000000001" y="531.0" width="79.80000000000001" height="12.180000000000001" fill="#FFFFFF"/>
+<line x1="550.6300000000001" y1="535.8720000000001" x2="630.4300000000001" y2="535.8720000000001" stroke="#6FA8DC" stroke-width="1.6"/>
+<line x1="550.6300000000001" y1="538.308" x2="630.4300000000001" y2="538.308" stroke="#6FA8DC" stroke-width="1.6"/>
+<rect x="240.60000000000002" y="90.0" width="79.80000000000001" height="18.900000000000002" fill="#FFFFFF"/>
+<line x1="240.60000000000002" y1="97.56" x2="320.40000000000003" y2="97.56" stroke="#6FA8DC" stroke-width="1.6"/>
+<line x1="240.60000000000002" y1="101.34" x2="320.40000000000003" y2="101.34" stroke="#6FA8DC" stroke-width="1.6"/>
+<rect x="273.5" y="531.0" width="56.00000000000001" height="12.180000000000001" fill="#FBFAF7"/>
+<line x1="273.5" y1="537.09" x2="273.5" y2="593.09" stroke="#33363B" stroke-width="2"/>
+<path d="M 273.5 593.09 A 56.00000000000001 56.00000000000001 0 0 0 329.5 537.09" fill="none" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="257.68" y="569.5" width="8.680000000000001" height="56.00000000000001" fill="#FBFAF7"/>
+<line x1="262.02" y1="569.5" x2="206.02" y2="569.5" stroke="#33363B" stroke-width="2"/>
+<path d="M 206.02 569.5 A 56.00000000000001 56.00000000000001 0 0 0 262.02 625.5" fill="none" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3 3"/>
+<rect x="359.46000000000004" y="664.0" width="8.680000000000001" height="56.00000000000001" fill="#FBFAF7"/>
+<line x1="363.8" y1="720.0000000000001" x2="419.8" y2="720.0000000000001" stroke="#33363B" stroke-width="2"/>
+<path d="M 419.8 720.0000000000001 A 56.00000000000001 56.00000000000001 0 0 0 363.8 664.0" fill="none" stroke="#9AA0A6" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="119.85000000000001" y="310.5" text-anchor="middle" font-size="10" font-weight="600" fill="#2B2B2B">Комната 6</text>
+<text x="119.85000000000001" y="327.5" text-anchor="middle" font-size="8" fill="#5A5A5A">7,1 м²</text>
+<text x="280.5" y="310.5" text-anchor="middle" font-size="15" font-weight="600" fill="#2B2B2B">Комната 7</text>
+<text x="280.5" y="327.5" text-anchor="middle" font-size="13" fill="#5A5A5A">17,3 м²</text>
+<text x="441.15000000000003" y="310.5" text-anchor="middle" font-size="10" font-weight="600" fill="#2B2B2B">Комната 8</text>
+<text x="441.15000000000003" y="327.5" text-anchor="middle" font-size="8" fill="#5A5A5A">7,1 м²</text>
+<text x="164.055" y="653.5" text-anchor="middle" font-size="15" font-weight="600" fill="#2B2B2B">Комната 9</text>
+<text x="164.055" y="670.5" text-anchor="middle" font-size="13" fill="#5A5A5A">8,4 м²</text>
+<text x="312.91" y="653.5" text-anchor="middle" font-size="10" font-weight="600" fill="#2B2B2B">Коридор</text>
+<text x="312.91" y="670.5" text-anchor="middle" font-size="8" fill="#5A5A5A">4,2 м²</text>
+<text x="523.855" y="653.5" text-anchor="middle" font-size="15" font-weight="600" fill="#2B2B2B">Комната 10</text>
+<text x="523.855" y="670.5" text-anchor="middle" font-size="13" fill="#5A5A5A">13,9 м²</text>
+<line x1="60.0" y1="820.0000000000001" x2="690.0000000000001" y2="820.0000000000001" stroke="#B0B0B0"/>
+<text x="375.00000000000006" y="814.0000000000001" text-anchor="middle" font-size="11" fill="#8A8A8A">9 000</text>
 </svg>

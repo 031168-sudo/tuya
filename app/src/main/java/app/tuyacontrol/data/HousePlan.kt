@@ -30,6 +30,8 @@ data class PlanFloor(
     /** Проём двери: петли в первой точке, extra — в какую сторону распахивается (+1/-1). */
     val doors: List<MmSeg>,
     val windows: List<MmSeg>,
+    /** Проёмы во второй стене под дверью (где две стены стоят вплотную), рисуются фоном поверх стен. */
+    val holes: List<MmRect> = emptyList(),
 ) {
     /** Толщина стены на линии x=c (vertical) или y=c, перекрывающей отрезок [a, b]; 0 — стены нет (как wall_on в gen_plans.py). */
     fun wallOn(vertical: Boolean, c: Float, a: Float, b: Float): Float {
@@ -96,6 +98,7 @@ object HousePlan {
                 walls = f.optJSONArray("walls").arrays().map { it.seg() },
                 doors = f.optJSONArray("doors").arrays().map { it.seg() },
                 windows = f.optJSONArray("windows").arrays().map { it.seg() },
+                holes = f.optJSONArray("holes").arrays().map { it.rect() },
             )
         }
     }
