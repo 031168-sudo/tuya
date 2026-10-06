@@ -178,10 +178,13 @@ fun MapScreen(
             if (floors.isEmpty()) {
                 Text("План дома не найден", color = MaterialTheme.colorScheme.error)
             }
+            // Один масштаб для всех планов: самый широкий — во всю ширину, остальные — пропорционально
+            val widest = floors.maxOfOrNull { it.width } ?: 1f
             floors.forEach { floor ->
                 Text(floor.title, style = MaterialTheme.typography.titleMedium)
                 FloorPlan(
                     floor = floor,
+                    widthFraction = (floor.width + 2 * padOf(floor)) / (widest + 2 * PLAN_PAD),
                     names = floor.rooms.associate { it.id to (settings[it.id]?.name ?: it.name) },
                     temps = floor.rooms.associate { it.id to tempOf(it) },
                     heating = floor.rooms.associate { r ->
@@ -206,6 +209,8 @@ fun MapScreen(
 @Composable
 private fun FloorPlan(
     floor: PlanFloor,
+    /** Доля ширины экрана: у узкой постройки меньше, чтобы масштаб совпадал с домом. */
+    widthFraction: Float,
     names: Map<String, String>,
     temps: Map<String, RoomTemp>,
     /** Греет ли устройство комнаты; null — устройство таких данных не даёт (значок не рисуем). */
@@ -215,13 +220,13 @@ private fun FloorPlan(
     val measurer = rememberTextMeasurer()
     val heatIcon = rememberVectorPainter(DeviceIcons.vector("heat_wave"))
     // Поле вокруг дома, мм: стены стоят осью на линии, наружу выступает половина толщины
-    val pad = PlanFloor.OUTER_WALL / 2 + 150f
+    val pad = padOf(floor)
     val totalW = floor.width + 2 * pad
     val totalH = floor.height + 2 * pad
 
     Canvas(
         Modifier
-            .fillMaxWidth()
+            .fillMaxWidth(widthFraction)
             .aspectRatio(totalW / totalH)
             .clip(RoundedCornerShape(12.dp))
             .background(PlanBackground)
@@ -267,20 +272,21 @@ private fun FloorPlan(
             drawRect(WallColor, tl, sz)
         }
 
-        // Окна: проём в наружной стене и две линии стекла
+        // Окна: проём во всю толщину стены и две линии стекла (на 1/10 толщины от оси)
         val glass = 1.6.dp.toPx()
         floor.windows.forEach { win ->
-            val h = PlanFloor.OUTER_WALL / 2
+            val h = floor.wallUnder(win) / 2
+            val g = h / 5
             if (win.vertical) {
                 val (tl, sz) = rectOf(win.x1 - h, win.y1, win.x1 + h, win.y2)
                 drawRect(Color.White, tl, sz)
-                for (d in listOf(-35f, 35f)) {
+                for (d in listOf(-g, g)) {
                     drawLine(GlassColor, Offset(px(win.x1 + d), px(win.y1)), Offset(px(win.x1 + d), px(win.y2)), glass)
                 }
             } else {
                 val (tl, sz) = rectOf(win.x1, win.y1 - h, win.x2, win.y1 + h)
                 drawRect(Color.White, tl, sz)
-                for (d in listOf(-35f, 35f)) {
+                for (d in listOf(-g, g)) {
                     drawLine(GlassColor, Offset(px(win.x1), px(win.y1 + d)), Offset(px(win.x2), px(win.y1 + d)), glass)
                 }
             }
@@ -330,6 +336,22 @@ private fun FloorPlan(
             )
         }
     }
+}
+
+/** Поле вокруг плана, мм: стены стоят осью на линии, наружу выступает половина толщины. */
+private const val PLAN_PAD = PlanFloor.OUTER_WALL / 2 + 150f
+
+/** Поле вокруг плана: не меньше PLAN_PAD и так, чтобы влезли двери, открывающиеся наружу. */
+private fun padOf(floor: PlanFloor): Float {
+    var out = 0f
+    for (d in floor.doors) {
+        val len = hypot(d.x2 - d.x1, d.y2 - d.y1)
+        val side = if (d.extra < 0) -1f else 1f
+        val ex = if (d.vertical) d.x1 + side * len else d.x1
+        val ey = if (d.vertical) d.y1 else d.y1 + side * len
+        out = maxOf(out, -ex, ex - floor.width, -ey, ey - floor.height)
+    }
+    return maxOf(PLAN_PAD, out + 100f)
 }
 
 /** Доля места внутри комнаты под подписи (по 6% — поля до стен). */

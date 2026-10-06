@@ -79,6 +79,32 @@ floor2 = {
   ],
 }
 
+# Отдельная постройка 4 × 6 м по наружному краю, стены 75 мм (оси стен — по 37,5 мм внутрь от края)
+B_WALL = 75
+building = {
+  "id": "building", "title": "Постройка",
+  "bounds": [0, 0, 3925, 5925],
+  "dim": "4 000",   # подпись габарита: по наружному краю
+  "rooms": [
+    {"id": "b_room", "name": "Комната", "rect": [0, 0, 3925, 5925]},
+  ],
+  "terraces": [],
+  "walls": [
+    [0, 0, 3925, 0, B_WALL], [0, 0, 0, 5925, B_WALL], [3925, 0, 3925, 5925, B_WALL], [0, 5925, 3925, 5925, B_WALL],
+  ],
+  # по пометкам хозяина (06.10.2026): дверь в западной стене, петли у южного косяка, открывается наружу
+  "doors": [
+    [0, 3520, 0, 2720, -1],
+  ],
+  # окна — размеры по пометкам: восток ~700, запад ~700 и ~1300, юг ~1500 и ~1400
+  "windows": [
+    [3925, 650, 3925, 1350],
+    [0, 1710, 0, 2410], [0, 4060, 0, 5360],
+    [410, 5925, 1910, 5925], [2230, 5925, 3630, 5925],
+  ],
+}
+FLOORS = (floor1, floor2, building)
+
 def wall_on(f, vertical, c, a, b):
     """Толщина стены, лежащей на линии (x=c или y=c) и перекрывающей отрезок [a,b]."""
     best = 0
@@ -87,7 +113,7 @@ def wall_on(f, vertical, c, a, b):
         if not vertical and y1 == y2 == c and min(x1, x2) < b and max(x1, x2) > a: best = max(best, t)
     return best
 
-for f in (floor1, floor2):
+for f in FLOORS:
     for r in f["rooms"]:
         x1, y1, x2, y2 = r["rect"]
         w = (x2 - x1) - wall_on(f, True, x1, y1, y2) / 2 - wall_on(f, True, x2, y1, y2) / 2
@@ -98,7 +124,7 @@ PALETTE = ["#F7C59F", "#A8DCC3", "#ABC4F0", "#F2B8C6", "#C9E4A6", "#C7B8EE", "#F
 
 def svg(f, scale=0.07, temps=None):
     m = 60
-    W = int(9000 * scale + 2 * m); H = int(f["bounds"][3] * scale + 2 * m + 50)
+    W = int(f["bounds"][2] * scale + 2 * m); H = int(f["bounds"][3] * scale + 2 * m + 50)
     X = lambda v: m + v * scale
     Y = lambda v: m + 30 + v * scale
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" font-family="Inter, Roboto, DejaVu Sans, sans-serif">',
@@ -123,13 +149,16 @@ def svg(f, scale=0.07, temps=None):
             o.append(f'<rect x="{X(x1-h)}" y="{Y(min(y1,y2)-h)}" width="{t*scale}" height="{(abs(y2-y1)+t)*scale}" fill="#33363B"/>')
     # окна
     for x1, y1, x2, y2 in f["windows"]:
+        # проём во всю толщину стены, стёкла — на 1/10 толщины от оси
+        T = wall_on(f, x1 == x2, x1 if x1 == x2 else y1, min(y1, y2) if x1 == x2 else min(x1, x2), max(y1, y2) if x1 == x2 else max(x1, x2)) or OUT
+        g = T / 10
         if y1 == y2:
-            o.append(f'<rect x="{X(x1)}" y="{Y(y1-OUT/2)}" width="{(x2-x1)*scale}" height="{OUT*scale}" fill="#FFFFFF"/>')
-            for d in (-35, 35):
+            o.append(f'<rect x="{X(x1)}" y="{Y(y1-T/2)}" width="{(x2-x1)*scale}" height="{T*scale}" fill="#FFFFFF"/>')
+            for d in (-g, g):
                 o.append(f'<line x1="{X(x1)}" y1="{Y(y1+d)}" x2="{X(x2)}" y2="{Y(y1+d)}" stroke="#6FA8DC" stroke-width="1.6"/>')
         else:
-            o.append(f'<rect x="{X(x1-OUT/2)}" y="{Y(y1)}" width="{OUT*scale}" height="{(y2-y1)*scale}" fill="#FFFFFF"/>')
-            for d in (-35, 35):
+            o.append(f'<rect x="{X(x1-T/2)}" y="{Y(y1)}" width="{T*scale}" height="{(y2-y1)*scale}" fill="#FFFFFF"/>')
+            for d in (-g, g):
                 o.append(f'<line x1="{X(x1+d)}" y1="{Y(y1)}" x2="{X(x1+d)}" y2="{Y(y2)}" stroke="#6FA8DC" stroke-width="1.6"/>')
     # двери: проём + полотно + дуга
     for x1, y1, x2, y2, side in f["doors"]:
@@ -159,13 +188,13 @@ def svg(f, scale=0.07, temps=None):
             o.append(f'<text x="{cx}" y="{cy + 17}" text-anchor="middle" font-size="{fs-2}" fill="#5A5A5A">{r["area"]:.1f} м²</text>'.replace(".", ",", 1) if False else
                      f'<text x="{cx}" y="{cy + 17}" text-anchor="middle" font-size="{fs-2}" fill="#5A5A5A">{str(r["area"]).replace(".", ",")} м²</text>')
     # размеры
-    o.append(f'<line x1="{X(0)}" y1="{Y(f["bounds"][3])+44}" x2="{X(9000)}" y2="{Y(f["bounds"][3])+44}" stroke="#B0B0B0"/>')
-    o.append(f'<text x="{X(4500)}" y="{Y(f["bounds"][3])+38}" text-anchor="middle" font-size="11" fill="#8A8A8A">9 000</text>')
+    o.append(f'<line x1="{X(0)}" y1="{Y(f["bounds"][3])+44}" x2="{X(f["bounds"][2])}" y2="{Y(f["bounds"][3])+44}" stroke="#B0B0B0"/>')
+    o.append(f'<text x="{X(f["bounds"][2]/2)}" y="{Y(f["bounds"][3])+38}" text-anchor="middle" font-size="11" fill="#8A8A8A">{f.get("dim") or format(f["bounds"][2], ",").replace(",", " ")}</text>')
     o.append('</svg>')
     return "\n".join(o)
 
 TEMP_VAL = {}
-for f in (floor1, floor2):
+for f in FLOORS:
     open(f'{f["id"]}.svg', "w").write(svg(f))
 
 # ---------- Цветовая шкала температур ----------
@@ -205,9 +234,9 @@ def legend_svg(h=420):
 # Пример для показа: случайные температуры в комнатах (не реальные данные)
 TEMP_VAL = {"f1_hall": 21.5, "f1_ne": 19.0, "f1_se": 23.0, "f1_big": 20.5, "f1_s1": 17.5, "f1_s2": 15.5,
             "f2_w": 14.5, "f2_mid": 22.0, "f2_e": 16.0, "f2_r1": 24.5, "f2_cor": 19.5, "f2_r2": 26.5}
-for f in (floor1, floor2):
+for f in FLOORS:
     open(f'{f["id"]}_temp.svg', "w").write(svg(f, temps={k: tcolor(v) for k, v in TEMP_VAL.items()}))
 open("temp_legend.svg", "w").write(legend_svg())
 
-json.dump({"floors": [floor1, floor2]}, open("house.json", "w"), ensure_ascii=False, indent=1)
+json.dump({"floors": list(FLOORS)}, open("house.json", "w"), ensure_ascii=False, indent=1)
 print("ok")
