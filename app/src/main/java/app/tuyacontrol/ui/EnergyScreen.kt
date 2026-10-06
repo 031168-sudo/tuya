@@ -1,5 +1,13 @@
 package app.tuyacontrol.ui
 
+import java.util.Locale
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -314,49 +322,128 @@ private fun SummaryCard(report: EnergyReport, noTariffs: Boolean, onOpenTariffs:
 @Composable
 private fun BarChart(buckets: List<Bucket>) {
     val max = buckets.maxOfOrNull { it.kwh }?.takeIf { it > 0 } ?: return
+    val maxCost = buckets.maxOfOrNull { it.cost }?.takeIf { it > 0 }
     val barColor = MaterialTheme.colorScheme.primary
+    val costColor = Color(0xFFE5483B)
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val axisStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp)
     val labelEvery = when {
         buckets.size <= 12 -> 1
         buckets.size <= 16 -> 2
         buckets.size == 24 -> 3
         else -> 5
     }
+    // Последний столбик с данными: дальше (будущие часы/дни) линию рублей не тянем
+    val lastData = buckets.indexOfLast { it.kwh > 0 || it.cost > 0 }
+    val axisW = 34.dp
+    val chartH = 140.dp
+    val ticks = listOf(1.0, 0.5, 0.0)
+    fun kwhTick(v: Double) = when {
+        v == 0.0 -> "0"
+        v < 1 -> String.format(Locale("ru"), "%.2f", v)
+        v < 10 -> String.format(Locale("ru"), "%.1f", v)
+        else -> String.format(Locale("ru"), "%.0f", v)
+    }
+    fun rubTick(v: Double) = when {
+        v == 0.0 -> "0"
+        v < 10 -> String.format(Locale("ru"), "%.1f", v)
+        else -> String.format(Locale("ru"), "%.0f", v)
+    }
+
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Text(
-                "макс. ${EnergyReports.kwh(max)}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp),
-            ) {
-                buckets.forEach { b ->
-                    val fraction = (b.kwh / max).toFloat().coerceIn(0f, 1f)
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .fillMaxHeight(if (b.kwh > 0) fraction.coerceAtLeast(0.02f) else 0f)
-                            .background(barColor, RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)),
-                    )
+            // Подписи шкал: слева кВт·ч (столбики), справа ₽ (линия)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).background(barColor, RoundedCornerShape(2.dp)))
+                Spacer(Modifier.width(4.dp))
+                Text("кВт·ч", style = MaterialTheme.typography.labelSmall, color = barColor)
+                Spacer(Modifier.weight(1f))
+                if (maxCost != null) {
+                    Text("₽", style = MaterialTheme.typography.labelSmall, color = costColor)
+                    Spacer(Modifier.width(4.dp))
+                    Box(Modifier.width(14.dp).height(2.dp).background(costColor))
+                }
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.fillMaxWidth().height(chartH)) {
+                // Шкала кВт·ч
+                Column(Modifier.width(axisW).fillMaxHeight(), verticalArrangement = Arrangement.SpaceBetween) {
+                    ticks.forEach { f ->
+                        Text(kwhTick(max * f), style = axisStyle, color = barColor, maxLines = 1, softWrap = false)
+                    }
+                }
+                Box(Modifier.weight(1f).fillMaxHeight()) {
+                    // Сетка
+                    Canvas(Modifier.matchParentSize()) {
+                        ticks.forEach { f ->
+                            val y = size.height * (1 - f.toFloat())
+                            drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        modifier = Modifier.matchParentSize(),
+                    ) {
+                        buckets.forEach { b ->
+                            val fraction = (b.kwh / max).toFloat().coerceIn(0f, 1f)
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .fillMaxHeight(if (b.kwh > 0) fraction.coerceAtLeast(0.02f) else 0f)
+                                    .background(barColor, RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)),
+                            )
+                        }
+                    }
+                    // Линия рублей — плавная, по центрам столбиков
+                    if (maxCost != null && lastData >= 0) {
+                        Canvas(Modifier.matchParentSize()) {
+                            val n = buckets.size
+                            val pts = (0..lastData).map { i ->
+                                Offset(
+                                    size.width * (i + 0.5f) / n,
+                                    size.height * (1 - (buckets[i].cost / maxCost).toFloat().coerceIn(0f, 1f)),
+                                )
+                            }
+                            val path = Path()
+                            pts.forEachIndexed { i, pt ->
+                                if (i == 0) path.moveTo(pt.x, pt.y) else {
+                                    val prev = pts[i - 1]
+                                    val mx = (prev.x + pt.x) / 2
+                                    path.cubicTo(mx, prev.y, mx, pt.y, pt.x, pt.y)
+                                }
+                            }
+                            drawPath(path, costColor, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
+                        }
+                    }
+                }
+                // Шкала ₽
+                Column(
+                    Modifier.width(axisW).fillMaxHeight().padding(start = 4.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                    horizontalAlignment = Alignment.End,
+                ) {
+                    if (maxCost != null) ticks.forEach { f ->
+                        Text(rubTick(maxCost * f), style = axisStyle, color = costColor, maxLines = 1, softWrap = false)
+                    }
                 }
             }
             Row(Modifier.fillMaxWidth()) {
-                buckets.forEachIndexed { i, b ->
-                    Text(
-                        if (i % labelEvery == 0) shortLabel(b.label, buckets.size) else "",
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Clip,
-                        softWrap = false,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.weight(1f),
-                    )
+                Spacer(Modifier.width(axisW))
+                Row(Modifier.weight(1f)) {
+                    buckets.forEachIndexed { i, b ->
+                        Text(
+                            if (i % labelEvery == 0) shortLabel(b.label, buckets.size) else "",
+                            style = axisStyle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Visible,
+                            softWrap = false,
+                            textAlign = TextAlign.Start,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
+                Spacer(Modifier.width(axisW))
             }
         }
     }
