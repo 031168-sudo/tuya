@@ -113,6 +113,12 @@ object HousePlan {
     private fun JSONArray.seg() = MmSeg(f(0), f(1), f(2), f(3), if (length() > 4) f(4) else 0f)
 }
 
+/** Комнаты всех этажей с названиями, заданными пользователем: (id, название) в порядке плана. */
+fun roomNames(context: Context): List<Pair<String, String>> {
+    val settings = RoomStore(context).load()
+    return HousePlan.load(context).flatMap { it.rooms }.map { it.id to (settings[it.id]?.name ?: it.name) }
+}
+
 /** Настройки комнаты, заданные пользователем на экране «Карта». */
 data class RoomSetting(val name: String? = null, val deviceId: String? = null)
 

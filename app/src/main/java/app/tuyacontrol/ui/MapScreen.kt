@@ -144,13 +144,13 @@ private fun formatArea(a: Double): String = String.format(Locale("ru"), "%.1f м
 fun MapScreen(
     devices: List<DeviceUi>,
     heating: app.tuyacontrol.HeatingUiState,
+    /** Нажатие на комнату — открыть устройства этой комнаты. */
+    onRoom: (String) -> Unit,
     bottomBar: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val floors = remember { HousePlan.load(context) }
-    val store = remember { RoomStore(context) }
-    var settings by remember { mutableStateOf(store.load()) }
-    var editing by remember { mutableStateOf<PlanRoom?>(null) }
+    val settings = remember { RoomStore(context).load() }
     val byId = remember(devices) { devices.associateBy { it.id } }
 
     fun tempOf(room: PlanRoom): RoomTemp {
@@ -187,32 +187,19 @@ fun MapScreen(
                     heating = floor.rooms.associate { r ->
                         r.id to settings[r.id]?.deviceId?.let { byId[it] }?.heatingNow
                     },
-                    onRoom = { editing = it },
+                    onRoom = { onRoom(it.id) },
                 )
             }
             Spacer(Modifier.height(4.dp))
             TempLegend()
             Text(
-                "Нажмите на комнату, чтобы задать её название и датчик температуры",
+                "Нажмите на комнату — откроются её устройства; название и датчик температуры — там же, кнопка «Настройка»",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
 
-    editing?.let { room ->
-        RoomDialog(
-            room = room,
-            setting = settings[room.id],
-            devices = devices,
-            onDismiss = { editing = null },
-            onSave = { s ->
-                settings = settings + (room.id to s)
-                store.save(settings)
-                editing = null
-            },
-        )
-    }
 }
 
 /** Один этаж: стены, окна, двери, крыльцо; комнаты — цвет по температуре. Нажатие на комнату — onRoom. */
@@ -490,6 +477,30 @@ private fun TempLegend() {
             Text("нет данных", style = MaterialTheme.typography.bodySmall, color = labelColor)
         }
     }
+}
+
+/** Настройки комнаты по её id: читает и сохраняет RoomStore сама. onSaved — новое название комнаты. */
+@Composable
+fun RoomSettingsDialog(
+    roomId: String,
+    devices: List<DeviceUi>,
+    onDismiss: () -> Unit,
+    onSaved: (String) -> Unit = {},
+) {
+    val context = LocalContext.current
+    val room = remember(roomId) { HousePlan.load(context).flatMap { it.rooms }.firstOrNull { it.id == roomId } } ?: return
+    val store = remember { RoomStore(context) }
+    val settings = remember { store.load() }
+    RoomDialog(
+        room = room,
+        setting = settings[roomId],
+        devices = devices,
+        onDismiss = onDismiss,
+        onSave = { s ->
+            store.save(settings + (roomId to s))
+            onSaved(s.name ?: room.name)
+        },
+    )
 }
 
 /** Настройки комнаты: название и одно устройство, по которому определяется температура. */

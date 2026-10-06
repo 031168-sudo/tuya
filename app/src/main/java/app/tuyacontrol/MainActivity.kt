@@ -125,6 +125,11 @@ private fun App(
     // Прокрутка списков живёт дольше экрана: вернулись из графиков — стоим на том же устройстве
     val devicesListState = remember { androidx.compose.foundation.lazy.LazyListState() }
     val categoryListStates = remember { mutableMapOf<String, androidx.compose.foundation.lazy.LazyListState>() }
+    val roomListStates = remember { mutableMapOf<String, androidx.compose.foundation.lazy.LazyListState>() }
+    // Комнаты плана дома (названия меняются в «Настройке» комнаты — перечитываем при смене экрана)
+    var roomNamesVersion by remember { mutableStateOf(0) }
+    val roomNames = remember(state.screen, roomNamesVersion) { app.tuyacontrol.data.roomNames(context) }
+    val roomNameMap = remember(roomNames) { roomNames.toMap() }
     val openEnergy: (String?) -> Unit = { deviceId ->
         energyViewModel.select(deviceId)
         viewModel.open(Screen.Energy)
@@ -180,6 +185,7 @@ private fun App(
             bottomBar = { bottomBar(0) },
             onModeChange = viewModel::setMode,
             listState = devicesListState,
+            roomNames = roomNameMap,
         )
         Screen.Categories -> CategoriesScreen(
             categories = state.categories,
@@ -223,6 +229,7 @@ private fun App(
                 listState = categoryListStates.getOrPut(state.categoryId.orEmpty()) {
                     androidx.compose.foundation.lazy.LazyListState()
                 },
+                roomNames = roomNameMap,
             )
         }
         Screen.Heating -> HeatingScreen(
@@ -243,8 +250,50 @@ private fun App(
         Screen.Map -> app.tuyacontrol.ui.MapScreen(
             devices = state.devices,
             heating = heating,
+            onRoom = viewModel::openRoom,
             bottomBar = { bottomBar(3) },
         )
+        Screen.RoomDevices -> {
+            val roomId = state.roomId.orEmpty()
+            var roomName by remember(roomId) { mutableStateOf(roomNames.firstOrNull { it.first == roomId }?.second ?: "Комната") }
+            var editRoom by remember { mutableStateOf(false) }
+            DevicesScreen(
+                state = state,
+                onRefresh = { viewModel.refresh() },
+                onCommand = viewModel::sendCommand,
+                onOpenSettings = { viewModel.open(Screen.Setup) },
+                onOpenLog = { viewModel.open(Screen.Log) },
+                onMessageShown = viewModel::messageShown,
+                onOpenEnergy = openEnergy,
+                onOpenSensor = openSensor,
+                onEditDevice = { editDevice = it },
+                title = roomName,
+                devices = state.devices.filter { state.devicePrefs[it.id]?.roomId == roomId },
+                onBack = { viewModel.back() },
+                bottomBar = { bottomBar(3) },
+                onModeChange = viewModel::setMode,
+                listState = roomListStates.getOrPut(roomId) { androidx.compose.foundation.lazy.LazyListState() },
+                roomNames = roomNameMap,
+                emptyText = "В этой комнате пока нет устройств. Комната выбирается в настройках устройства (⋮ на карточке).",
+                extraActions = {
+                    androidx.compose.material3.TextButton(onClick = { editRoom = true }) {
+                        androidx.compose.material3.Text("Настройка")
+                    }
+                },
+            )
+            if (editRoom) {
+                app.tuyacontrol.ui.RoomSettingsDialog(
+                    roomId = roomId,
+                    devices = state.devices,
+                    onDismiss = { editRoom = false },
+                    onSaved = {
+                        roomName = it
+                        roomNamesVersion++
+                        editRoom = false
+                    },
+                )
+            }
+        }
         Screen.Sensor -> SensorScreen(
             state = sensor,
             onBack = { viewModel.back() },
@@ -295,6 +344,7 @@ private fun App(
             device = d,
             pref = state.devicePrefs[d.id],
             categories = state.categories,
+            rooms = roomNames,
             onDismiss = { editDevice = null },
             onSave = {
                 viewModel.setDevicePref(d.id, it)

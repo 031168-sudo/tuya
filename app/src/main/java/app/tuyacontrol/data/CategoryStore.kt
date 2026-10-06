@@ -18,7 +18,13 @@ data class Category(
  * Настройки устройства в приложении. [tempWhenOn]: true — текущая температура верна только когда прибор включён
  * (выключенный отдаёт старое значение), false — всегда верна, null — по типу прибора.
  */
-data class DevicePref(val icon: String? = null, val categoryId: String? = null, val tempWhenOn: Boolean? = null)
+data class DevicePref(
+    val icon: String? = null,
+    val categoryId: String? = null,
+    val tempWhenOn: Boolean? = null,
+    /** Комната на плане дома (id из house.json), null — не выбрана. */
+    val roomId: String? = null,
+)
 
 /** Категории и назначения хранятся только в телефоне (обычные SharedPreferences, JSON). */
 class CategoryStore(context: Context) {
@@ -52,6 +58,7 @@ class CategoryStore(context: Context) {
                 icon = p.optString("icon").ifEmpty { null },
                 categoryId = p.optString("category").ifEmpty { null },
                 tempWhenOn = if (p.has("temp_on")) p.optBoolean("temp_on") else null,
+                roomId = p.optString("room").ifEmpty { null },
             )
         }
     } catch (e: Exception) {
@@ -62,9 +69,10 @@ class CategoryStore(context: Context) {
     fun saveDevicePrefs(map: Map<String, DevicePref>) {
         val o = JSONObject()
         map.forEach { (id, p) ->
-            if (p.icon == null && p.categoryId == null && p.tempWhenOn == null) return@forEach
+            if (p.icon == null && p.categoryId == null && p.tempWhenOn == null && p.roomId == null) return@forEach
             val j = JSONObject().put("icon", p.icon ?: "").put("category", p.categoryId ?: "")
             p.tempWhenOn?.let { j.put("temp_on", it) }
+            p.roomId?.let { j.put("room", it) }
             o.put(id, j)
         }
         prefs.edit().putString(KEY_DEVICES, o.toString()).apply()

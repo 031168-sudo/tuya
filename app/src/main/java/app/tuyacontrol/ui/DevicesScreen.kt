@@ -86,6 +86,12 @@ fun DevicesScreen(
     onModeChange: (ControlMode) -> Unit = {},
     /** Положение прокрутки хранится снаружи: после графиков возвращаемся на то же устройство. */
     listState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
+    /** Комнаты плана дома: id -> название (в карточке — комната устройства). */
+    roomNames: Map<String, String> = emptyMap(),
+    /** Что написать, если список пуст. */
+    emptyText: String = "В этой категории пока нет устройств",
+    /** Дополнительные кнопки в шапке (слева от остальных). */
+    extraActions: @Composable () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val categories = state.categories.associateBy { it.id }
@@ -119,6 +125,7 @@ fun DevicesScreen(
                     }
                 },
                 actions = {
+                    extraActions()
                     if (devices.any { it.hasEnergy }) {
                         TextButton(onClick = { onOpenEnergy(null) }) { Text("₽") }
                     }
@@ -150,7 +157,11 @@ fun DevicesScreen(
                         CircularProgressIndicator()
                     } else {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(if (state.devices.isEmpty()) "Устройств нет" else "В этой категории пока нет устройств")
+                            Text(
+                                if (state.devices.isEmpty()) "Устройств нет" else emptyText,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 24.dp),
+                            )
                             TextButton(onClick = onRefresh) { Text("Обновить") }
                             TextButton(onClick = onOpenLog) { Text("Открыть логи") }
                         }
@@ -188,6 +199,7 @@ fun DevicesScreen(
                         DeviceCard(
                             device = device,
                             category = pref?.categoryId?.let { categories[it] },
+                            room = pref?.roomId?.let { roomNames[it] },
                             icon = pref?.icon ?: device.defaultIcon,
                             onEdit = { onEditDevice(device) },
                             onCommand = onCommand,
@@ -206,6 +218,7 @@ fun DevicesScreen(
 private fun DeviceCard(
     device: DeviceUi,
     category: Category?,
+    room: String?,
     icon: String,
     onEdit: () -> Unit,
     onCommand: (deviceId: String, code: String, value: Any) -> Unit,
@@ -272,22 +285,44 @@ private fun DeviceCard(
                             HeatingIndicator(it)
                         }
                     }
-                    if (category != null) {
+                    if (category != null || room != null) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                DeviceIcons.vector(category.icon),
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                category.name,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            if (category != null) {
+                                Icon(
+                                    DeviceIcons.vector(category.icon),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    category.name,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                            }
+                            // Комната на плане дома — только если выбрана
+                            if (room != null) {
+                                if (category != null) Spacer(Modifier.width(10.dp))
+                                Icon(
+                                    DeviceIcons.vector("home"),
+                                    contentDescription = "Комната",
+                                    modifier = Modifier.size(14.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    room,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false),
+                                )
+                            }
                         }
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {

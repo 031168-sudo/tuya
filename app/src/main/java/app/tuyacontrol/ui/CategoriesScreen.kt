@@ -307,7 +307,7 @@ private fun CategoryDialog(
     }
 }
 
-/** Настройки устройства: иконка и категория. */
+/** Настройки устройства: категория, комната, иконка. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceSettingsDialog(
@@ -316,8 +316,11 @@ fun DeviceSettingsDialog(
     categories: List<Category>,
     onDismiss: () -> Unit,
     onSave: (DevicePref) -> Unit,
+    /** Комнаты плана дома: id -> название (пусто — плана нет, выбор комнаты не показываем). */
+    rooms: List<Pair<String, String>> = emptyList(),
 ) {
     var icon by remember { mutableStateOf(pref?.icon ?: device.defaultIcon) }
+    var roomId by remember { mutableStateOf(pref?.roomId?.takeIf { id -> rooms.any { it.first == id } }) }
     var categoryId by remember { mutableStateOf(pref?.categoryId?.takeIf { id -> categories.any { it.id == id } }) }
     var tempWhenOn by remember { mutableStateOf(pref?.tempWhenOn ?: device.defaultTempOnlyWhenOn) }
     val askTemp = app.tuyacontrol.sensor.SensorDevice.TEMPERATURE_CODES.any { it in device.status } && device.mainSwitchOn != null
@@ -353,6 +356,18 @@ fun DeviceSettingsDialog(
                         }
                     }
                 }
+                if (rooms.isNotEmpty()) {
+                    Text("Комната", style = MaterialTheme.typography.labelMedium)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    ) {
+                        FilterChip(selected = roomId == null, onClick = { roomId = null }, label = { Text("Без комнаты") })
+                        rooms.forEach { (id, name) ->
+                            FilterChip(selected = roomId == id, onClick = { roomId = id }, label = { Text(name, maxLines = 1) })
+                        }
+                    }
+                }
                 if (askTemp) {
                     Text("Текущая температура верна", style = MaterialTheme.typography.labelMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -378,6 +393,8 @@ fun DeviceSettingsDialog(
                         icon = icon.takeIf { it != device.defaultIcon },
                         categoryId = categoryId,
                         tempWhenOn = tempWhenOn.takeIf { askTemp && it != device.defaultTempOnlyWhenOn },
+                        // Комната, выбранная раньше, сохраняется, даже если план сейчас не прочитался
+                        roomId = if (rooms.isEmpty()) pref?.roomId else roomId,
                     ),
                 )
             }) { Text("Сохранить") }

@@ -35,7 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Map, Commands }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Map, Commands, RoomDevices }
 
 data class DeviceUi(
     val id: String,
@@ -242,6 +242,8 @@ data class UiState(
     val returnTo: Screen? = null,
     /** Открытая категория (экран CategoryDevices). */
     val categoryId: String? = null,
+    /** Открытая комната плана дома (экран RoomDevices). */
+    val roomId: String? = null,
     val mode: ControlMode = ControlMode.AUTO,
     /** Состояние локальных подключений по устройствам. */
     val local: Map<String, LocalState> = emptyMap(),
@@ -411,7 +413,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun open(screen: Screen) = _state.update {
         // Графики и энергию открываем «поверх» списка — запоминаем, куда вернуться
         val from = if (screen == Screen.Sensor || screen == Screen.Energy) {
-            it.screen.takeIf { s -> s == Screen.Devices || s == Screen.CategoryDevices } ?: it.returnTo
+            it.screen.takeIf { s -> s == Screen.Devices || s == Screen.CategoryDevices || s == Screen.RoomDevices } ?: it.returnTo
         } else {
             it.returnTo
         }
@@ -425,6 +427,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else if ((s.screen == Screen.Sensor || s.screen == Screen.Energy) && s.returnTo != null) {
             // Обратно туда, откуда открыли: в список устройств или в ту же категорию
             _state.update { it.copy(screen = s.returnTo, returnTo = null) }; true
+        } else if (s.screen == Screen.RoomDevices) {
+            open(Screen.Map); true
         } else if (s.screen == Screen.CategoryDevices || s.screen == Screen.Commands) {
             open(Screen.Categories); true
         } else if (s.screen != Screen.Categories && s.credentials != null) {
@@ -503,6 +507,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ---------- Категории и иконки ----------
 
     fun openCategory(id: String) = _state.update { it.copy(screen = Screen.CategoryDevices, categoryId = id) }
+
+    /** Устройства комнаты плана дома (нажатие на комнату на «Карте»). */
+    fun openRoom(id: String) = _state.update { it.copy(screen = Screen.RoomDevices, roomId = id) }
 
     fun saveCategory(category: Category) {
         val list = _state.value.categories
