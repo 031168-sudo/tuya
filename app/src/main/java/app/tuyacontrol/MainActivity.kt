@@ -251,6 +251,7 @@ private fun App(
             devices = state.devices,
             heating = heating,
             onRoom = viewModel::openRoom,
+            deviceRooms = state.devicePrefs.mapValues { it.value.roomId },
             bottomBar = { bottomBar(3) },
         )
         Screen.RoomDevices -> {

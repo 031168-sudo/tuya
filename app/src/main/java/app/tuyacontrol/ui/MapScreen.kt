@@ -146,12 +146,24 @@ fun MapScreen(
     heating: app.tuyacontrol.HeatingUiState,
     /** Нажатие на комнату — открыть устройства этой комнаты. */
     onRoom: (String) -> Unit,
+    /** Комната каждого устройства (id устройства -> id комнаты), из настроек устройств. */
+    deviceRooms: Map<String, String?>,
     bottomBar: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val floors = remember { HousePlan.load(context) }
     val settings = remember { RoomStore(context).load() }
     val byId = remember(devices) { devices.associateBy { it.id } }
+
+    /**
+     * «Греет / не греет» комнаты: все обогреватели, привязанные к комнате (и датчик её температуры, если он обогреватель).
+     * Хоть один греет — греет; есть обогреватели, но все не греют — не греет; обогревателей нет — null (значка нет).
+     */
+    fun roomHeating(roomId: String): Boolean? {
+        val ids = deviceRooms.filterValues { it == roomId }.keys + listOfNotNull(settings[roomId]?.deviceId)
+        val states = ids.mapNotNull { byId[it]?.heatingNow }
+        return if (states.isEmpty()) null else states.any { it }
+    }
 
     fun tempOf(room: PlanRoom): RoomTemp {
         val device = settings[room.id]?.deviceId?.let { byId[it] } ?: return RoomTemp(null, false)
@@ -187,9 +199,7 @@ fun MapScreen(
                     widthFraction = (floor.width + 2 * padOf(floor)) / (widest + 2 * PLAN_PAD),
                     names = floor.rooms.associate { it.id to (settings[it.id]?.name ?: it.name) },
                     temps = floor.rooms.associate { it.id to tempOf(it) },
-                    heating = floor.rooms.associate { r ->
-                        r.id to settings[r.id]?.deviceId?.let { byId[it] }?.heatingNow
-                    },
+                    heating = floor.rooms.associate { r -> r.id to roomHeating(r.id) },
                     onRoom = { onRoom(it.id) },
                 )
             }
