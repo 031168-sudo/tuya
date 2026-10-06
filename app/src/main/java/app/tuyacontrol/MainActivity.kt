@@ -275,7 +275,7 @@ private fun App(
                 listState = roomListStates.getOrPut(roomId) { androidx.compose.foundation.lazy.LazyListState() },
                 roomNames = roomNameMap,
                 emptyText = "В этой комнате пока нет устройств. Комната выбирается в настройках устройства (⋮ на карточке).",
-                extraActions = {
+                belowTopBar = {
                     androidx.compose.material3.TextButton(onClick = { editRoom = true }) {
                         androidx.compose.material3.Text("Настройка")
                     }

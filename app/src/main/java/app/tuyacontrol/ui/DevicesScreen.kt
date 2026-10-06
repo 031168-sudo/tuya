@@ -90,8 +90,8 @@ fun DevicesScreen(
     roomNames: Map<String, String> = emptyMap(),
     /** Что написать, если список пуст. */
     emptyText: String = "В этой категории пока нет устройств",
-    /** Дополнительные кнопки в шапке (слева от остальных). */
-    extraActions: @Composable () -> Unit = {},
+    /** Строка под шапкой справа, под кнопками (например, «Настройка» комнаты); null — нет. */
+    belowTopBar: (@Composable () -> Unit)? = null,
 ) {
     val snackbar = remember { SnackbarHostState() }
     val categories = state.categories.associateBy { it.id }
@@ -104,42 +104,49 @@ fun DevicesScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        state.lastUpdated?.let {
-                            Text(
-                                "обновлено " + SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(it)),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+            Column {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            state.lastUpdated?.let {
+                                Text(
+                                    "обновлено " + SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(it)),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
-                    }
-                },
-                navigationIcon = {
-                    if (onBack != null) {
-                        IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                    },
+                    navigationIcon = {
+                        if (onBack != null) {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                            }
                         }
-                    }
-                },
-                actions = {
-                    extraActions()
-                    if (devices.any { it.hasEnergy }) {
-                        TextButton(onClick = { onOpenEnergy(null) }) { Text("₽") }
-                    }
-                    IconButton(onClick = onRefresh) {
-                        Icon(Icons.Filled.Refresh, contentDescription = "Обновить")
-                    }
-                    IconButton(onClick = onOpenLog) {
-                        Icon(Icons.Filled.Info, contentDescription = "Логи")
-                    }
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Настройки")
-                    }
-                },
-            )
+                    },
+                    actions = {
+                        if (devices.any { it.hasEnergy }) {
+                            TextButton(onClick = { onOpenEnergy(null) }) { Text("₽") }
+                        }
+                        IconButton(onClick = onRefresh) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "Обновить")
+                        }
+                        IconButton(onClick = onOpenLog) {
+                            Icon(Icons.Filled.Info, contentDescription = "Логи")
+                        }
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Настройки")
+                        }
+                    },
+                )
+                belowTopBar?.let { extra ->
+                    Row(
+                        horizontalArrangement = Arrangement.End,
+                        modifier = Modifier.fillMaxWidth().padding(end = 8.dp),
+                    ) { extra() }
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = bottomBar,
