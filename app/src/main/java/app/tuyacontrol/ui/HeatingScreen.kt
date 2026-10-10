@@ -42,6 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -119,6 +120,7 @@ fun HeatingScreen(
     onRecompute: () -> Unit,
     onDeploy: () -> Unit,
     onZoneControl: (String, Boolean) -> Unit,
+    onProgramMode: (String, Boolean) -> Unit = { _, _ -> },
     onTestStudio: (String) -> Unit,
     onSaveZone: (HeatZone) -> Unit,
     onLearn: () -> Unit = {},
@@ -165,6 +167,7 @@ fun HeatingScreen(
                         onEdit = { editing = plan.zone },
                         onInTotal = { onInTotal(plan.zone.id, it) },
                         onControl = { onZoneControl(plan.zone.id, it) },
+                        onProgramMode = { on -> plan.zone.deviceId?.let { onProgramMode(it, on) } },
                         onTestStudio = { onTestStudio(plan.zone.id) },
                         busy = state.deploying,
                         deployed = plan.zone.deviceId?.let { state.deployedTimers[it] },
@@ -305,6 +308,7 @@ private fun ZoneCard(
     onEdit: () -> Unit,
     onInTotal: (Boolean) -> Unit,
     onControl: (Boolean) -> Unit,
+    onProgramMode: (Boolean) -> Unit = {},
     onTestStudio: () -> Unit,
     busy: Boolean,
     deployed: List<Pair<Int, Boolean>>? = null,
@@ -420,7 +424,7 @@ private fun ZoneCard(
                     }
                 }
             } else if (thermostat?.programCode != null) {
-                ProgramBlock(zone, thermostat, plan, prices, deployedProgram, busy, onControl)
+                ProgramBlock(zone, thermostat, plan, prices, deployedProgram, busy, onControl, onProgramMode)
             } else {
             Text("Уставки термостата", style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -616,6 +620,7 @@ private fun PeriodChips(periods: List<app.tuyacontrol.heating.WeekProgram.Period
  * Термостат с недельной программой на борту (гостиная, коридор, спальня): что в нём записано сейчас,
  * совпадает ли с тем, что записало приложение, и что получится по плану (6 периодов в сутки).
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun ProgramBlock(
     zone: HeatZone,
@@ -625,6 +630,7 @@ private fun ProgramBlock(
     deployed: String?,
     busy: Boolean,
     onControl: (Boolean) -> Unit,
+    onProgramMode: (Boolean) -> Unit,
 ) {
     val ok = Color(0xFF43A047)
     val program = thermostat.program.orEmpty()
@@ -648,11 +654,29 @@ private fun ProgramBlock(
             )
             Button(onClick = { onControl(true) }, enabled = !busy) { Text("Записать план в термостат") }
         }
-        else -> Text(
-            if (thermostat.programOn == true) "Управление выключено: термостат работает по своей программе, приложение её не меняет"
-            else "Управление выключено: термостат на ручной уставке, приложение её не меняет",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        else -> {
+            Text(
+                if (thermostat.programOn == true) "Управление выключено: термостат работает по своей программе, приложение её не меняет"
+                else "Управление выключено: термостат на ручной уставке, приложение её не меняет",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            // Режим можно сменить вручную; при включённом управлении режим ставит само приложение
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Режим", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                FilterChip(
+                    selected = thermostat.programOn == false,
+                    enabled = !busy,
+                    onClick = { if (thermostat.programOn != false) onProgramMode(false) },
+                    label = { Text("Ручной") },
+                )
+                FilterChip(
+                    selected = thermostat.programOn == true,
+                    enabled = !busy,
+                    onClick = { if (thermostat.programOn != true) onProgramMode(true) },
+                    label = { Text("Программа") },
+                )
+            }
+        }
     }
     // Что запишется по плану: 6 периодов вместо почасовых уставок
     val planned = app.tuyacontrol.heating.WeekProgram.compress(plan.setpoints, prices.price)

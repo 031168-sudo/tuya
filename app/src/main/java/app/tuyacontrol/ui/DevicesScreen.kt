@@ -239,7 +239,9 @@ private fun DeviceCard(
     // У «温控仪» (батарея в ванной) switch — реле нагрева: его не переключают, он показан значком «греет»
     val entries = device.status.entries.toList().filter {
         !(device.isSensor && it.value is Boolean) &&
-            !(device.switchIsRelay && it.key in DeviceUi.MAIN_SWITCHES)
+            !(device.switchIsRelay && it.key in DeviceUi.MAIN_SWITCHES) &&
+            // Режим ручной/программа показан отдельным переключателем
+            !(it.key == "mode" && device.programModes != null)
     }
     val primary = entries.filter { DpLabels.isPrimary(it.key, device.spec[it.key]) || isFallbackSwitch(it, device) }
     val secondary = entries - primary.toSet()
@@ -408,6 +410,7 @@ private fun DeviceCard(
                     )
                 }
             }
+            device.programModes?.let { modes -> ProgramModeRow(device, modes, onCommand) }
             primary.forEach { (code, value) ->
                 DpRow(device, code, value, onCommand)
             }
@@ -442,6 +445,55 @@ private fun DeviceCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/** Режим термостата: «Ручной» (держит уставку) или «Программа» (недельная программа в самом приборе). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProgramModeRow(
+    device: DeviceUi,
+    modes: Pair<String, String>,
+    onCommand: (deviceId: String, code: String, value: Any) -> Unit,
+) {
+    val (manual, program) = modes
+    val now = device.status["mode"]?.toString()
+    val pending = "mode" in device.pending
+    val enabled = device.online && !pending
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Режим", style = MaterialTheme.typography.bodyMedium)
+            if (now != manual && now != program && now != null) {
+                Text(
+                    "сейчас: " + DpFormat.format(now, device.spec["mode"]),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (pending) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(8.dp))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            FilterChip(
+                selected = now == manual,
+                enabled = enabled,
+                onClick = { if (now != manual) onCommand(device.id, "mode", manual) },
+                label = { Text("Ручной") },
+            )
+            FilterChip(
+                selected = now == program,
+                enabled = enabled,
+                onClick = { if (now != program) onCommand(device.id, "mode", program) },
+                label = { Text("Программа") },
+            )
         }
     }
 }

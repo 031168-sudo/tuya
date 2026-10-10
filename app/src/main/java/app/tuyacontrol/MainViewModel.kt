@@ -172,6 +172,37 @@ data class DeviceUi(
             return t > PRESET_OFF.second + 0.5
         }
 
+    /**
+     * Ручной и «по программе» режимы термостата (manual, program): спальня — manual/auto, «Temp» — cold/hot.
+     * null — у устройства нет такого переключения.
+     */
+    val programModes: Pair<String, String>?
+        get() {
+            if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) || app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id)) return null
+            // Сначала по текущему значению: в общей спецификации Tuya у «Temp» в списке режимов есть и auto/manual,
+            // хотя сам прибор понимает только cold/hot/wind
+            val now = status["mode"]?.toString() ?: return null
+            val range = spec["mode"]?.range.orEmpty()
+            return when {
+                now in setOf("cold", "hot", "wind") -> "cold" to "hot"
+                now in setOf("manual", "auto") -> "manual" to "auto"
+                "manual" in range && "auto" in range -> "manual" to "auto"
+                "cold" in range && "hot" in range -> "cold" to "hot"
+                else -> null
+            }
+        }
+
+    /** true — термостат работает по своей программе, false — по ручной уставке, null — другой режим или нет режима. */
+    val programModeOn: Boolean?
+        get() {
+            val (manual, program) = programModes ?: return null
+            return when (status["mode"]?.toString()) {
+                program -> true
+                manual -> false
+                else -> null
+            }
+        }
+
     /** Переключатель этого устройства — не «питание», а реле нагрева: показывается как «греет / не греет». */
     val switchIsRelay: Boolean
         get() = productName.contains(ALWAYS_ON_PRODUCT)

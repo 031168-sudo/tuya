@@ -528,6 +528,13 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** Переключить термостат зоны: по своей программе или на ручную уставку. */
+    fun setProgramMode(deviceId: String, program: Boolean) {
+        val t = _state.value.thermostats.firstOrNull { it.id == deviceId } ?: return
+        val code = t.programCode ?: return
+        runCloud { client -> engine.setProgramMode(client, deviceId, t.name, code, program) }
+    }
+
     private fun runCloud(block: suspend (TuyaCloudClient) -> String) {
         val creds = credentials.load() ?: run {
             _state.update { it.copy(message = "Сначала введите ключи Tuya в настройках") }

@@ -344,6 +344,30 @@ class HeatingEngine(context: Context) {
         throw IllegalStateException("термостат не подтвердил программу")
     }
 
+    /**
+     * Перевести термостат с недельной программой в режим «по программе» (все 7 дней по рабочему) или в ручной.
+     * Каждый DP отдельно, затем проверка по состоянию прибора.
+     */
+    suspend fun setProgramMode(client: TuyaCloudClient, id: String, name: String, code: String, program: Boolean): String {
+        val cmds = if (program) programModes(code) else listOf("mode" to manualMode(code))
+        for ((k, v) in cmds) {
+            val r = runCatching { client.sendProperties(id, listOf(k to v)); "модель: принято" }
+                .recoverCatching { e1 -> client.sendCommands(id, listOf(k to v)); "модель: ${describe(e1)}; команда: принято" }
+                .getOrElse { "не принято: ${describe(it)}" }
+            AppLog.i("Отопление: $name — $k=$v → $r")
+        }
+        var after: Map<String, Any?> = emptyMap()
+        for (attempt in 1..6) {
+            kotlinx.coroutines.delay(3000)
+            after = deviceState(client, id)
+            if (cmds.all { (k, v) -> after[k]?.toString() == v }) {
+                return "$name: режим ${if (program) "«Программа»" else "«Ручной»"} включён"
+            }
+        }
+        AppLog.i("Отопление: $name — режим не подтверждён: ${cmds.map { it.first + "=" + after[it.first] }}")
+        return "$name: ошибка — термостат не подтвердил смену режима"
+    }
+
     private suspend fun sendTuya(client: TuyaCloudClient, id: String, cmds: List<Pair<String, Any?>>) {
         try {
             client.sendCommands(id, cmds)
@@ -506,6 +530,9 @@ class HeatingEngine(context: Context) {
             // Спальня: mode auto — по программе; program_mode 70 — 7 дней по рабочему
             else -> listOf("mode" to "auto", "program_mode" to "70")
         }
+
+        /** Ручной режим термостата с программой: «Temp» — cold, спальня — manual. */
+        fun manualMode(code: String): String = if (code == "week_program3") "cold" else "manual"
 
         /** Своя категория таймеров: расписания, заведённые вручную в Tuya Smart, не трогаем. */
         const val TIMER_CATEGORY = "moydomheat"

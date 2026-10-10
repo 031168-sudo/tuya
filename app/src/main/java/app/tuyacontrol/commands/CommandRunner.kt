@@ -147,19 +147,7 @@ class CommandRunner(context: Context) {
     } }
 
     /** Ручной и «по программе» режимы термостата: спальня — manual/auto, «Temp» — cold/hot. */
-    private fun modes(d: DeviceUi): Pair<String, String>? {
-        // Сначала по текущему значению: в общей спецификации Tuya у «Temp» в списке режимов есть и auto/manual,
-        // хотя сам прибор понимает только cold/hot/wind
-        val now = d.status["mode"]?.toString()
-        val range = d.spec["mode"]?.range.orEmpty()
-        return when {
-            now in setOf("cold", "hot", "wind") -> "cold" to "hot"
-            now in setOf("manual", "auto") -> "manual" to "auto"
-            "manual" in range && "auto" in range -> "manual" to "auto"
-            "cold" in range && "hot" in range -> "cold" to "hot"
-            else -> null
-        }
-    }
+    private fun modes(d: DeviceUi): Pair<String, String>? = d.programModes
 
     private fun encodeTemp(d: DeviceUi, code: String, t: Double): Long {
         val spec = d.spec[code]

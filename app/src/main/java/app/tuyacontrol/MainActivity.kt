@@ -237,6 +237,7 @@ private fun App(
             onRecompute = heatingViewModel::recompute,
             onDeploy = heatingViewModel::deploy,
             onZoneControl = heatingViewModel::setZoneControl,
+            onProgramMode = heatingViewModel::setProgramMode,
             onTestStudio = heatingViewModel::testStudioTimer,
             onLearn = heatingViewModel::learnNow,
             onSaveZone = heatingViewModel::saveZone,
