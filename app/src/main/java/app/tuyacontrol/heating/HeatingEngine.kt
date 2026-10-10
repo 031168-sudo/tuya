@@ -158,10 +158,8 @@ class HeatingEngine(context: Context) {
                     true
                 }
 
-                // Сразу — уставка текущего часа. Ничего не включаем: только уставки (и ручной режим,
-                // чтобы встроенная программа термостата не перебивала их)
+                // Сразу — уставка текущего часа. Ничего не включаем и режим не меняем: только уставки
                 val now = mutableListOf<Pair<String, Any?>>()
-                spec["mode"]?.takeIf { it.writable && "manual" in it.range }?.let { now += "mode" to "manual" }
                 now += setpointCommands(spec, plan.setpoints[LocalTime.now().hour])!!
                 runCatching { sendTuya(client, id, now) }
                     .onFailure { AppLog.e("Отопление: ${zone.name} — уставка сейчас не отправлена", it) }
@@ -309,7 +307,9 @@ class HeatingEngine(context: Context) {
         val old = (before[code] as? String)?.let { WeekProgram.decode(code, it) }.orEmpty()
         val weekend = old.drop(WeekProgram.PERIODS).ifEmpty { listOf(WeekProgram.Period(8 * 60, 22.0), WeekProgram.Period(23 * 60, 16.0)) }
         val value = WeekProgram.encode(code, periods + weekend)!!
-        val modes = programModes(code)
+        // Только расписание: дни недели (все 7 по рабочему) — да, а режим и вкл/выкл не трогаем.
+        // Если термостат выключен или на ручной уставке — на карточке зоны будет предупреждение
+        val modes = programModes(code).filter { it.first != "mode" }
         val text = periods.joinToString(", ") { it.text() }
         fun progOf(st: Map<String, Any?>) = (st[code] as? String)?.let { WeekProgram.decode(code, it) }
         val wanted = periods + weekend
@@ -319,7 +319,7 @@ class HeatingEngine(context: Context) {
             AppLog.i("Отопление: ${zone.name} — программа в термостате уже такая: $text")
             return "${zone.name}: программа в термостате без изменений — $text"
         }
-        AppLog.i("Отопление: ${zone.name} — пишу программу $code=$value ($text), режим $modes; было ${before[code]}")
+        AppLog.i("Отопление: ${zone.name} — пишу программу $code=$value ($text), дни $modes; было ${before[code]}")
         // Каждый DP отдельно и через модель устройства (week_program — нестандартные DP, обычные команды
         // их могут молча не принять); если модель не приняла — обычной командой. Ответы — в журнал
         for ((k, v) in listOf(code to value) + modes) {
@@ -340,7 +340,7 @@ class HeatingEngine(context: Context) {
                 return "${zone.name}: программа записана в термостат — $text"
             }
         }
-        AppLog.i("Отопление: ${zone.name} — термостат НЕ подтвердил: $code=${after[code]}, режим ${modes.map { it.first + "=" + after[it.first] }}")
+        AppLog.i("Отопление: ${zone.name} — термостат НЕ подтвердил: $code=${after[code]}, дни ${modes.map { it.first + "=" + after[it.first] }}")
         throw IllegalStateException("термостат не подтвердил программу")
     }
 
@@ -530,6 +530,9 @@ class HeatingEngine(context: Context) {
             // Спальня: mode auto — по программе; program_mode 70 — 7 дней по рабочему
             else -> listOf("mode" to "auto", "program_mode" to "70")
         }
+
+        /** Значение mode «по программе»: «Temp» — hot, спальня — auto. */
+        fun programModeValue(code: String): String = if (code == "week_program3") "hot" else "auto"
 
         /** Ручной режим термостата с программой: «Temp» — cold, спальня — manual. */
         fun manualMode(code: String): String = if (code == "week_program3") "cold" else "manual"

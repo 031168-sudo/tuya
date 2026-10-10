@@ -426,6 +426,12 @@ private fun ZoneCard(
             } else if (thermostat?.programCode != null) {
                 ProgramBlock(zone, thermostat, plan, prices, deployedProgram, busy, onControl, onProgramMode)
             } else {
+            if (zone.control && thermostat?.powerOn == false) {
+                Text(
+                    "⚠ Термостат выключен — по плану греть не будет. Приложение его не включает",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
+                )
+            }
             Text("Уставки термостата", style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (h in 0 until 24) {
@@ -640,43 +646,57 @@ private fun ProgramBlock(
     } else {
         PeriodChips(program.take(app.tuyacontrol.heating.WeekProgram.PERIODS), prices, bold = true)
     }
-    val matches = deployed != null && thermostat.programRaw == deployed && thermostat.programOn == true
+    // Приложение пишет только расписание; вкл/выкл и режим — дело хозяина
+    val matches = deployed != null && thermostat.programRaw == deployed
+    val off = thermostat.powerOn == false
+    val manual = thermostat.programOn == false
     when {
-        zone.control && matches -> Text(
+        zone.control && matches && !off && !manual -> Text(
             "✓ План записан в термостат и проверен. Работает сам, даже без интернета",
             style = MaterialTheme.typography.bodySmall, color = ok,
         )
+        zone.control && matches -> Text(
+            "✓ План записан в термостат и проверен",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         zone.control -> {
             Text(
-                if (thermostat.programOn == false) "⚠ Термостат не в режиме программы — работает по ручной уставке"
-                else "⚠ В термостате не то, что записало приложение",
+                "⚠ В термостате не то, что записало приложение",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
             )
             Button(onClick = { onControl(true) }, enabled = !busy) { Text("Записать план в термостат") }
         }
-        else -> {
-            Text(
-                if (thermostat.programOn == true) "Управление выключено: термостат работает по своей программе, приложение её не меняет"
-                else "Управление выключено: термостат на ручной уставке, приложение её не меняет",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            // Режим можно сменить вручную; при включённом управлении режим ставит само приложение
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Режим", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                FilterChip(
-                    selected = thermostat.programOn == false,
-                    enabled = !busy,
-                    onClick = { if (thermostat.programOn != false) onProgramMode(false) },
-                    label = { Text("Ручной") },
-                )
-                FilterChip(
-                    selected = thermostat.programOn == true,
-                    enabled = !busy,
-                    onClick = { if (thermostat.programOn != true) onProgramMode(true) },
-                    label = { Text("Программа") },
-                )
-            }
-        }
+        else -> Text(
+            if (thermostat.programOn == true) "Управление выключено: термостат работает по своей программе, приложение её не меняет"
+            else "Управление выключено: термостат на ручной уставке, приложение её не меняет",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+    if (zone.control && (off || manual)) {
+        Text(
+            "⚠ " + when {
+                off && manual -> "Термостат выключен и в ручном режиме"
+                off -> "Термостат выключен"
+                else -> "Термостат в ручном режиме"
+            } + " — по плану греть не будет. Приложение включение и режим не меняет",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
+        )
+    }
+    // Режим переключает только хозяин: здесь или в карточке устройства
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Режим", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        FilterChip(
+            selected = thermostat.programOn == false,
+            enabled = !busy,
+            onClick = { if (thermostat.programOn != false) onProgramMode(false) },
+            label = { Text("Ручной") },
+        )
+        FilterChip(
+            selected = thermostat.programOn == true,
+            enabled = !busy,
+            onClick = { if (thermostat.programOn != true) onProgramMode(true) },
+            label = { Text("Программа") },
+        )
     }
     // Что запишется по плану: 6 периодов вместо почасовых уставок
     val planned = app.tuyacontrol.heating.WeekProgram.compress(plan.setpoints, prices.price)

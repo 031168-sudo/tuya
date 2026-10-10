@@ -54,7 +54,8 @@ data class Thermostat(
         /** Программа из состояния DP: (код, значение, по программе ли работает); null — программы нет. */
         fun programOf(st: Map<String, Any?>): Triple<String, String, Boolean>? {
             val code = app.tuyacontrol.heating.HeatingEngine.PROGRAM_CODES.firstOrNull { st[it] is String } ?: return null
-            val on = app.tuyacontrol.heating.HeatingEngine.programModes(code).all { (k, v) -> st[k]?.toString() == v }
+            // «По программе» — только по режиму; дни недели проверяются при записи
+            val on = st["mode"]?.toString() == app.tuyacontrol.heating.HeatingEngine.programModeValue(code)
             return Triple(code, st[code] as String, on)
         }
     }
