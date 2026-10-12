@@ -34,6 +34,9 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -49,7 +52,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -78,6 +84,7 @@ fun EnergyScreen(
     onPeriod: (PeriodType, LocalDate?) -> Unit,
     onShift: (Long) -> Unit,
     onToday: () -> Unit,
+    onHours: (Int, Int) -> Unit = { _, _ -> },
     onMessageShown: () -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -187,6 +194,11 @@ fun EnergyScreen(
                 }
             }
 
+            // Часы внутри дня: считать не всё сутки, а только с … по …
+            if (state.period == PeriodType.DAY) {
+                item { HoursRow(state.hourFrom, state.hourTo, onHours) }
+            }
+
             val report = state.report
             if (report != null) {
                 item { SummaryCard(report, state.tariffs.isEmpty(), onOpenTariffs) }
@@ -210,7 +222,7 @@ fun EnergyScreen(
                             },
                         )
                     }
-                    val rows = if (state.period == PeriodType.DAY) report.buckets else report.buckets.reversed()
+                    val rows = if (state.period == PeriodType.DAY) report.buckets.filter { it.selected } else report.buckets.reversed()
                     items(rows) { b ->
                         BucketRow(
                             b,
@@ -250,6 +262,52 @@ fun EnergyScreen(
     }
 }
 
+/** «Часы: с 17:00 до 20:00» — два выпадающих списка и сброс на весь день. */
+@Composable
+private fun HoursRow(from: Int, to: Int, onChange: (Int, Int) -> Unit) {
+    fun hh(h: Int) = h.toString().padStart(2, '0') + ":00"
+    var fromOpen by remember { mutableStateOf(false) }
+    var toOpen by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text("Часы", style = MaterialTheme.typography.bodyMedium)
+        Box {
+            OutlinedButton(onClick = { fromOpen = true }) { Text("с ${hh(from)}") }
+            DropdownMenu(expanded = fromOpen, onDismissRequest = { fromOpen = false }) {
+                (0..23).forEach { h ->
+                    DropdownMenuItem(
+                        text = { Text(hh(h)) },
+                        onClick = {
+                            fromOpen = false
+                            onChange(h, if (to <= h) h + 1 else to)
+                        },
+                    )
+                }
+            }
+        }
+        Box {
+            OutlinedButton(onClick = { toOpen = true }) { Text("по ${hh(to)}") }
+            DropdownMenu(expanded = toOpen, onDismissRequest = { toOpen = false }) {
+                (1..24).forEach { h ->
+                    DropdownMenuItem(
+                        text = { Text(hh(h)) },
+                        onClick = {
+                            toOpen = false
+                            onChange(if (from >= h) h - 1 else from, h)
+                        },
+                    )
+                }
+            }
+        }
+        if (from != 0 || to != 24) {
+            TextButton(onClick = { onChange(0, 24) }) { Text("Весь день") }
+        }
+    }
+}
+
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 6.dp))
@@ -259,6 +317,14 @@ private fun SectionTitle(text: String) {
 private fun SummaryCard(report: EnergyReport, noTariffs: Boolean, onOpenTariffs: () -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
+            if (report.hourFrom != 0 || report.hourTo != 24) {
+                Text(
+                    "За часы %02d:00–%02d:00".format(report.hourFrom, report.hourTo),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
             Row(verticalAlignment = Alignment.Bottom) {
                 Column(Modifier.weight(1f)) {
                     Text("Расход", style = MaterialTheme.typography.bodySmall)
@@ -334,7 +400,9 @@ private fun BarChart(buckets: List<Bucket>) {
         else -> 5
     }
     // Последний столбик с данными: дальше (будущие часы/дни) линию рублей не тянем
-    val lastData = buckets.indexOfLast { it.kwh > 0 || it.cost > 0 }
+    val lastData = buckets.indexOfLast { (it.kwh > 0 || it.cost > 0) && it.selected }
+    // Линия рублей — только по выбранным часам
+    val firstData = buckets.indexOfFirst { it.selected }.coerceAtLeast(0)
     val axisW = 34.dp
     val chartH = 140.dp
     val ticks = listOf(1.0, 0.5, 0.0)
@@ -391,7 +459,10 @@ private fun BarChart(buckets: List<Bucket>) {
                                 Modifier
                                     .weight(1f)
                                     .fillMaxHeight(if (b.kwh > 0) fraction.coerceAtLeast(0.02f) else 0f)
-                                    .background(barColor, RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp)),
+                                    .background(
+                                        if (b.selected) barColor else barColor.copy(alpha = 0.22f),
+                                        RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp),
+                                    ),
                             )
                         }
                     }
@@ -399,7 +470,7 @@ private fun BarChart(buckets: List<Bucket>) {
                     if (maxCost != null && lastData >= 0) {
                         Canvas(Modifier.matchParentSize()) {
                             val n = buckets.size
-                            val pts = (0..lastData).map { i ->
+                            val pts = (firstData..maxOf(lastData, firstData)).map { i ->
                                 Offset(
                                     size.width * (i + 0.5f) / n,
                                     size.height * (1 - (buckets[i].cost / maxCost).toFloat().coerceIn(0f, 1f)),

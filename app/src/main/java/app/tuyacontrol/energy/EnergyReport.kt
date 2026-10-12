@@ -21,6 +21,8 @@ data class Bucket(
     /** Куда перейти при нажатии (null — некуда). */
     val drillType: PeriodType? = null,
     val drillDate: LocalDate? = null,
+    /** Входит в выбранные часы дня (вне диапазона — только для серого столбика на графике). */
+    val selected: Boolean = true,
 )
 
 /** Итог по зоне тарифа (Т1, Т2, Т3). */
@@ -40,6 +42,9 @@ data class EnergyReport(
     val zones: List<ZoneTotal>,
     val buckets: List<Bucket>,
     val perDevice: List<Bucket>,
+    /** Выбранные часы дня [hourFrom, hourTo): 0..24 — весь день. Только для периода «День». */
+    val hourFrom: Int = 0,
+    val hourTo: Int = 24,
 )
 
 object EnergyReports {
@@ -116,8 +121,13 @@ object EnergyReports {
         tariffs: List<Tariff>,
         deviceNames: Map<String, String>,
         today: LocalDate,
+        hourFrom: Int = 0,
+        hourTo: Int = 24,
     ): EnergyReport {
         val (from, to) = range(type, anchor)
+        // Часы дня имеют смысл только на экране одного дня
+        val hFrom = if (type == PeriodType.DAY) hourFrom.coerceIn(0, 23) else 0
+        val hTo = if (type == PeriodType.DAY) hourTo.coerceIn(hFrom + 1, 24) else 24
 
         // Суточный расход берём из статистики, а по часам раскладываем по почасовым долям
         val hours = mutableListOf<HourCost>()
@@ -145,6 +155,9 @@ object EnergyReports {
             }
         }
 
+        // Итоги, зоны тарифа и «по устройствам» — только по выбранным часам; график показывает весь день
+        val chosen = if (hFrom == 0 && hTo == 24) hours else hours.filter { it.hour in hFrom until hTo }
+
         fun bucket(label: String, items: List<HourCost>, drillType: PeriodType? = null, drillDate: LocalDate? = null) =
             Bucket(
                 label = label,
@@ -159,7 +172,9 @@ object EnergyReports {
         val buckets: List<Bucket> = when (type) {
             PeriodType.DAY -> {
                 val byHour = hours.groupBy { it.hour }
-                (0 until 24).map { h -> bucket("${h.toString().padStart(2, '0')}:00", byHour[h].orEmpty()) }
+                (0 until 24).map { h ->
+                    bucket("${h.toString().padStart(2, '0')}:00", byHour[h].orEmpty()).copy(selected = h in hFrom until hTo)
+                }
             }
             PeriodType.WEEK, PeriodType.MONTH -> {
                 val byDay = hours.groupBy { it.day }
@@ -181,15 +196,15 @@ object EnergyReports {
             }
         }
 
-        val perDevice = hours.groupBy { it.deviceId }
+        val perDevice = chosen.groupBy { it.deviceId }
             .map { (id, items) -> bucket(deviceNames[id] ?: id, items) }
             .sortedByDescending { it.kwh }
 
-        val zones = hours.filter { it.zone != null }.groupBy { it.zone!! }
+        val zones = chosen.filter { it.zone != null }.groupBy { it.zone!! }
             .map { (z, items) -> ZoneTotal(z, items.sumOf { it.kwh }, items.sumOf { it.cost }) }
             .sortedBy { it.index }
 
-        val total = bucket("", hours)
+        val total = bucket("", chosen)
         val lastDay = if (to.isBefore(today)) to else today
         val elapsedDays = if (lastDay.isBefore(from)) 0L else lastDay.toEpochDay() - from.toEpochDay() + 1
         return EnergyReport(
@@ -205,6 +220,8 @@ object EnergyReports {
             zones = zones,
             buckets = buckets,
             perDevice = perDevice,
+            hourFrom = hFrom,
+            hourTo = hTo,
         )
     }
 

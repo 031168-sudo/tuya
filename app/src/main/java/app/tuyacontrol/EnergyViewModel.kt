@@ -32,6 +32,9 @@ data class EnergyUiState(
     val selected: String? = null,
     val period: PeriodType = PeriodType.MONTH,
     val anchor: LocalDate = LocalDate.now(),
+    /** Часы дня [с, по): 0..24 — весь день. Действуют на экране «День». */
+    val hourFrom: Int = 0,
+    val hourTo: Int = 24,
     val report: EnergyReport? = null,
     val meta: Map<String, EnergyMeta> = emptyMap(),
     val tariffs: List<Tariff> = emptyList(),
@@ -84,6 +87,14 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setPeriod(type: PeriodType, anchor: LocalDate = _state.value.anchor) {
         _state.update { it.copy(period = type, anchor = anchor) }
+        reload()
+    }
+
+    /** Выбрать часы дня: с [from]:00 до [to]:00 (to — конец последнего часа, 1..24). */
+    fun setHours(from: Int, to: Int) {
+        val f = from.coerceIn(0, 23)
+        val t = to.coerceIn(f + 1, 24)
+        _state.update { it.copy(hourFrom = f, hourTo = t) }
         reload()
     }
 
@@ -171,11 +182,14 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
             val report = withContext(Dispatchers.Default) {
                 EnergyReports.build(
                     s.period, s.anchor, loaded.days, loaded.hourly, loaded.profiles, tariffs, names, LocalDate.now(),
+                    s.hourFrom, s.hourTo,
                 )
             }
             _state.update {
                 // Пока грузили, пользователь мог сменить период — применяем только актуальный отчёт
-                if (it.period == s.period && it.anchor == s.anchor && it.selected == s.selected) {
+                if (it.period == s.period && it.anchor == s.anchor && it.selected == s.selected &&
+                    it.hourFrom == s.hourFrom && it.hourTo == s.hourTo
+                ) {
                     it.copy(report = report, tariffs = tariffs, meta = meta)
                 } else {
                     it.copy(tariffs = tariffs, meta = meta)

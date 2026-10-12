@@ -316,6 +316,7 @@ private fun App(
             },
             onShift = energyViewModel::shift,
             onToday = energyViewModel::today,
+            onHours = energyViewModel::setHours,
             onMessageShown = energyViewModel::messageShown,
         )
         Screen.Tariffs -> TariffsScreen(
