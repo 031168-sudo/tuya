@@ -86,6 +86,7 @@ class HeatingStore(context: Context) {
                 days = j.optInt("days"),
                 problem = if (j.isNull("problem")) null else j.optString("problem"),
                 applied = j.optBoolean("applied"),
+                note = if (j.isNull("note")) null else j.optString("note").ifEmpty { null },
             )
         }
     } catch (e: Exception) {
@@ -97,7 +98,7 @@ class HeatingStore(context: Context) {
         m.forEach { (k, v) ->
             o.put(k, JSONObject().put("at", v.at).put("heat", v.heatRate ?: JSONObject.NULL).put("loss", v.lossRate ?: JSONObject.NULL)
                 .put("cool", v.coolHours).put("hot", v.heatHours).put("days", v.days)
-                .put("problem", v.problem ?: JSONObject.NULL).put("applied", v.applied))
+                .put("problem", v.problem ?: JSONObject.NULL).put("applied", v.applied).put("note", v.note ?: JSONObject.NULL))
         }
         prefs.edit().putString("learned", o.toString()).apply()
     }

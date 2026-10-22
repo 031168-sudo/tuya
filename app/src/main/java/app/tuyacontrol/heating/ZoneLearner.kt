@@ -20,6 +20,8 @@ data class LearnInfo(
     val problem: String?,
     /** Параметры зоны обновлены по этому подбору. */
     val applied: Boolean = false,
+    /** Подобрано с оговоркой. */
+    val note: String? = null,
 )
 
 /**
@@ -30,6 +32,7 @@ data class LearnInfo(
 class ZoneLearner(context: Context) {
 
     private val db = SensorDb(context.applicationContext)
+    private val store = HeatingStore(context.applicationContext)
     /** Код температуры по устройству (у датчиков va_temperature и т.п.). */
     private val tempCodes: Map<String, String> = app.tuyacontrol.background.SyncTargets(context.applicationContext).sensors()
         .mapNotNull { s -> s.temperature?.let { s.id to it.code } }.toMap()
@@ -40,7 +43,7 @@ class ZoneLearner(context: Context) {
         val id = zone.deviceId ?: return@withContext fail("не выбрано устройство")
         val oid = s.outdoorSensorId?.takeIf { it != "-" } ?: return@withContext fail("не выбран уличный датчик")
         val ocode = s.outdoorCode ?: return@withContext fail("не выбран уличный датчик")
-        val from = now - 7 * DAY
+        val from = now - 14 * DAY
         // Температура — с прибора для измерения, если он выбран; «греет» — всегда с нагревательного
         val tid = zone.tempDeviceId ?: id
         val tcode = tempCodes[tid] ?: "temp_current"
@@ -54,7 +57,7 @@ class ZoneLearner(context: Context) {
         db.series(id, "heating", from, now, 60_000L).forEach { events += it.time to (it.avg >= 0.5) }
         val rubetek = RubetekMapper.isRubetek(id)
         if (!rubetek && client != null) {
-            val logs = runCatching { client.getDeviceLogs(id, "work_state,valve_state,switch", from, now, maxPages = 30) }
+            val logs = runCatching { client.getDeviceLogs(id, "work_state,valve_state,switch", from, now, maxPages = 60) }
                 .onFailure { AppLog.e("Подбор «${zone.name}»: журнал нагрева не прочитан", it) }
                 .getOrDefault(emptyList())
             val hasState = logs.any { it.code == "work_state" || it.code == "valve_state" }
@@ -108,6 +111,33 @@ class ZoneLearner(context: Context) {
             return if (n == 0) null else on.toDouble() / n
         }
 
+        // Часы после выключения: тёплый пол и корпус конвектора ещё отдают тепло — для «остывания» они не годятся
+        fun quietHours(a: Long): Double {
+            var lastOn = Long.MIN_VALUE
+            for (i in events.indices) {
+                if (events[i].first > a) break
+                if (events[i].second) lastOn = minOf(events.getOrNull(i + 1)?.first ?: a, a)
+            }
+            return if (lastOn == Long.MIN_VALUE) Double.MAX_VALUE else (a - lastOn).toDouble() / HOUR
+        }
+        // Rubetek включается и выключается таймерами в самом модуле, а мы узнаём об этом при опросе (до 30 мин
+        // позже). Поэтому «без нагрева» верно только для часов вдали от переключений — и по расписанию таймеров
+        // (оно точное), и по замеченным переключениям
+        val schedule = if (rubetek) store.deployedTimers()[id].orEmpty().map { it.first } else emptyList()
+        val zoneId = java.time.ZoneId.systemDefault()
+        fun minuteOfDay(t: Long): Int = java.time.Instant.ofEpochMilli(t).atZone(zoneId).let { it.hour * 60 + it.minute }
+        fun nearSwitch(a: Long, b: Long): Boolean {
+            // окно проверки: от часа до начала и до конца окна (остаточное тепло) + запас на опрос после конца
+            val fromT = a - HOUR
+            val spanMin = ((b - fromT) / 60_000L).toInt()
+            val start = minuteOfDay(fromT)
+            if (schedule.any { Math.floorMod(it - start, 1440) <= spanMin }) return true
+            for (i in 1 until events.size) {
+                if (events[i].second != events[i - 1].second && events[i].first in fromT..(b + HOUR / 2)) return true
+            }
+            return false
+        }
+
         val samples = mutableListOf<ThermalFit.Sample>()
         val hours = temps.keys.sorted()
         for (k in hours) {
@@ -115,17 +145,20 @@ class ZoneLearner(context: Context) {
             val t1 = temps[k + HOUR] ?: continue
             val out = outdoor[k] ?: outdoor[k + HOUR] ?: outdoor[k - HOUR] ?: continue
             // Среднее за час k относится к середине часа: изменение — между серединами часов k и k+1
-            val u = uOver(k + HOUR / 2, k + HOUR + HOUR / 2) ?: continue
-            samples += ThermalFit.Sample(t1 - t0, u, (t0 + t1) / 2 - out)
+            val a = k + HOUR / 2
+            val b = k + HOUR + HOUR / 2
+            val u = uOver(a, b) ?: continue
+            if (rubetek && u == 0.0 && nearSwitch(a, b)) continue
+            samples += ThermalFit.Sample(t1 - t0, u, (t0 + t1) / 2 - out, quietHours(a))
         }
         val days = ((now - hours.first()) / DAY).toInt().coerceAtLeast(1)
-        val r = ThermalFit.fit(samples)
+        val r = ThermalFit.fit(samples, settle = if (zone.isFloor) 3.0 else 1.0)
         AppLog.i(
             "Подбор «${zone.name}»: часов ${samples.size} (без нагрева ${r.coolHours}, с нагревом ${r.heatHours}), " +
                 "нагрев ${r.heatRate?.let { "%.2f".format(it) }}°/ч, остывание ${r.lossRate?.let { "%.1f".format(it * 100) }}%/ч" +
-                (r.problem?.let { " — $it" } ?: ""),
+                (r.note?.let { " ($it)" } ?: "") + (r.problem?.let { " — $it" } ?: ""),
         )
-        LearnInfo(now, r.heatRate, r.lossRate, r.coolHours, r.heatHours, days, r.problem)
+        LearnInfo(now, r.heatRate, r.lossRate, r.coolHours, r.heatHours, days, r.problem, note = r.note)
     }
 
     private companion object {
