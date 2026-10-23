@@ -11,6 +11,12 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material3.Surface
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -204,7 +210,7 @@ fun EnergyScreen(
                 item { SummaryCard(report, state.tariffs.isEmpty(), onOpenTariffs) }
 
                 if (report.buckets.isNotEmpty()) {
-                    item { BarChart(report.buckets) }
+                    item { BarChart(report.buckets, report.title) }
                 }
 
                 if (state.selected == null && report.perDevice.size > 1) {
@@ -386,12 +392,17 @@ private fun SummaryCard(report: EnergyReport, noTariffs: Boolean, onOpenTariffs:
 }
 
 @Composable
-private fun BarChart(buckets: List<Bucket>) {
+private fun BarChart(buckets: List<Bucket>, title: String) {
     val max = buckets.maxOfOrNull { it.kwh }?.takeIf { it > 0 } ?: return
+    // Выбранный пальцем столбик: нажатие и проведение вдоль графика показывают значения крупно
+    var picked by remember(buckets) { mutableStateOf<Int?>(null) }
+    var chartWidth by remember { mutableStateOf(0) }
+    fun indexAt(x: Float): Int = (x / chartWidth.coerceAtLeast(1) * buckets.size).toInt().coerceIn(0, buckets.size - 1)
     val maxCost = buckets.maxOfOrNull { it.cost }?.takeIf { it > 0 }
     val barColor = MaterialTheme.colorScheme.primary
     val costColor = Color(0xFFE5483B)
     val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val markerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
     val axisStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp)
     val labelEvery = when {
         buckets.size <= 12 -> 1
@@ -440,7 +451,24 @@ private fun BarChart(buckets: List<Bucket>) {
                         Text(kwhTick(max * f), style = axisStyle, color = barColor, maxLines = 1, softWrap = false)
                     }
                 }
-                Box(Modifier.weight(1f).fillMaxHeight()) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .onSizeChanged { chartWidth = it.width }
+                        .pointerInput(buckets) {
+                            detectTapGestures { o ->
+                                val i = indexAt(o.x)
+                                picked = if (picked == i) null else i
+                            }
+                        }
+                        .pointerInput(buckets) {
+                            detectHorizontalDragGestures(
+                                onDragStart = { o -> picked = indexAt(o.x) },
+                                onHorizontalDrag = { change, _ -> picked = indexAt(change.position.x) },
+                            )
+                        },
+                ) {
                     // Сетка
                     Canvas(Modifier.matchParentSize()) {
                         ticks.forEach { f ->
@@ -487,6 +515,68 @@ private fun BarChart(buckets: List<Bucket>) {
                             drawPath(path, costColor, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round))
                         }
                     }
+                    // Метка выбранной точки: вертикальная линия и кружок на линии рублей
+                    picked?.let { i ->
+                        val n = buckets.size
+                        Canvas(Modifier.matchParentSize()) {
+                            val x = size.width * (i + 0.5f) / n
+                            drawLine(markerColor, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.5.dp.toPx())
+                            if (maxCost != null) {
+                                val y = size.height * (1 - (buckets[i].cost / maxCost).toFloat().coerceIn(0f, 1f))
+                                drawCircle(costColor, 5.dp.toPx(), Offset(x, y))
+                                drawCircle(Color.White, 2.dp.toPx(), Offset(x, y))
+                            }
+                        }
+                        val b = buckets[i]
+                        val n2 = buckets.size
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                            shadowElevation = 6.dp,
+                            modifier = Modifier.layout { m, c ->
+                                val p = m.measure(c.copy(minWidth = 0, minHeight = 0))
+                                val cx = c.maxWidth * (i + 0.5f) / n2
+                                // Сбоку от точки, чтобы не закрывать её пальцем: в левой половине — справа, в правой — слева
+                                val gap = 18.dp.roundToPx()
+                                val raw = if (cx < c.maxWidth / 2f) cx + gap else cx - gap - p.width
+                                val x = raw.toInt().coerceIn(0, (c.maxWidth - p.width).coerceAtLeast(0))
+                                layout(p.width, p.height) { p.place(x, 0) }
+                            },
+                        ) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(
+                                    bucketWhen(b.label, i, buckets.size),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                                Text(
+                                    title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    EnergyReports.kwh(b.kwh),
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = barColor,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                                Text(
+                                    (if (b.estimated) "≈" else "") + EnergyReports.rub(b.cost) + if (b.missingTariff) "*" else "",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = costColor,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                )
+                            }
+                        }
+                    }
                 }
                 // Шкала ₽
                 Column(
@@ -519,6 +609,13 @@ private fun BarChart(buckets: List<Bucket>) {
         }
     }
 }
+
+/** Что показать в подписи выбранной точки: «17:00–18:00» для часа, остальное как в списке. */
+private fun bucketWhen(label: String, index: Int, count: Int): String =
+    if (count == 24) {
+        val h = label.substringBefore(":").toIntOrNull()
+        if (h != null) "%02d:00–%02d:00".format(h, (h + 1) % 24) else label
+    } else label
 
 /** «05.03, пн» → «05» (для месяца) / «пн» (для недели); «Январь» → «янв». */
 private fun shortLabel(label: String, count: Int): String = when {
