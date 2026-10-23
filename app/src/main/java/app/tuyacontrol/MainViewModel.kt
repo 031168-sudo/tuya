@@ -3,6 +3,7 @@ package app.tuyacontrol
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import android.app.Application
+import app.tuyacontrol.backup.BackupManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.tuyacontrol.cloud.CloudDevice
@@ -1205,14 +1206,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         backupJob = null
         if (!foreground) {
             // Уходим с экрана — последний раз сохраняем изменения
-            val app = getApplication<Application>()
-            Thread { runCatching { app.tuyacontrol.backup.BackupManager.autoBackup(app) } }.start()
+            val ctx = getApplication<Application>()
+            Thread { runCatching { BackupManager.autoBackup(ctx) } }.start()
             return
         }
         backupJob = viewModelScope.launch {
-            val app = getApplication<Application>()
+            val ctx = getApplication<Application>()
             while (isActive) {
-                withContext(Dispatchers.IO) { runCatching { app.tuyacontrol.backup.BackupManager.autoBackup(app) } }
+                withContext(Dispatchers.IO) { runCatching { BackupManager.autoBackup(ctx) } }
                 delay(AUTO_REFRESH_MS)
             }
         }
