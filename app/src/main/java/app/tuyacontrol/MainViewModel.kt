@@ -1207,7 +1207,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (!foreground) {
             // Уходим с экрана — последний раз сохраняем изменения
             val ctx = getApplication<Application>()
-            Thread { runCatching { BackupManager.autoBackup(ctx) } }.start()
+            Thread { runCatching { BackupManager.autoBackup(ctx, flushData = true) } }.start()
             return
         }
         backupJob = viewModelScope.launch {

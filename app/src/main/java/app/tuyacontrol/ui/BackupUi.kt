@@ -69,7 +69,7 @@ fun RestoreFromBackup(confirm: Boolean, title: String = "Восстановит�
     var askPassword by remember { mutableStateOf(false) }
     var wrong by remember { mutableStateOf(false) }
     var password by remember { mutableStateOf("") }
-    var snapshot by remember { mutableStateOf<org.json.JSONObject?>(null) }
+    var snapshot by remember { mutableStateOf<ByteArray?>(null) }
     var busy by remember { mutableStateOf(false) }
 
     fun fail(e: Throwable) {
@@ -77,7 +77,7 @@ fun RestoreFromBackup(confirm: Boolean, title: String = "Восстановит�
         Toast.makeText(context, e.message ?: "Не удалось восстановить", Toast.LENGTH_LONG).show()
     }
 
-    fun doRestore(snap: org.json.JSONObject) {
+    fun doRestore(snap: ByteArray) {
         scope.launch {
             busy = true
             val msg = withContext(Dispatchers.IO) { runCatching { BackupManager.restore(context, snap) } }
@@ -139,7 +139,7 @@ fun RestoreFromBackup(confirm: Boolean, title: String = "Восстановит�
         AlertDialog(
             onDismissRequest = { snapshot = null },
             title = { Text("Заменить настройки?") },
-            text = { Text("Все текущие настройки, ключи и тарифы будут заменены данными из копии (${BackupManager.summary(snap)}). Приложение перезапустится.") },
+            text = { Text("Все текущие настройки, ключи, тарифы и история будут заменены данными из копии (${BackupManager.describe(snap)}). Приложение перезапустится.") },
             confirmButton = { TextButton(onClick = { snapshot = null; doRestore(snap) }) { Text("Заменить") } },
             dismissButton = { TextButton(onClick = { snapshot = null }) { Text("Отмена") } },
         )
@@ -166,7 +166,7 @@ fun BackupScreen(onBack: () -> Unit) {
         }
     }
 
-    val enable = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+    val enable = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         BackupManager.rememberUri(context, uri)
         cfg.uri = uri.toString()
@@ -174,11 +174,11 @@ fun BackupScreen(onBack: () -> Unit) {
         cfg.lastError = null
         saveNow(force = true)
     }
-    val once = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+    val once = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             val r = withContext(Dispatchers.IO) {
-                runCatching { BackupManager.writeTo(context, uri, BackupManager.encode(BackupManager.snapshot(context), cfg.password)) }
+                runCatching { BackupManager.writeTo(context, uri, BackupManager.buildNow(context)) }
             }
             Toast.makeText(context, r.fold({ "Копия сохранена в файл" }, { "Не сохранено: ${it.message}" }), Toast.LENGTH_LONG).show()
         }
@@ -201,8 +201,8 @@ fun BackupScreen(onBack: () -> Unit) {
         ) {
             Text(
                 "Копия нужна, чтобы при переустановке или переносе на другой телефон не вводить всё заново: ключи Tuya, " +
-                    "вход в Rubetek и Xiaomi, категории, комнаты, команды, зоны отопления и тарифы. " +
-                    "История показаний не входит — она докачивается из облака.",
+                    "вход в Rubetek и Xiaomi, категории, комнаты, команды, зоны отопления, тарифы " +
+                    "и вся накопленная история: показания датчиков, энергия, расходы.",
                 style = MaterialTheme.typography.bodyMedium,
             )
 
@@ -211,27 +211,28 @@ fun BackupScreen(onBack: () -> Unit) {
                     Text("Автоматическая копия", style = MaterialTheme.typography.titleMedium)
                     if (!on) {
                         Text(
-                            "Выберите файл (лучше в Google Диске или в «Загрузках»): пока приложение открыто, оно само обновляет его " +
-                                "каждую минуту, если что-то изменилось.",
+                            "Выберите файл (лучше в Google Диске или в «Загрузках»): пока приложение открыто, оно само обновляет его — " +
+                                "настройки каждую минуту, историю не реже раза в 30 минут и при выходе из приложения.",
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        Button(onClick = { enable.launch("moydom-backup.json") }, modifier = Modifier.fillMaxWidth()) { Text("Включить автокопию…") }
+                        Button(onClick = { enable.launch("moydom-backup.zip") }, modifier = Modifier.fillMaxWidth()) { Text("Включить автокопию…") }
                     } else {
                         Text("Файл: ${fileName(context, cfg.uri) ?: "выбран"}", style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            if (cfg.lastAt > 0) "Последняя копия: " + SimpleDateFormat("d MMM HH:mm", Locale("ru")).format(Date(cfg.lastAt))
+                            if (cfg.lastAt > 0) "Последняя копия: " + SimpleDateFormat("d MMM HH:mm", Locale("ru")).format(Date(cfg.lastAt)) +
+                                ", файл ${cfg.lastSize / 1024} КБ"
                             else "Копия ещё не сохранялась",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         cfg.lastError?.let { Text("Ошибка: $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
                         Button(onClick = { saveNow(force = true) }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить сейчас") }
-                        OutlinedButton(onClick = { enable.launch("moydom-backup.json") }, modifier = Modifier.fillMaxWidth()) { Text("Выбрать другой файл…") }
+                        OutlinedButton(onClick = { enable.launch("moydom-backup.zip") }, modifier = Modifier.fillMaxWidth()) { Text("Выбрать другой файл…") }
                         TextButton(onClick = { cfg.uri = null; cfg.lastHash = null; version++ }) { Text("Выключить автокопию") }
                     }
                 }
             }
 
-            OutlinedButton(onClick = { once.launch("moydom-backup.json") }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить в файл вручную…") }
+            OutlinedButton(onClick = { once.launch("moydom-backup.zip") }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить в файл вручную…") }
             RestoreFromBackup(confirm = true)
 
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
