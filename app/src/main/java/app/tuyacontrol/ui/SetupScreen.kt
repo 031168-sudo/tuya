@@ -69,6 +69,7 @@ fun SetupScreen(
     onBack: () -> Unit,
     onOpenLog: () -> Unit,
     onOpenLocal: () -> Unit = {},
+    onOpenBackup: () -> Unit = {},
     onRubetekSendCode: (String) -> Unit = {},
     onRubetekSignIn: (String) -> Unit = {},
     onRubetekCancel: () -> Unit = {},
@@ -115,6 +116,23 @@ fun SetupScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Чистая установка: вдруг есть копия (переустановили приложение или перенесли на другой телефон)
+            if (saved == null) {
+                androidx.compose.material3.Card(
+                    Modifier.fillMaxWidth(),
+                    colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Есть резервная копия?", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Если вы переустановили приложение или перенесли его с другого телефона, выберите файл копии — " +
+                                "ключи и все настройки вернутся сами, вводить ничего не нужно.",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        RestoreFromBackup(confirm = false, title = "Восстановить из копии…", primary = true)
+                    }
+                }
+            }
             Text(
                 "Ключи берутся на platform.tuya.com → Cloud → ваш проект → Overview. " +
                     "Они хранятся только на этом телефоне в зашифрованном виде.",
@@ -179,6 +197,9 @@ fun SetupScreen(
             }
 
             if (saved != null) {
+                OutlinedButton(onClick = onOpenBackup, modifier = Modifier.fillMaxWidth()) {
+                    Text("Резервная копия: сохранить и восстановить")
+                }
                 OutlinedButton(onClick = onOpenLocal, modifier = Modifier.fillMaxWidth()) {
                     Text("Устройства в локальной сети (Wi-Fi)")
                 }

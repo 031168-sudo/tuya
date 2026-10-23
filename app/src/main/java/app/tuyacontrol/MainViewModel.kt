@@ -1,5 +1,7 @@
 package app.tuyacontrol
 
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -35,7 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Map, Commands, RoomDevices }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Map, Commands, RoomDevices, Backup }
 
 data class DeviceUi(
     val id: String,
@@ -460,6 +462,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(screen = s.returnTo, returnTo = null) }; true
         } else if (s.screen == Screen.RoomDevices) {
             open(Screen.Map); true
+        } else if (s.screen == Screen.Backup) {
+            open(Screen.Setup); true
         } else if (s.screen == Screen.CategoryDevices || s.screen == Screen.Commands) {
             open(Screen.Categories); true
         } else if (s.screen != Screen.Categories && s.credentials != null) {
@@ -1179,6 +1183,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         autoRefreshJob = null
         // Соединения по Wi-Fi держим, только пока приложение на экране
         if (foreground) ensureLocal() else localManager.stopAll()
+        startBackupLoop(foreground)
         if (!foreground || (client == null && !xiaomi.connected)) return
         autoRefreshJob = viewModelScope.launch {
             // Сразу обновляем при возврате в приложение, если данные старше 30 секунд
@@ -1187,6 +1192,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive) {
                 delay(AUTO_REFRESH_MS)
                 if (_state.value.screen in setOf(Screen.Devices, Screen.Categories, Screen.CategoryDevices)) refresh(silent = true)
+            }
+        }
+    }
+
+    // ---------- Автоматическая резервная копия, пока приложение на экране ----------
+
+    private var backupJob: Job? = null
+
+    private fun startBackupLoop(foreground: Boolean) {
+        backupJob?.cancel()
+        backupJob = null
+        if (!foreground) {
+            // Уходим с экрана — последний раз сохраняем изменения
+            val app = getApplication<Application>()
+            Thread { runCatching { app.tuyacontrol.backup.BackupManager.autoBackup(app) } }.start()
+            return
+        }
+        backupJob = viewModelScope.launch {
+            val app = getApplication<Application>()
+            while (isActive) {
+                withContext(Dispatchers.IO) { runCatching { app.tuyacontrol.backup.BackupManager.autoBackup(app) } }
+                delay(AUTO_REFRESH_MS)
             }
         }
     }

@@ -156,6 +156,7 @@ private fun App(
             onBack = { viewModel.back() },
             onOpenLog = { viewModel.open(Screen.Log) },
             onOpenLocal = { viewModel.open(Screen.Local) },
+            onOpenBackup = { viewModel.open(Screen.Backup) },
             onRubetekSendCode = viewModel::rubetekSendCode,
             onRubetekSignIn = viewModel::rubetekSignIn,
             onRubetekCancel = viewModel::rubetekCancelCode,
@@ -167,6 +168,7 @@ private fun App(
             onXiaomiSignOut = viewModel::xiaomiSignOut,
             onXiaomiBrowserDone = viewModel::xiaomiBrowserDone,
         )
+        Screen.Backup -> app.tuyacontrol.ui.BackupScreen(onBack = { viewModel.back() })
         Screen.Local -> LocalScreen(
             state = state,
             onBack = { viewModel.open(Screen.Setup) },

@@ -1,5 +1,7 @@
 package app.tuyacontrol.ui
 
+import androidx.compose.ui.unit.sp
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -127,7 +129,10 @@ fun DevicesScreen(
                     },
                     actions = {
                         if (devices.any { it.hasEnergy }) {
-                            TextButton(onClick = { onOpenEnergy(null) }) { Text("₽") }
+                            // Энергия и расходы — один из главных пунктов: значок как у соседних, но выделен
+                            FilledTonalIconButton(onClick = { onOpenEnergy(null) }) {
+                                Text("₽", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                         IconButton(onClick = onRefresh) {
                             Icon(Icons.Filled.Refresh, contentDescription = "Обновить")
