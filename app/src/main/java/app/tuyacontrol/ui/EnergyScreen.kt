@@ -1,6 +1,5 @@
 package app.tuyacontrol.ui
 
-import androidx.compose.material.icons.automirrored.filled.List
 import java.util.Locale
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
@@ -105,7 +104,7 @@ fun EnergyScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Энергия и расходы", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = { Text("Энергия", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
@@ -115,9 +114,7 @@ fun EnergyScreen(
                     IconButton(onClick = onSync, enabled = !state.syncing) {
                         Icon(Icons.Filled.Refresh, contentDescription = "Загрузить историю")
                     }
-                    IconButton(onClick = onOpenTariffs) {
-                        Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Тарифы")
-                    }
+                    TextButton(onClick = onOpenTariffs) { Text("Тарифы") }
                 },
             )
         },
