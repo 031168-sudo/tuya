@@ -1,6 +1,8 @@
 package app.tuyacontrol.ui
 
 import androidx.compose.ui.unit.sp
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -420,6 +422,7 @@ private fun DeviceCard(
                 DpRow(device, code, value, onCommand)
             }
             if (device.hasCloudSchedule) CloudScheduleBlock(device, onCommand)
+            device.moduleTimers?.let { RubetekTimersBlock(device, it, onCommand) }
 
             if (sensor != null) {
                 TextButton(onClick = { onOpenSensor(sensor) }, contentPadding = PaddingValues(0.dp)) {
@@ -740,6 +743,41 @@ private fun CloudScheduleBlock(device: DeviceUi, onCommand: (String, String, Any
     TextButton(onClick = { onCommand(device.id, DeviceUi.TIMERS_SHOW, false) }, contentPadding = PaddingValues(0.dp)) {
         Text("Скрыть расписание")
     }
+}
+
+/** Таймеры, записанные в модуль конвектора Rubetek (выполняет сам модуль), и кнопка «Очистить все». */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun RubetekTimersBlock(device: DeviceUi, timers: List<app.tuyacontrol.rubetek.ModuleTimer>, onCommand: (String, String, Any) -> Unit) {
+    val busy = DeviceUi.RUBETEK_TIMERS_CLEAR in device.pending
+    Spacer(Modifier.size(4.dp))
+    Text("Таймеры в модуле", style = MaterialTheme.typography.bodyLarge)
+    Text(
+        if (timers.isEmpty()) "таймеров нет" else "${timers.size} шт. · модуль выполняет их сам, даже без интернета",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (timers.isEmpty()) return
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        timers.forEach { t ->
+            Text(
+                t.text(),
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+    }
+    Button(
+        onClick = { onCommand(device.id, DeviceUi.RUBETEK_TIMERS_CLEAR, true) },
+        enabled = !busy && device.online,
+        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+    ) { Text(if (busy) "Очищаю…" else "Очистить все") }
 }
 
 /** Значок «включено / выключено»: зелёная кнопка питания или серая перечёркнутая. */

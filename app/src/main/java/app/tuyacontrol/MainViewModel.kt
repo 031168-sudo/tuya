@@ -241,6 +241,7 @@ data class DeviceUi(
         /** Псевдокоманды расписания облака: показать (true) / скрыть (false); все таймеры вкл/выкл. */
         const val TIMERS_SHOW = "__timers_show"
         const val TIMERS_ALL = "__timers_all"
+        const val RUBETEK_TIMERS_CLEAR = "__rubetek_timers_clear"
         /** Пороги (включение, выключение), °C. */
         val PRESET_ON = 19.0 to 20.0
         val PRESET_OFF = 12.0 to 13.0
@@ -764,6 +765,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             setAllTimers(deviceId, value == true)
             return
         }
+        if (code == DeviceUi.RUBETEK_TIMERS_CLEAR) {
+            clearRubetekTimers(deviceId)
+            return
+        }
         val before = _state.value.devices.find { it.id == deviceId } ?: return
         if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(deviceId)) {
             sendRubetek(before, code, value)
@@ -960,6 +965,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val msg = describeRubetek(e)
                 _state.update { it.copy(rubetekError = msg, message = if (silent) it.message else "Rubetek: $msg") }
             }
+        }
+    }
+
+    /** Снять все таймеры в модуле конвектора Rubetek (с проверкой по перечитанному состоянию). */
+    private fun clearRubetekTimers(deviceId: String) {
+        val before = _state.value.devices.find { it.id == deviceId } ?: return
+        if (DeviceUi.RUBETEK_TIMERS_CLEAR in before.pending) return
+        updateDevice(deviceId) { it.copy(pending = it.pending + DeviceUi.RUBETEK_TIMERS_CLEAR) }
+        viewModelScope.launch {
+            try {
+                app.tuyacontrol.heating.HeatingEngine(getApplication()).clearRubetekTimers(deviceId)
+                _state.update { it.copy(message = "${before.name}: все таймеры в модуле сняты") }
+            } catch (e: Exception) {
+                AppLog.e("Rubetek: очистка таймеров ${before.name}", e)
+                _state.update { it.copy(message = "${before.name}: ${e.message ?: describeRubetek(e)}") }
+            }
+            updateDevice(deviceId) { it.copy(pending = it.pending - DeviceUi.RUBETEK_TIMERS_CLEAR) }
+            refreshRubetek(silent = true)
         }
     }
 
