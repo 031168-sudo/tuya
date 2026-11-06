@@ -86,11 +86,14 @@ fun CommandsBlock(commands: List<Command>, onOpenEditor: () -> Unit, onRun: (Str
             onDismissRequest = { confirm = null },
             title = { Text("Выполнить «${c.name.ifEmpty { "Без названия" }}»?") },
             text = {
-                Text(
-                    if (c.actions.isEmpty()) "В команде нет действий"
-                    else c.actions.mapIndexed { i, a -> "${i + 1}. ${a.text()}" }.joinToString("\n"),
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                // Длинный список действий прокручивается, кнопки «Да» / «Нет» остаются внизу
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        if (c.actions.isEmpty()) "В команде нет действий"
+                        else c.actions.mapIndexed { i, a -> "${i + 1}. ${a.text()}" }.joinToString("\n"),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             },
             confirmButton = { TextButton(onClick = { confirm = null; onRun(c.id) }) { Text("Да") } },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Нет") } },
