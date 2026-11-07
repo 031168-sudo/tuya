@@ -4,6 +4,7 @@ import android.content.Context
 import app.tuyacontrol.ControlMode
 import app.tuyacontrol.DeviceUi
 import app.tuyacontrol.data.AppLog
+import org.json.JSONObject
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -128,6 +129,49 @@ class XiaomiHub(context: Context) {
         return runCatching { action(conn(d, ip)) }
             .onFailure { AppLog.i("Xiaomi: «${d.name}» по Wi-Fi ($ip) — ${it.message}") }
             .getOrNull()
+    }
+
+    /**
+     * Отчёт для карточки Xiaomi: все параметры и разведка таймеров — по Wi-Fi (старые методы miIO) и в облаке Mi Home.
+     * Только чтение: так мы выясняем, где у устройства хранится расписание.
+     */
+    suspend fun diagnostics(device: DeviceUi): String {
+        val sb = StringBuilder()
+        val d = store.devices.firstOrNull { it.did == XiaomiMapper.did(device.id) }
+        sb.appendLine("${device.name} · ${device.id}")
+        if (d != null) sb.appendLine("Модель: ${d.model}, адрес: ${d.ip.ifEmpty { "не известен" }}")
+        sb.appendLine().appendLine("ВСЕ ПАРАМЕТРЫ")
+        device.status.toSortedMap().forEach { (k, v) -> sb.appendLine("$k = $v") }
+        if (d == null) return sb.toString().trimEnd()
+
+        sb.appendLine().appendLine("ПО WI-FI (miIO)")
+        for ((method, params) in listOf<Pair<String, Any>>(
+            "miIO.info" to org.json.JSONArray(),
+            "get_timer" to org.json.JSONArray(),
+            "get_timer_list" to org.json.JSONArray(),
+            "get_countdown" to org.json.JSONArray(),
+        )) {
+            val r = runCatching { local(d) { it.call(method, params) } }
+            sb.appendLine("$method → " + r.fold({ (it?.toString() ?: "нет ответа по Wi-Fi").take(500) }, { "ошибка: ${it.message}" }))
+        }
+
+        sb.appendLine().appendLine("ОБЛАКО MI HOME (разведка адресов)")
+        val did = d.did
+        val probes = listOf(
+            "/home/rpc/$did" to JSONObject().put("id", 1).put("method", "get_timer").put("params", org.json.JSONArray()),
+            "/home/rpc/$did" to JSONObject().put("id", 1).put("method", "get_timer_list").put("params", org.json.JSONArray()),
+            "/scene/list" to JSONObject().put("st_id", 30),
+            "/v2/scene/list" to JSONObject().put("did", did),
+            "/timer/list" to JSONObject().put("did", did),
+            "/v2/timer/list" to JSONObject().put("did", did),
+            "/device/timer/list" to JSONObject().put("did", did),
+            "/v2/device/timers" to JSONObject().put("did", did),
+        )
+        for ((path, body) in probes) {
+            val extra = body.optString("method").takeIf { it.isNotEmpty() }?.let { " [$it]" }.orEmpty()
+            sb.appendLine("$path$extra → " + cloud.probe(path, body))
+        }
+        return sb.toString().trimEnd()
     }
 
     private fun conn(d: MiDevice, ip: String): MiioDevice {

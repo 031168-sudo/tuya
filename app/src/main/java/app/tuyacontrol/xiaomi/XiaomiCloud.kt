@@ -411,6 +411,13 @@ class XiaomiCloud(private val store: XiaomiStore) {
         if (code != 0) throw XiaomiException("облако Xiaomi: устройство не приняло значение (код $code)")
     }
 
+    /** Разведка: вызвать произвольный адрес облака (только чтение, для поиска таймеров); ответ или ошибка — текстом. */
+    suspend fun probe(path: String, data: JSONObject): String = try {
+        api(path, data)?.toString()?.take(700) ?: "пусто"
+    } catch (e: Exception) {
+        "ошибка: ${e.message ?: e.javaClass.simpleName}"
+    }
+
     // ---------- HTTP ----------
 
     private fun apiUrl(path: String): String {

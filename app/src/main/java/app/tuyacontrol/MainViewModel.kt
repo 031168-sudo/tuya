@@ -826,13 +826,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Порядок записи такой, чтобы порог включения всегда оставался ниже порога выключения.
      */
     private fun loadDiagnostics(deviceId: String) {
-        val c = client ?: return
         val device = _state.value.devices.find { it.id == deviceId } ?: return
+        val isMi = app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(deviceId)
+        val c = client
+        if (c == null && !isMi) return
         if (DeviceUi.DIAG_SHOW in device.pending) return
         updateDevice(deviceId) { it.copy(pending = it.pending + DeviceUi.DIAG_SHOW) }
         viewModelScope.launch {
             try {
-                val report = withContext(Dispatchers.IO) { DeviceDiagnostics.build(c, device) }
+                val report = withContext(Dispatchers.IO) { if (isMi) xiaomi.diagnostics(device) else DeviceDiagnostics.build(c!!, device) }
                 AppLog.i("Диагностика «${device.name}»:\n$report")
                 diagCache[deviceId] = report
             } catch (e: Exception) {

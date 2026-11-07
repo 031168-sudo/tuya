@@ -423,6 +423,7 @@ private fun DeviceCard(
                 DpRow(device, code, value, onCommand)
             }
             if (device.hasCloudSchedule) CloudScheduleBlock(device, onCommand)
+            if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(device.id)) DiagnosticsButton(device, onCommand)
             device.moduleTimers?.let { RubetekTimersBlock(device, it, onCommand) }
 
             if (sensor != null) {
