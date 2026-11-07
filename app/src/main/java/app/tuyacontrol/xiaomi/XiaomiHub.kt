@@ -152,7 +152,11 @@ class XiaomiHub(context: Context) {
             "get_countdown" to org.json.JSONArray(),
         )) {
             val r = runCatching { local(d) { it.call(method, params) } }
-            sb.appendLine("$method → " + r.fold({ (it?.toString() ?: "нет ответа по Wi-Fi").take(500) }, { "ошибка: ${it.message}" }))
+            sb.appendLine(
+                "$method → " + r.fold({ (it?.toString() ?: "нет ответа по Wi-Fi").take(500) }, { "ошибка: ${it.message}" })
+                    // Токен устройства даёт управление им по сети — в отчёт (который копируют) не попадает
+                    .replace(Regex("(\"token\"\\s*:\\s*\")[0-9a-fA-F]{32}"), "$1***"),
+            )
         }
 
         sb.appendLine().appendLine("ОБЛАКО MI HOME (разведка адресов)")
