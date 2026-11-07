@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -684,12 +685,37 @@ fun HeatingIndicator(heating: Boolean, size: androidx.compose.ui.unit.Dp = 20.dp
     }
 }
 
+/** Кнопка «Диагностика» и окно с отчётом: все параметры устройства и журнал включений (откуда пришла команда). */
+@Composable
+private fun DiagnosticsButton(device: DeviceUi, onCommand: (String, String, Any) -> Unit) {
+    val busy = DeviceUi.DIAG_SHOW in device.pending
+    TextButton(onClick = { onCommand(device.id, DeviceUi.DIAG_SHOW, true) }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
+        Text(if (busy) "Собираю данные…" else "Все параметры и журнал включений…")
+    }
+    val report = device.diagnostics ?: return
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { onCommand(device.id, DeviceUi.DIAG_SHOW, false) },
+        title = { Text("Диагностика «${device.name}»") },
+        text = {
+            Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(report, style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onCommand(device.id, DeviceUi.DIAG_SHOW, false) }) { Text("Закрыть") } },
+        dismissButton = { TextButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(report)) }) { Text("Копировать") } },
+    )
+}
+
 /** Расписание из облака Tuya (как «Расписание» в Smart Life): список таймеров и общий вкл/выкл. */
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun CloudScheduleBlock(device: DeviceUi, onCommand: (String, String, Any) -> Unit) {
     val busy = DeviceUi.TIMERS_SHOW in device.pending
     val timers = device.cloudTimers
+    DiagnosticsButton(device, onCommand)
     if (timers == null) {
         TextButton(onClick = { onCommand(device.id, DeviceUi.TIMERS_SHOW, true) }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
             Text(if (busy) "Читаю расписание…" else "Расписание (облако Tuya)…")

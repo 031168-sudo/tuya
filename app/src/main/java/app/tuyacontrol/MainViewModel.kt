@@ -66,6 +66,8 @@ data class DeviceUi(
     val moduleTimers: List<app.tuyacontrol.rubetek.ModuleTimer>? = null,
     /** Облачные таймеры Tuya («Расписание» Smart Life); null — не загружены (показываются по запросу). */
     val cloudTimers: List<app.tuyacontrol.cloud.CloudTimer>? = null,
+    /** Отчёт «все параметры + журнал включений» (null — не запрашивался или закрыт). */
+    val diagnostics: String? = null,
     /** Текущая температура верна только когда прибор включён (из настроек устройства или по типу). */
     val tempOnlyWhenOn: Boolean = false,
 ) {
@@ -241,6 +243,7 @@ data class DeviceUi(
         /** Псевдокоманды расписания облака: показать (true) / скрыть (false); все таймеры вкл/выкл. */
         const val TIMERS_SHOW = "__timers_show"
         const val TIMERS_ALL = "__timers_all"
+        const val DIAG_SHOW = "__diag_show"
         const val RUBETEK_TIMERS_CLEAR = "__rubetek_timers_clear"
         /** Пороги (включение, выключение), °C. */
         val PRESET_ON = 19.0 to 20.0
@@ -332,6 +335,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Облачные таймеры, раскрытые в карточках (id -> список). Объявлено до init: publish() вызывается уже там. */
     private val timersCache = mutableMapOf<String, List<app.tuyacontrol.cloud.CloudTimer>>()
+    private val diagCache = mutableMapOf<String, String>()
     private var foreground = false
     private var localStartJob: Job? = null
     private var codesLogged = false
@@ -413,6 +417,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else -> d
             }
         }.map { d -> timersCache[d.id]?.let { d.copy(cloudTimers = it) } ?: d }
+            .map { d -> diagCache[d.id]?.let { d.copy(diagnostics = it) } ?: d }
         // Rubetek работает только через своё облако
         val rubetekShown = if (s.mode == ControlMode.LOCAL) rubetekDevices.map { it.copy(online = false) } else rubetekDevices
         // Xiaomi сам решает, Wi-Fi или облако (по режиму), поэтому показываем как есть
@@ -765,6 +770,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             setAllTimers(deviceId, value == true)
             return
         }
+        if (code == DeviceUi.DIAG_SHOW) {
+            if (value == true) loadDiagnostics(deviceId) else { diagCache.remove(deviceId); publish() }
+            return
+        }
         if (code == DeviceUi.RUBETEK_TIMERS_CLEAR) {
             clearRubetekTimers(deviceId)
             return
@@ -816,6 +825,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Батарея в ванной (пороги нагрева): «включено» — греть с 19° до 20°, «выключено» — с 12° до 13°.
      * Порядок записи такой, чтобы порог включения всегда оставался ниже порога выключения.
      */
+    private fun loadDiagnostics(deviceId: String) {
+        val c = client ?: return
+        val device = _state.value.devices.find { it.id == deviceId } ?: return
+        if (DeviceUi.DIAG_SHOW in device.pending) return
+        updateDevice(deviceId) { it.copy(pending = it.pending + DeviceUi.DIAG_SHOW) }
+        viewModelScope.launch {
+            try {
+                val report = withContext(Dispatchers.IO) { DeviceDiagnostics.build(c, device) }
+                AppLog.i("Диагностика «${device.name}»:\n$report")
+                diagCache[deviceId] = report
+            } catch (e: Exception) {
+                AppLog.e("Диагностика «${device.name}»", e)
+                _state.update { it.copy(message = "${device.name}: диагностика не удалась — ${e.message}") }
+            }
+            updateDevice(deviceId) { it.copy(pending = it.pending - DeviceUi.DIAG_SHOW) }
+        }
+    }
+
     private fun loadTimers(deviceId: String, message: String? = null) {
         val c = client ?: return
         val name = _state.value.devices.find { it.id == deviceId }?.name ?: deviceId
