@@ -13,6 +13,7 @@ import app.tuyacontrol.sensor.SensorDb
 import app.tuyacontrol.rubetek.RubetekClient
 import app.tuyacontrol.rubetek.RubetekMapper
 import app.tuyacontrol.rubetek.RubetekStore
+import app.tuyacontrol.ControlMode
 import app.tuyacontrol.xiaomi.XiaomiCloud
 import app.tuyacontrol.xiaomi.XiaomiHub
 import app.tuyacontrol.xiaomi.XiaomiMapper
@@ -113,7 +114,7 @@ class HeatingEngine(context: Context) {
             // выключаем таймерами, которые хранятся в самом модуле (работают без интернета и телефона)
             if (XiaomiMapper.isXiaomi(id)) {
                 try {
-                    val d = XiaomiHub(app).readOne(id, app.tuyacontrol.ControlMode.AUTO)
+                    val d = XiaomiHub(app).readOne(id, ControlMode.AUTO)
                         ?: throw IllegalStateException("обогреватель не найден в Mi Home")
                     val own = (d.status["temp_set"] as? Number)?.toDouble()?.let { it / 10.0.pow(d.spec["temp_set"]?.scale ?: 0) }
                         ?: throw IllegalStateException("неизвестна уставка обогревателя")
