@@ -118,7 +118,7 @@ class HeatingEngine(context: Context) {
                         ?: throw IllegalStateException("обогреватель не найден в Mi Home")
                     val own = (d.status["temp_set"] as? Number)?.toDouble()?.let { it / 10.0.pow(d.spec["temp_set"]?.scale ?: 0) }
                         ?: throw IllegalStateException("неизвестна уставка обогревателя")
-                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat)
+                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat, onOff = true)
                     val events = onOffEvents(plan)
                     val foreign = writeMiTimers(XiaomiCloud(XiaomiStore(app)), id, zone.name, events)
                     schedules.remove(id)
@@ -140,7 +140,7 @@ class HeatingEngine(context: Context) {
                         ?: throw IllegalStateException("конвектор не найден в Rubetek")
                     val own = (device.status["temp_set"] as? Number)?.toDouble()
                         ?: throw IllegalStateException("неизвестна уставка конвектора")
-                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat)
+                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat, onOff = true)
                     val events = onOffEvents(plan)
                     writeRubetekTimers(rubetek, id, events)
                     schedules.remove(id)

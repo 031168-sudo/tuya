@@ -52,8 +52,10 @@ object HeatingPlanner {
      * @param step шаг уставки термостата, °C (например, 0.5 или 1)
      * @param peakBan в пиковые часы не греть совсем (только если комната остыла ниже дежурной) —
      *   для конвекторов, которыми управляем таймерами вкл/выкл
+     * @param onOff прибор умеет только «вкл/выкл» (Rubetek, Xiaomi): греет на полную мощность до своей
+     *   уставки, потом держит её (энергия — только на покрытие потерь); дробных уровней мощности нет
      */
-    fun plan(zone: HeatZone, prices: HourPrices, outdoor: DoubleArray, step: Double = 0.5, peakBan: Boolean = false): ZonePlan {
+    fun plan(zone: HeatZone, prices: HourPrices, outdoor: DoubleArray, step: Double = 0.5, peakBan: Boolean = false, onOff: Boolean = false): ZonePlan {
         val price = DoubleArray(N) { prices.price[(it / STEPS_PER_HOUR) % 24] }
         val tout = DoubleArray(N) { outdoor.getOrElse(it / STEPS_PER_HOUR) { outdoor.lastOrNull() ?: 0.0 } }
         val peakStep = BooleanArray(N) { prices.peak[(it / STEPS_PER_HOUR) % 24] }
@@ -83,7 +85,7 @@ object HeatingPlanner {
             val ramp = target + 1.0 - rate * hoursTo
             maxOf(base, ramp)
         } else null
-        val (temps, heat) = solve(zone, price, tout, minT, if (peakBan) peakStep else null, cap)
+        val (temps, heat) = solve(zone, price, tout, minT, if (peakBan) peakStep else null, cap, onOff)
 
         // Уставки с учётом гистерезиса термостата: при h > 0 он держит [S, S+h], при h < 0 — [S+h, S].
         // В часы нагрева верх полосы — температура, до которой греем; иначе низ полосы — граница комфорта.
@@ -124,7 +126,7 @@ object HeatingPlanner {
         // минимум киловатт-часов (цена везде одинаковая), а платим по реальным тарифам
         val flat = DoubleArray(N) { 1.0 }
         val plainMin = DoubleArray(N + 1) { k -> zone.targetAt((k / STEPS_PER_HOUR) % 24) }
-        val (_, bHeat) = solve(zone, flat, tout, plainMin)
+        val (_, bHeat) = solve(zone, flat, tout, plainMin, onOff = onOff)
         var bKwh = 0.0
         var bCost = 0.0
         for (k in 0 until steps) {
@@ -156,6 +158,7 @@ object HeatingPlanner {
         minT: DoubleArray,
         ban: BooleanArray? = null,
         cap: DoubleArray? = null,
+        onOff: Boolean = false,
     ): Pair<DoubleArray, DoubleArray> {
         val lo = minOf(minT.min(), zone.baseTemp) - 3.0
         val hi = maxOf(zone.maxTemp, minT.max())
@@ -163,6 +166,20 @@ object HeatingPlanner {
         val h = zone.heatRate
         val a = zone.lossRate
         val p = zone.powerKw
+        val nLev = if (onOff) 2 else LEVELS.size
+        val ceil0 = zone.maxTemp
+        // Шаг: новая температура и доля мощности. В режиме вкл/выкл включённый прибор греет на 100%,
+        // а дойдя до потолка (уставка) удерживает его — тратя ровно столько, сколько уходит в потери.
+        fun stepOf(k: Int, t: Double, u: Int): Pair<Double, Double> {
+            val loss = a * (t - tout[k])
+            if (!onOff || u == 0) return (t + DT * (h * LEVELS[u] - loss)).coerceIn(lo, hi) to LEVELS[u]
+            val raw = t + DT * (h - loss)
+            val ceiling = minOf(hi, cap?.get(k + 1) ?: ceil0)
+            if (raw <= ceiling + 1e-9) return raw.coerceIn(lo, hi) to 1.0
+            if (t >= ceiling) return (t + DT * (-loss)).coerceIn(lo, hi) to 0.0
+            val duty = ((ceiling - t) / DT + loss) / h
+            return ceiling to duty.coerceIn(0.0, 1.0)
+        }
 
         // Обратный проход: next[i] — минимальная стоимость от шага k+1 до конца при температуре i
         var next = DoubleArray(states)
@@ -174,13 +191,13 @@ object HeatingPlanner {
                 var best = Double.MAX_VALUE
                 var bestU = 0
                 // Запрет на нагрев в пик, пока комната не остыла ниже дежурной
-                val levels = if (ban != null && ban[k] && t >= zone.baseTemp) 1 else LEVELS.size
+                val levels = if (ban != null && ban[k] && t >= zone.baseTemp) 1 else nLev
                 for (u in 0 until levels) {
-                    val t2 = (t + DT * (h * LEVELS[u] - a * (t - tout[k]))).coerceIn(lo, hi)
-                    // Выше потолка греть нельзя (без накопления тепла)
-                    if (u > 0 && cap != null && t2 > cap[k + 1] + 1e-9) continue
+                    val (t2, power) = stepOf(k, t, u)
+                    // Выше потолка греть нельзя (без накопления тепла); в режиме вкл/выкл потолок держит сам прибор
+                    if (!onOff && u > 0 && cap != null && t2 > cap[k + 1] + 1e-9) continue
                     val short = (minT[k + 1] - t2).coerceAtLeast(0.0)
-                    val v = price[k] * p * LEVELS[u] * DT + short * PENALTY + interp(next, t2, lo, states)
+                    val v = price[k] * p * power * DT + short * PENALTY + interp(next, t2, lo, states)
                     if (v < best - 1e-9) {
                         best = v
                         bestU = u
@@ -200,9 +217,9 @@ object HeatingPlanner {
         var t = temps[0]
         for (k in 0 until steps) {
             val i = ((t - lo) / GRID).roundToInt().coerceIn(0, states - 1)
-            val u = LEVELS[policy[k][i].toInt()]
-            heat[k] = u
-            t = (t + DT * (h * u - a * (t - tout[k]))).coerceIn(lo, hi)
+            val (t2, power) = stepOf(k, t, policy[k][i].toInt())
+            heat[k] = power
+            t = t2
             temps[k + 1] = t
         }
         return temps to heat

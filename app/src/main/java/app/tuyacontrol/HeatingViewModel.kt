@@ -394,7 +394,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                     } else z
                     HeatingPlanner.plan(
                         planZone, prices, forecast.temps, steps[z.deviceId] ?: 0.5,
-                        peakBan = onOff && !z.peakHeat,
+                        peakBan = onOff && !z.peakHeat, onOff = onOff,
                     ).withZone(z)
                 }
             }
