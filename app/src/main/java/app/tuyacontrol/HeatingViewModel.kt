@@ -46,6 +46,9 @@ data class Thermostat(
     val programRaw: String? = null,
     val programOn: Boolean? = null,
     val programAt: Long = 0,
+    /** Границы уставки прибора (у обогревателя Xiaomi ниже минимума он выключается по плану). */
+    val setMin: Double? = null,
+    val setMax: Double? = null,
 ) {
     val program: List<app.tuyacontrol.heating.WeekProgram.Period>?
         get() = programCode?.let { c -> programRaw?.let { app.tuyacontrol.heating.WeekProgram.decode(c, it) } }
@@ -190,6 +193,8 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 current = (d.status["temp_current"] as? Number)?.toDouble()?.let { it / pow10(cur?.scale ?: 0) },
                 setpoint = (d.status[code] as? Number)?.toDouble()?.let { it / pow10(set?.scale ?: 0) },
                 step = HeatingEngine.stepOf(set),
+                setMin = set?.min?.let { it.toDouble() / pow10(set.scale) },
+                setMax = set?.max?.let { it.toDouble() / pow10(set.scale) },
                 heating = d.heatingNow,
                 tempStale = d.tempStale,
                 powerOn = if (!d.online) null else d.heatingPresetOn
@@ -388,7 +393,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 s.zones.map { z ->
                     // Rubetek: температура — уставка самого конвектора, план только вкл/выкл
                     val own = _state.value.thermostats.firstOrNull { it.id == z.deviceId }?.setpoint
-                    val onOff = z.deviceId != null && HeatingEngine.isOnOff(z.deviceId)
+                    val onOff = z.deviceId != null && app.tuyacontrol.rubetek.RubetekMapper.isRubetek(z.deviceId)
                     val planZone = if (own != null && onOff) {
                         HeatingEngine.rubetekZone(z, own)
                     } else z

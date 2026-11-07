@@ -116,16 +116,24 @@ class HeatingEngine(context: Context) {
                 try {
                     val d = XiaomiHub(app).readOne(id, ControlMode.AUTO)
                         ?: throw IllegalStateException("обогреватель не найден в Mi Home")
-                    val own = (d.status["temp_set"] as? Number)?.toDouble()?.let { it / 10.0.pow(d.spec["temp_set"]?.scale ?: 0) }
-                        ?: throw IllegalStateException("неизвестна уставка обогревателя")
-                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat)
-                    val events = onOffEvents(plan)
-                    val foreign = writeMiTimers(XiaomiCloud(XiaomiStore(app)), id, zone.name, events)
+                    val hub = XiaomiHub(app)
+                    val tp = hub.prop(id, "temp_set") ?: throw IllegalStateException("у обогревателя нет уставки температуры")
+                    val lo = tp.min ?: 5.0
+                    val hi = tp.max ?: 35.0
+                    // Обогреватель держит уставку своим термостатом; план задаёт её по часам, а там, где комфорт не нужен
+                    // и уставка ниже допустимой, обогреватель выключается
+                    val plan = HeatingPlanner.plan(zone, prices, forecast.temps, 1.0)
+                    val events = miEvents(plan, lo, hi)
+                    val foreign = writeMiTimers(XiaomiCloud(XiaomiStore(app)), id, zone.name, events, tp)
                     schedules.remove(id)
-                    lines += "${zone.name}: расписание Mi Home — " + events.joinToString(", ") { (m, on) ->
-                        "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл")
-                    } + " (температура ${own.toInt()}° с обогревателя)" +
-                        if (foreign > 0) "; удалено чужих таймеров: $foreign" else ""
+                    // Сразу — уставка текущего часа, если по плану сейчас греем; питание не трогаем
+                    miEvents(plan, lo, hi, all = true)[LocalTime.now().hour].temp?.let { t ->
+                        runCatching { hub.send(id, "temp_set", t, ControlMode.AUTO) }
+                            .onFailure { AppLog.e("Отопление: ${zone.name} — уставка сейчас не отправлена", it) }
+                    }
+                    lines += "${zone.name}: расписание Mi Home — " + events.joinToString(", ") { e ->
+                        "%02d:%02d %s".format(e.minutes / 60, e.minutes % 60, if (e.on) "вкл ${e.temp}°" else "выкл")
+                    } + if (foreign > 0) "; удалено чужих таймеров: $foreign" else ""
                     ok++
                 } catch (e: Exception) {
                     AppLog.e("Отопление: ${zone.name} — Mi Home не ответил", e)
@@ -479,22 +487,28 @@ class HeatingEngine(context: Context) {
      * единственный источник расписания), затем создаётся по таймеру на каждое переключение и всё перечитывается.
      * Возвращает, сколько чужих таймеров удалено.
      */
-    private suspend fun writeMiTimers(cloud: XiaomiCloud, id: String, zoneName: String, events: List<Pair<Int, Boolean>>): Int {
+    private suspend fun writeMiTimers(
+        cloud: XiaomiCloud, id: String, zoneName: String, events: List<MiEvent>,
+        tp: app.tuyacontrol.xiaomi.MiProp,
+    ): Int {
         val did = XiaomiMapper.did(id)
         val old = cloud.timers(did)
         val foreign = old.count { !it.name.startsWith(MI_NAME) }
         clearMiTimers(cloud, id, onlyOurs = false)
-        for ((m, on) in events.take(MI_MAX_TIMERS)) {
-            cloud.createTimer(did, "$MI_NAME: %02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл"), m, on)
+        val used = events.take(MI_MAX_TIMERS)
+        for (e in used) {
+            val name = "$MI_NAME: %02d:%02d %s".format(e.minutes / 60, e.minutes % 60, if (e.on) "вкл ${e.temp}°" else "выкл")
+            val temp = e.temp?.let { t -> Triple(tp.siid, tp.piid, app.tuyacontrol.xiaomi.XiaomiMapper.toMiot(tp, t) ?: t) }
+            cloud.createTimer(did, name, e.minutes, e.on, temp)
         }
-        var got: Set<Pair<Int, Boolean>> = emptySet()
-        val want = events.take(MI_MAX_TIMERS).toSet()
+        var got: Set<Triple<Int, Boolean, Int?>> = emptySet()
+        val want = used.map { Triple(it.minutes, it.on, it.temp) }.toSet()
         for (attempt in 1..3) {
             kotlinx.coroutines.delay(1500)
-            got = cloud.timers(did).flatMap { it.asModuleTimers() }.map { it.minutes to it.on }.toSet()
+            got = cloud.timers(did).flatMap { it.asModuleTimers() }.map { Triple(it.minutes, it.on, it.temp) }.toSet()
             if (got == want) {
                 AppLog.i("Отопление: Mi Home ${did.takeLast(4)} — облако подтвердило таймеры (попытка $attempt)")
-                store.setDeployedTimers(id, events.take(MI_MAX_TIMERS))
+                store.setDeployedTimers(id, used.map { it.minutes to it.on })
                 return foreign
             }
         }
@@ -577,6 +591,33 @@ class HeatingEngine(context: Context) {
     companion object {
         /** Не больше таймеров на одно устройство в Mi Home (лимит облака неизвестен, берём с запасом). */
         private const val MI_MAX_TIMERS = 10
+
+        /** Событие расписания Mi Home: в [minutes] включить с уставкой [temp] либо выключить (temp = null). */
+        data class MiEvent(val minutes: Int, val on: Boolean, val temp: Int?)
+
+        /**
+         * Расписание обогревателя Xiaomi по плану: в каждый час — «включён с уставкой S» или «выключен», если нужная
+         * уставка ниже допустимого минимума прибора. События — на часы, где состояние меняется. all = true — состояние
+         * на каждый из 24 часов (для «что сейчас»).
+         */
+        fun miEvents(plan: ZonePlan, lo: Double, hi: Double, all: Boolean = false): List<MiEvent> {
+            val st = (0 until 24).map { h ->
+                val sp = plan.setpoints[h]
+                if (sp < lo - 1e-6) MiEvent(h * 60, false, null) else MiEvent(h * 60, true, Math.round(sp.coerceAtMost(hi)).toInt())
+            }
+            if (all) return st
+            val ev = (0 until 24).filter { h -> st[h].on != st[(h + 23) % 24].on || st[h].temp != st[(h + 23) % 24].temp }.map { st[it] }
+            // Весь день одинаково — один таймер в полночь, чтобы состояние всё-таки задавалось
+            return ev.ifEmpty { listOf(st[0]) }
+        }
+
+        /** События расписания для показа и сверки: (минуты, вкл?, уставка при включении). Xiaomi — с уставками. */
+        fun scheduleEvents(deviceId: String?, plan: ZonePlan, lo: Double?, hi: Double?): List<Triple<Int, Boolean, Int?>> =
+            if (deviceId != null && XiaomiMapper.isXiaomi(deviceId)) {
+                miEvents(plan, lo ?: 5.0, hi ?: 35.0).map { Triple(it.minutes, it.on, it.temp) }
+            } else {
+                onOffEvents(plan).map { Triple(it.first, it.second, null) }
+            }
 
         /** Приборы, которыми план управляет таймерами вкл/выкл: Rubetek (в модуле) и Xiaomi (в облаке Mi Home). */
         fun isOnOff(id: String) = RubetekMapper.isRubetek(id) || XiaomiMapper.isXiaomi(id)
