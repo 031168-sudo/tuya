@@ -68,6 +68,8 @@ data class DeviceUi(
     val cloudTimers: List<app.tuyacontrol.cloud.CloudTimer>? = null,
     /** Отчёт «все параметры + журнал включений» (null — не запрашивался или закрыт). */
     val diagnostics: String? = null,
+    /** Расписание Mi Home (null — не загружено). */
+    val miTimers: List<app.tuyacontrol.xiaomi.MiTimer>? = null,
     /** Текущая температура верна только когда прибор включён (из настроек устройства или по типу). */
     val tempOnlyWhenOn: Boolean = false,
 ) {
