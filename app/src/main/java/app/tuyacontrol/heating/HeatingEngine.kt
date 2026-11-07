@@ -14,7 +14,6 @@ import app.tuyacontrol.rubetek.RubetekClient
 import app.tuyacontrol.rubetek.RubetekMapper
 import app.tuyacontrol.rubetek.RubetekStore
 import app.tuyacontrol.ControlMode
-import app.tuyacontrol.xiaomi.MiProp
 import app.tuyacontrol.xiaomi.XiaomiCloud
 import app.tuyacontrol.xiaomi.XiaomiHub
 import app.tuyacontrol.xiaomi.XiaomiMapper
@@ -490,7 +489,7 @@ class HeatingEngine(context: Context) {
      */
     private suspend fun writeMiTimers(
         cloud: XiaomiCloud, id: String, zoneName: String, events: List<MiEvent>,
-        tp: MiProp,
+        tp: app.tuyacontrol.xiaomi.MiProp,
     ): Int {
         val did = XiaomiMapper.did(id)
         val old = cloud.timers(did)
@@ -499,7 +498,7 @@ class HeatingEngine(context: Context) {
         val used = events.take(MI_MAX_TIMERS)
         for (e in used) {
             val name = "$MI_NAME: %02d:%02d %s".format(e.minutes / 60, e.minutes % 60, if (e.on) "вкл ${e.temp}°" else "выкл")
-            val temp = e.temp?.let { t -> Triple(tp.siid, tp.piid, XiaomiMapper.toMiot(tp, t) ?: t) }
+            val temp = e.temp?.let { t -> Triple(tp.siid, tp.piid, app.tuyacontrol.xiaomi.XiaomiMapper.toMiot(tp, t) ?: t) }
             cloud.createTimer(did, name, e.minutes, e.on, temp)
         }
         var got: Set<Triple<Int, Boolean, Int?>> = emptySet()
