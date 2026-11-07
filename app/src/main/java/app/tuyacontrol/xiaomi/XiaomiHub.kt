@@ -85,12 +85,6 @@ class XiaomiHub(context: Context) {
         return XiaomiMapper.toDevice(d, props, last?.second.orEmpty(), online = false, viaLocal = false, dataTime = last?.first ?: 0)
     }
 
-    /** Описание свойства устройства по коду приложения (siid/piid, границы); null — нет такого. */
-    suspend fun prop(id: String, code: String): MiProp? {
-        val d = store.devices.firstOrNull { it.did == XiaomiMapper.did(id) } ?: return null
-        return spec.props(d.model).firstOrNull { it.code == code }
-    }
-
     /** Изменить свойство. Возвращает, каким путём ушла команда. */
     suspend fun send(id: String, code: String, value: Any, mode: ControlMode): String {
         val did = XiaomiMapper.did(id)

@@ -6,11 +6,11 @@ import org.json.JSONObject
  * Таймер, записанный в Wi-Fi-модуль конвектора Rubetek (tmr:on[i] / tmr:off[i]).
  * Значение в модуле: (дни недели << 16) | минуты от полуночи; −1 — слот пуст. 127 — каждый день.
  */
-data class ModuleTimer(val minutes: Int, val on: Boolean, val days: Int, val temp: Int? = null) {
+data class ModuleTimer(val minutes: Int, val on: Boolean, val days: Int) {
     val everyDay: Boolean get() = days == EVERY_DAY
 
     fun text(): String = "%02d:%02d %s".format(minutes / 60, minutes % 60, if (on) "вкл" else "выкл") +
-        (temp?.let { " $it°" } ?: "") + if (everyDay) "" else " (не каждый день)"
+        if (everyDay) "" else " (не каждый день)"
 
     companion object {
         const val EVERY_DAY = 127

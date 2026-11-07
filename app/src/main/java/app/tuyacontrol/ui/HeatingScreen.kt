@@ -369,7 +369,7 @@ private fun ZoneCard(
                     val xiaomi = zone.deviceId?.let { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it) } == true
                     Text(
                         when {
-                            xiaomi && zone.control -> "План записан в расписание Mi Home (облако Xiaomi): включение с нужной уставкой и выключение. Все прежние таймеры этого прибора удалены"
+                            xiaomi && zone.control -> "Таймеры вкл/выкл записаны в расписание Mi Home (облако Xiaomi); температура — та, что на обогревателе. Все прежние таймеры этого прибора удалены"
                             xiaomi -> "Выключено: наши таймеры Mi Home сняты, сам обогреватель не трогаем"
                             rubetek && zone.control -> "Таймеры вкл/выкл записаны в модуль конвектора; температура — та, что на конвекторе"
                             rubetek -> "Выключено: таймеры модуля отключены, сам конвектор не трогаем"
@@ -415,9 +415,9 @@ private fun ZoneCard(
                 ModuleTimersBlock(zone, thermostat, plan, prices, deployed, busy, onControl)
                 Text("По плану на сегодня", style = MaterialTheme.typography.labelMedium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    app.tuyacontrol.heating.HeatingEngine.scheduleEvents(zone.deviceId, plan, thermostat?.setMin, thermostat?.setMax).forEach { (m, on, t) ->
+                    app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan).forEach { (m, on) ->
                         Text(
-                            "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл") + (t?.let { " $it°" } ?: ""),
+                            "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл"),
                             style = MaterialTheme.typography.labelMedium,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
@@ -744,8 +744,7 @@ private fun ModuleTimersBlock(
     val timers = thermostat?.moduleTimers
     val ok = Color(0xFF43A047)
     // Конвектор держит [S + h, S]: если окно комфорта выше низа полосы — подсказать, что поставить на конвекторе
-    // (у обогревателя Xiaomi уставку по часам выставляет сам план)
-    if (zone.deviceId?.let { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it) } != true) thermostat?.setpoint?.let { s ->
+    thermostat?.setpoint?.let { s ->
         val low = s + minOf(zone.hyst, 0.0)
         val need = zone.windows.maxOfOrNull { it.temp } ?: return@let
         Text(
@@ -815,8 +814,7 @@ private fun ModuleTimersBlock(
             style = MaterialTheme.typography.bodySmall, color = ok,
         )
     }
-    val planned = app.tuyacontrol.heating.HeatingEngine.scheduleEvents(zone.deviceId, plan, thermostat?.setMin, thermostat?.setMax)
-        .map { it.first to it.second }
+    val planned = app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan)
     if (zone.control && matches && planned.sortedWith(compareBy({ it.first }, { it.second })) != written) {
         Text(
             "План на сегодня изменился по погоде — новые таймеры запишутся ночью",
@@ -1000,8 +998,8 @@ private fun ZoneDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                // Конвектор Rubetek управляется только таймерами вкл/выкл
-                if (device?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
+                // Конвектор Rubetek и обогреватель Xiaomi управляются только таймерами вкл/выкл
+                if (device?.let { app.tuyacontrol.heating.HeatingEngine.isOnOff(it) } == true) {
                     Row(
                         Modifier.fillMaxWidth().clickable { peakHeat = !peakHeat },
                         verticalAlignment = Alignment.CenterVertically,

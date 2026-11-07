@@ -36,15 +36,13 @@ data class MiTimer(
     val onAt: Int?,
     val offAt: Int?,
     val days: Set<Int>,
-    /** Уставка, которую таймер выставляет при включении (второе числовое свойство в команде); null — не меняет. */
-    val temp: Int? = null,
 ) {
     /** Срабатывающие события этого таймера в виде строк таймеров модуля (выключенный таймер не срабатывает). */
     fun asModuleTimers(): List<app.tuyacontrol.rubetek.ModuleTimer> {
         if (!enabled || countdown) return emptyList()
         val mask = if (days.size >= 7 || days.isEmpty()) 127 else days.fold(0) { a, d -> a or (1 shl d) }
         return listOfNotNull(
-            onAt?.let { app.tuyacontrol.rubetek.ModuleTimer(it, true, mask, temp) },
+            onAt?.let { app.tuyacontrol.rubetek.ModuleTimer(it, true, mask) },
             offAt?.let { app.tuyacontrol.rubetek.ModuleTimer(it, false, mask) },
         )
     }
@@ -52,7 +50,7 @@ data class MiTimer(
     fun text(): String {
         if (countdown) return "обратный отсчёт"
         fun hm(m: Int) = "%02d:%02d".format(m / 60, m % 60)
-        val parts = listOfNotNull(onAt?.let { hm(it) + " вкл" + (temp?.let { t -> " $t°" } ?: "") }, offAt?.let { hm(it) + " выкл" })
+        val parts = listOfNotNull(onAt?.let { hm(it) + " вкл" }, offAt?.let { hm(it) + " выкл" })
         val d = if (days.size >= 7 || days.isEmpty()) "" else " (не каждый день)"
         return parts.joinToString(" → ").ifEmpty { name } + d
     }
@@ -89,11 +87,6 @@ data class MiTimer(
             val dow = ref.trim().split(Regex("\\s+")).getOrNull(4).orEmpty()
             val dayShift = local(ref)?.second ?: 0
             val days = dow.split(",").mapNotNull { it.trim().toIntOrNull() }.map { Math.floorMod(it + dayShift, 7) }.toSet()
-            // Уставка: числовое свойство в команде включения, кроме самого питания (siid 2, piid 1)
-            val params = st.optJSONArray("on_param")
-            val temp = (0 until (params?.length() ?: 0)).mapNotNull { params?.optJSONObject(it) }
-                .firstOrNull { !(it.optInt("siid") == 2 && it.optInt("piid") == 1) && it.opt("value") is Number }
-                ?.optDouble("value")?.let { Math.round(it).toInt() }
             return MiTimer(
                 usId = o.optLong("us_id"),
                 name = o.optString("name"),
@@ -102,7 +95,6 @@ data class MiTimer(
                 onAt = if (onOn) minutes(onCron) else null,
                 offAt = if (offOn) minutes(offCron) else null,
                 days = days,
-                temp = temp,
             )
         }
     }
@@ -514,13 +506,10 @@ class XiaomiCloud(private val store: XiaomiStore) {
      * (siid 2, piid 1 — «on» нагревателя). Формат — как у таймеров, созданных самим Mi Home: сцена st_id 8,
      * время в cron по пекинскому времени, команда set_properties.
      */
-    suspend fun createTimer(did: String, name: String, minutes: Int, on: Boolean, temp: Triple<Int, Int, Any>? = null) {
+    suspend fun createTimer(did: String, name: String, minutes: Int, on: Boolean) {
         val t = Math.floorMod(minutes - MiTimer.shiftToLocal(), 1440)
         val cron = "${t % 60} ${t / 60} * * 0,1,2,3,4,5,6"
-        // Включение может ещё и выставлять уставку: temp = (siid, piid, значение MIoT)
-        fun param(v: Boolean) = JSONArray().put(JSONObject().put("did", did).put("siid", 2).put("piid", 1).put("value", v)).also { a ->
-            if (v && temp != null) a.put(JSONObject().put("did", did).put("siid", temp.first).put("piid", temp.second).put("value", temp.third))
-        }
+        fun param(v: Boolean) = JSONArray().put(JSONObject().put("did", did).put("siid", 2).put("piid", 1).put("value", v))
         val setting = JSONObject()
             .put("enable_timer", "1")
             .put("enable_timer_on", if (on) "1" else "0")
