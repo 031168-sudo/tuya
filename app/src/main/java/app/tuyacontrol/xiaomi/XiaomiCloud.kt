@@ -23,6 +23,58 @@ import java.util.concurrent.TimeUnit
 
 class XiaomiException(message: String, val authExpired: Boolean = false) : Exception(message)
 
+/**
+ * Таймер Mi Home («сцена» типа таймер). Время в сцене — cron «минута час * * дни недели» (0 — воскресенье).
+ * Одна сцена может включать и выключать: поля on_* и off_* независимы.
+ */
+data class MiTimer(
+    val usId: Long,
+    val name: String,
+    /** Сцена включена (enable_timer = 1). */
+    val enabled: Boolean,
+    val countdown: Boolean,
+    val onAt: Int?,
+    val offAt: Int?,
+    val days: Set<Int>,
+) {
+    fun text(): String {
+        if (countdown) return "обратный отсчёт"
+        fun hm(m: Int) = "%02d:%02d".format(m / 60, m % 60)
+        val parts = listOfNotNull(onAt?.let { hm(it) + " вкл" }, offAt?.let { hm(it) + " выкл" })
+        val d = if (days.size >= 7 || days.isEmpty()) "" else " (не каждый день)"
+        return parts.joinToString(" → ").ifEmpty { name } + d
+    }
+
+    companion object {
+        /** Минуты от полуночи из cron «28 23 * * 0,1,…»; null — не разобрать. */
+        fun minutes(cron: String): Int? {
+            val f = cron.trim().split(Regex("\\s+"))
+            val m = f.getOrNull(0)?.toIntOrNull() ?: return null
+            val h = f.getOrNull(1)?.toIntOrNull() ?: return null
+            return h * 60 + m
+        }
+
+        fun parse(o: JSONObject): MiTimer? {
+            val st = o.optJSONObject("setting") ?: return null
+            val onOn = st.optString("enable_timer_on") == "1"
+            val offOn = st.optString("enable_timer_off") == "1"
+            val onCron = st.optString("on_time")
+            val offCron = st.optString("off_time")
+            val dow = (onCron.ifEmpty { offCron }).trim().split(Regex("\\s+")).getOrNull(4).orEmpty()
+            val days = dow.split(",").mapNotNull { it.trim().toIntOrNull() }.toSet()
+            return MiTimer(
+                usId = o.optLong("us_id"),
+                name = o.optString("name"),
+                enabled = st.optString("enable_timer") == "1",
+                countdown = st.optString("timer_type") == "1",
+                onAt = if (onOn) minutes(onCron) else null,
+                offAt = if (offOn) minutes(offCron) else null,
+                days = days,
+            )
+        }
+    }
+}
+
 /** Устройство из облака Xiaomi: всё, что нужно для управления по Wi-Fi. */
 data class MiDevice(
     val did: String,
@@ -409,6 +461,24 @@ class XiaomiCloud(private val store: XiaomiStore) {
         val r = api("/miotspec/prop/set", JSONObject().put("params", arr)) as? JSONArray
         val code = r?.optJSONObject(0)?.optInt("code", 0) ?: 0
         if (code != 0) throw XiaomiException("облако Xiaomi: устройство не приняло значение (код $code)")
+    }
+
+    /** Таймеры устройства из Mi Home (сцены типа «таймер»). Ответ — объект с ключами «0», «1»… или массив. */
+    suspend fun timers(did: String): List<MiTimer> {
+        val r = api("/scene/list", JSONObject().put("did", did))
+        val items = mutableListOf<JSONObject>()
+        when (r) {
+            is JSONObject -> r.keys().forEach { k -> r.optJSONObject(k)?.let { items += it } }
+            is JSONArray -> for (i in 0 until r.length()) r.optJSONObject(i)?.let { items += it }
+        }
+        return items.filter { it.optString("identify") == did || it.optJSONObject("setting")?.has("on_time") == true }
+            .mapNotNull { MiTimer.parse(it) }
+            .sortedBy { it.onAt ?: it.offAt ?: 0 }
+    }
+
+    /** Удалить таймер Mi Home (сцену) по us_id. */
+    suspend fun deleteTimer(did: String, usId: Long) {
+        api("/scene/delete", JSONObject().put("us_id", usId).put("identify", did).put("st_id", 8))
     }
 
     /** Разведка: вызвать произвольный адрес облака (только чтение, для поиска таймеров); ответ или ошибка — текстом. */

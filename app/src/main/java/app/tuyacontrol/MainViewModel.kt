@@ -244,6 +244,8 @@ data class DeviceUi(
         const val TIMERS_SHOW = "__timers_show"
         const val TIMERS_ALL = "__timers_all"
         const val DIAG_SHOW = "__diag_show"
+        const val MI_TIMERS_SHOW = "__mi_timers_show"
+        const val MI_TIMERS_CLEAR = "__mi_timers_clear"
         const val RUBETEK_TIMERS_CLEAR = "__rubetek_timers_clear"
         /** Пороги (включение, выключение), °C. */
         val PRESET_ON = 19.0 to 20.0
@@ -336,6 +338,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Облачные таймеры, раскрытые в карточках (id -> список). Объявлено до init: publish() вызывается уже там. */
     private val timersCache = mutableMapOf<String, List<app.tuyacontrol.cloud.CloudTimer>>()
     private val diagCache = mutableMapOf<String, String>()
+    private val miTimersCache = mutableMapOf<String, List<app.tuyacontrol.xiaomi.MiTimer>>()
     private var foreground = false
     private var localStartJob: Job? = null
     private var codesLogged = false
@@ -426,6 +429,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .map { d -> d.copy(tempOnlyWhenOn = s.devicePrefs[d.id]?.tempWhenOn ?: d.defaultTempOnlyWhenOn) }
             // Отчёт диагностики подмешиваем всем устройствам (Xiaomi и Rubetek идут мимо списка Tuya)
             .map { d -> if (d.diagnostics == null) diagCache[d.id]?.let { d.copy(diagnostics = it) } ?: d else d }
+            .map { d -> miTimersCache[d.id]?.let { d.copy(miTimers = it) } ?: d }
         _state.update { it.copy(devices = all) }
     }
 
@@ -772,6 +776,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             setAllTimers(deviceId, value == true)
             return
         }
+        if (code == DeviceUi.MI_TIMERS_SHOW) {
+            if (value == true) loadMiTimers(deviceId) else { miTimersCache.remove(deviceId); publish() }
+            return
+        }
+        if (code == DeviceUi.MI_TIMERS_CLEAR) {
+            clearMiTimers(deviceId)
+            return
+        }
         if (code == DeviceUi.DIAG_SHOW) {
             if (value == true) loadDiagnostics(deviceId) else { diagCache.remove(deviceId); publish() }
             return
@@ -827,6 +839,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Батарея в ванной (пороги нагрева): «включено» — греть с 19° до 20°, «выключено» — с 12° до 13°.
      * Порядок записи такой, чтобы порог включения всегда оставался ниже порога выключения.
      */
+    private fun loadMiTimers(deviceId: String) {
+        val device = _state.value.devices.find { it.id == deviceId } ?: return
+        if (DeviceUi.MI_TIMERS_SHOW in device.pending) return
+        val did = app.tuyacontrol.xiaomi.XiaomiMapper.did(deviceId)
+        updateDevice(deviceId) { it.copy(pending = it.pending + DeviceUi.MI_TIMERS_SHOW) }
+        viewModelScope.launch {
+            try {
+                val list = xiaomi.cloud.timers(did)
+                miTimersCache[deviceId] = list
+                AppLog.i("Расписание Mi Home «${device.name}»: " + list.joinToString { "${it.text()}${if (it.enabled) "" else " (выкл)"}" })
+            } catch (e: Exception) {
+                AppLog.e("Расписание Mi Home «${device.name}» не прочитано", e)
+                _state.update { it.copy(message = "${device.name}: расписание Mi Home не прочитано — ${e.message}") }
+            }
+            updateDevice(deviceId) { it.copy(pending = it.pending - DeviceUi.MI_TIMERS_SHOW) }
+        }
+    }
+
+    /** Удалить все таймеры Mi Home устройства и проверить, что они действительно пропали. */
+    private fun clearMiTimers(deviceId: String) {
+        val device = _state.value.devices.find { it.id == deviceId } ?: return
+        if (DeviceUi.MI_TIMERS_CLEAR in device.pending) return
+        val did = app.tuyacontrol.xiaomi.XiaomiMapper.did(deviceId)
+        updateDevice(deviceId) { it.copy(pending = it.pending + DeviceUi.MI_TIMERS_CLEAR) }
+        viewModelScope.launch {
+            try {
+                val before = xiaomi.cloud.timers(did)
+                before.forEach { xiaomi.cloud.deleteTimer(did, it.usId) }
+                val after = xiaomi.cloud.timers(did)
+                miTimersCache[deviceId] = after
+                AppLog.i("Расписание Mi Home «${device.name}»: удалено ${before.size}, осталось ${after.size}")
+                _state.update {
+                    it.copy(message = if (after.isEmpty()) "${device.name}: все таймеры Mi Home удалены" else "${device.name}: не удалилось ${after.size} из ${before.size}")
+                }
+            } catch (e: Exception) {
+                AppLog.e("Очистка расписания Mi Home «${device.name}»", e)
+                _state.update { it.copy(message = "${device.name}: ${e.message}") }
+            }
+            updateDevice(deviceId) { it.copy(pending = it.pending - DeviceUi.MI_TIMERS_CLEAR) }
+        }
+    }
+
     private fun loadDiagnostics(deviceId: String) {
         val device = _state.value.devices.find { it.id == deviceId } ?: return
         val isMi = app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(deviceId)

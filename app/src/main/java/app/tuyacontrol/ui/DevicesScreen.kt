@@ -423,7 +423,10 @@ private fun DeviceCard(
                 DpRow(device, code, value, onCommand)
             }
             if (device.hasCloudSchedule) CloudScheduleBlock(device, onCommand)
-            if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(device.id)) DiagnosticsButton(device, onCommand)
+            if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(device.id)) {
+                MiTimersBlock(device, onCommand)
+                DiagnosticsButton(device, onCommand)
+            }
             device.moduleTimers?.let { RubetekTimersBlock(device, it, onCommand) }
 
             if (sensor != null) {
@@ -683,6 +686,55 @@ fun HeatingIndicator(heating: Boolean, size: androidx.compose.ui.unit.Dp = 20.dp
                 )
             }
         }
+    }
+}
+
+/** Расписание Mi Home: таймеры устройства (сцены типа «таймер») и кнопка «Очистить все». */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun MiTimersBlock(device: DeviceUi, onCommand: (String, String, Any) -> Unit) {
+    val busy = DeviceUi.MI_TIMERS_SHOW in device.pending || DeviceUi.MI_TIMERS_CLEAR in device.pending
+    val timers = device.miTimers
+    if (timers == null) {
+        TextButton(onClick = { onCommand(device.id, DeviceUi.MI_TIMERS_SHOW, true) }, enabled = !busy, contentPadding = PaddingValues(0.dp)) {
+            Text(if (busy) "Читаю расписание…" else "Расписание Mi Home…")
+        }
+        return
+    }
+    Spacer(Modifier.size(4.dp))
+    val on = timers.count { it.enabled }
+    Text("Расписание Mi Home", style = MaterialTheme.typography.bodyLarge)
+    Text(
+        if (timers.isEmpty()) "таймеров нет" else "включено $on из ${timers.size} · выполняет облако Xiaomi",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    if (timers.isNotEmpty()) {
+        androidx.compose.foundation.layout.FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            timers.forEach { t ->
+                Text(
+                    t.text(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (t.enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    textDecoration = if (t.enabled) null else androidx.compose.ui.text.style.TextDecoration.LineThrough,
+                    modifier = Modifier
+                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
+                        .background(if (t.enabled) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                )
+            }
+        }
+        Button(
+            onClick = { onCommand(device.id, DeviceUi.MI_TIMERS_CLEAR, true) },
+            enabled = !busy,
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+        ) { Text(if (busy) "Работаю…" else "Очистить все") }
+    }
+    TextButton(onClick = { onCommand(device.id, DeviceUi.MI_TIMERS_SHOW, false) }, contentPadding = PaddingValues(0.dp)) {
+        Text("Скрыть расписание")
     }
 }
 
