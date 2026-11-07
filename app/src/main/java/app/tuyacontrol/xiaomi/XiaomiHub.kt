@@ -159,22 +159,27 @@ class XiaomiHub(context: Context) {
             )
         }
 
-        sb.appendLine().appendLine("ОБЛАКО MI HOME (разведка адресов)")
+        // Таймеры Mi Home хранятся как «сцены» типа «таймер» (SDK плагинов: loadTimerScenes -> /scene/list).
+        // Точные поля запроса не документированы — перебираем варианты, показываем только непустые ответы.
+        sb.appendLine().appendLine("ОБЛАКО MI HOME: ТАЙМЕРЫ КАК СЦЕНЫ")
         val did = d.did
-        val probes = listOf(
-            "/home/rpc/$did" to JSONObject().put("id", 1).put("method", "get_timer").put("params", org.json.JSONArray()),
-            "/home/rpc/$did" to JSONObject().put("id", 1).put("method", "get_timer_list").put("params", org.json.JSONArray()),
-            "/scene/list" to JSONObject().put("st_id", 30),
-            "/v2/scene/list" to JSONObject().put("did", did),
-            "/timer/list" to JSONObject().put("did", did),
-            "/v2/timer/list" to JSONObject().put("did", did),
-            "/device/timer/list" to JSONObject().put("did", did),
-            "/v2/device/timers" to JSONObject().put("did", did),
-        )
-        for ((path, body) in probes) {
-            val extra = body.optString("method").takeIf { it.isNotEmpty() }?.let { " [$it]" }.orEmpty()
-            sb.appendLine("$path$extra → " + cloud.probe(path, body))
+        var empty = 0
+        suspend fun try1(label: String, path: String, body: JSONObject) {
+            val r = cloud.probe(path, body)
+            val blank = r == "{}" || r == "[]" || r == "пусто" || r.startsWith("{\"scene\":[]") || r.contains("\"list\":[]")
+            if (blank) empty++ else sb.appendLine("$label → $r")
         }
+        try1("/scene/idfy_get identify=did", "/scene/idfy_get", JSONObject().put("identify", did))
+        for (identify in listOf(did, "timer", "")) {
+            for (st in listOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 21, 30)) {
+                val body = JSONObject().put("did", did).put("st_id", st)
+                if (identify.isNotEmpty()) body.put("identify", identify)
+                try1("/scene/list st_id=$st identify=${identify.ifEmpty { "-" }}", "/scene/list", body)
+            }
+        }
+        try1("/scene/list без st_id", "/scene/list", JSONObject().put("did", did).put("identify", did))
+        try1("/scene/list только did", "/scene/list", JSONObject().put("did", did))
+        sb.appendLine("Пустых ответов: $empty")
         return sb.toString().trimEnd()
     }
 
