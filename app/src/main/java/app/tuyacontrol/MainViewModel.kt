@@ -424,6 +424,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val extra = rubetekShown + xiaomiDevices
         val all = (if (extra.isEmpty()) shown else (shown + extra).sortedBy { it.name.lowercase() })
             .map { d -> d.copy(tempOnlyWhenOn = s.devicePrefs[d.id]?.tempWhenOn ?: d.defaultTempOnlyWhenOn) }
+            // Отчёт диагностики подмешиваем всем устройствам (Xiaomi и Rubetek идут мимо списка Tuya)
+            .map { d -> if (d.diagnostics == null) diagCache[d.id]?.let { d.copy(diagnostics = it) } ?: d else d }
         _state.update { it.copy(devices = all) }
     }
 
