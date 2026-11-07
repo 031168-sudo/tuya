@@ -366,8 +366,11 @@ private fun ZoneCard(
                 Column(Modifier.weight(1f)) {
                     Text("Управление по плану", style = MaterialTheme.typography.titleSmall)
                     val rubetek = zone.deviceId?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true
+                    val xiaomi = zone.deviceId?.let { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it) } == true
                     Text(
                         when {
+                            xiaomi && zone.control -> "Таймеры вкл/выкл записаны в расписание Mi Home (облако Xiaomi); температура — та, что на обогревателе. Все прежние таймеры этого прибора удалены"
+                            xiaomi -> "Выключено: наши таймеры Mi Home сняты, сам обогреватель не трогаем"
                             rubetek && zone.control -> "Таймеры вкл/выкл записаны в модуль конвектора; температура — та, что на конвекторе"
                             rubetek -> "Выключено: таймеры модуля отключены, сам конвектор не трогаем"
                             zone.control -> "Уставки выставляются по плану и обновляются каждую ночь"
@@ -408,7 +411,7 @@ private fun ZoneCard(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
-            if (zone.deviceId?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
+            if (zone.deviceId?.let { app.tuyacontrol.heating.HeatingEngine.isOnOff(it) } == true) {
                 ModuleTimersBlock(zone, thermostat, plan, prices, deployed, busy, onControl)
                 Text("По плану на сегодня", style = MaterialTheme.typography.labelMedium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -755,9 +758,10 @@ private fun ModuleTimersBlock(
             color = if (need > low + 1e-6) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-    Text("В модуле конвектора сейчас", style = MaterialTheme.typography.labelMedium)
+    val mi = zone.deviceId?.let { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it) } == true
+    Text(if (mi) "В расписании Mi Home сейчас" else "В модуле конвектора сейчас", style = MaterialTheme.typography.labelMedium)
     if (timers == null) {
-        Text("Ещё не прочитано из Rubetek…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(if (mi) "Ещё не прочитано из Mi Home…" else "Ещё не прочитано из Rubetek…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
     if (timers.isEmpty()) {
@@ -782,19 +786,21 @@ private fun ModuleTimersBlock(
     val matches = written != null && actual == written && timers.all { it.everyDay }
     when {
         zone.control && matches -> Text(
-            "✓ Записано по плану и проверено в модуле. Конвектор включается и выключается сам, даже без интернета",
+            if (mi) "✓ Записано по плану и проверено в облаке Mi Home. Обогреватель включается и выключается сам, телефон не нужен"
+            else "✓ Записано по плану и проверено в модуле. Конвектор включается и выключается сам, даже без интернета",
             style = MaterialTheme.typography.bodySmall, color = ok,
         )
         zone.control -> {
             Text(
-                "⚠ В модуле не то, что записало приложение",
+                if (mi) "⚠ В расписании Mi Home не то, что записало приложение" else "⚠ В модуле не то, что записало приложение",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
             )
             Button(onClick = { onControl(true) }, enabled = !busy) { Text("Записать план в модуль") }
         }
         timers.isNotEmpty() -> {
             Text(
-                "⚠ Управление выключено, но в модуле стоят таймеры — конвектор будет сам включаться и выключаться",
+                if (mi) "⚠ Управление выключено, но в расписании Mi Home стоят таймеры — обогреватель будет сам включаться и выключаться"
+                else "⚠ Управление выключено, но в модуле стоят таймеры — конвектор будет сам включаться и выключаться",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold,
             )
             Button(
@@ -962,7 +968,7 @@ private fun ZoneDialog(
                 )
                 NumberField(max, { max = it }, "Максимум про запас °C", Modifier.fillMaxWidth())
 
-                if (device?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } != true) {
+                if (device?.let { app.tuyacontrol.heating.HeatingEngine.isOnOff(it) } != true) {
                     Row(
                         Modifier.fillMaxWidth().clickable { storeHeat = !storeHeat },
                         verticalAlignment = Alignment.CenterVertically,
@@ -992,8 +998,8 @@ private fun ZoneDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
 
-                // Конвектор Rubetek управляется только таймерами вкл/выкл
-                if (device?.let { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) } == true) {
+                // Конвектор Rubetek и обогреватель Xiaomi управляются только таймерами вкл/выкл
+                if (device?.let { app.tuyacontrol.heating.HeatingEngine.isOnOff(it) } == true) {
                     Row(
                         Modifier.fillMaxWidth().clickable { peakHeat = !peakHeat },
                         verticalAlignment = Alignment.CenterVertically,

@@ -140,7 +140,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             val client = TuyaCloudClient(creds)
             for (z in s.zones) {
                 val id = z.deviceId ?: continue
-                if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) continue
+                if (HeatingEngine.isOnOff(id)) continue
                 // Модель с диапазонами (что означают режимы и рабочие дни) и программа, записанная в термостат
                 val model = runCatching { client.getThingModel(id) }.getOrNull()
                 if (model != null) {
@@ -177,8 +177,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     /** Термостаты приходят с главного экрана; пустым зонам подбираем устройство по названию. */
     fun setDevices(all: List<DeviceUi>) {
-        // Устройства Xiaomi в отопление автоматически не попадают — ими управляют вручную
-        val devices = all.filterNot { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it.id) }
+        val devices = all
         engine.store.relayDevices = devices.filter { it.switchIsRelay }.map { it.id }.toSet()
         val list = devices.filter { it.setpointCode != null }.map { d ->
             val cur = d.spec["temp_current"]
@@ -245,7 +244,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             var zz = z
             if (zz.hysteresis == null) zz = zz.copy(hysteresis = HeatingEngine.defaultHysteresis(d))
             // Копить тепло — только тёплым полам (обогреватели быстро остывают, конвектор выше уставки не греет)
-            if (zz.storeHeat == null) zz = zz.copy(storeHeat = zz.isFloor && !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(d.id))
+            if (zz.storeHeat == null) zz = zz.copy(storeHeat = zz.isFloor && !HeatingEngine.isOnOff(d.id))
             zz
         }
         if (zones != settings.zones || settings != _state.value.settings) {
@@ -308,27 +307,42 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     private var timersReadAt = 0L
 
-    /** Прочитать из облака Rubetek, какие таймеры сейчас стоят в модулях конвекторов зон. */
+    /** Прочитать, какие таймеры сейчас стоят у приборов зон: в модулях Rubetek и в облаке Mi Home (Xiaomi). */
     fun reloadModuleTimers(force: Boolean = false) {
-        val ids = _state.value.settings.zones.mapNotNull { it.deviceId }.filter { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) }
-        if (ids.isEmpty()) return
+        val zoneIds = _state.value.settings.zones.mapNotNull { it.deviceId }
+        val ids = zoneIds.filter { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) }
+        val miIds = zoneIds.filter { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it) }
+        if (ids.isEmpty() && miIds.isEmpty()) return
         if (!force && System.currentTimeMillis() - timersReadAt < 60_000) return
         timersReadAt = System.currentTimeMillis()
         viewModelScope.launch {
-            val rubetek = app.tuyacontrol.rubetek.RubetekClient(app.tuyacontrol.rubetek.RubetekStore(getApplication()))
-            val devices = try {
-                rubetek.allDevices()
-            } catch (e: Exception) {
-                app.tuyacontrol.data.AppLog.e("Отопление: таймеры Rubetek не прочитаны", e)
-                return@launch
+            val found = mutableMapOf<String, List<app.tuyacontrol.rubetek.ModuleTimer>>()
+            if (ids.isNotEmpty()) {
+                val rubetek = app.tuyacontrol.rubetek.RubetekClient(app.tuyacontrol.rubetek.RubetekStore(getApplication()))
+                try {
+                    rubetek.allDevices().filter { it.id in ids }.forEach { d -> d.moduleTimers?.let { found[d.id] = it } }
+                } catch (e: Exception) {
+                    app.tuyacontrol.data.AppLog.e("Отопление: таймеры Rubetek не прочитаны", e)
+                }
             }
+            if (miIds.isNotEmpty()) {
+                val cloud = app.tuyacontrol.xiaomi.XiaomiCloud(app.tuyacontrol.xiaomi.XiaomiStore(getApplication()))
+                for (id in miIds) {
+                    try {
+                        found[id] = cloud.timers(app.tuyacontrol.xiaomi.XiaomiMapper.did(id)).flatMap { it.asModuleTimers() }
+                            .sortedWith(compareBy({ it.minutes }, { it.on }))
+                    } catch (e: Exception) {
+                        app.tuyacontrol.data.AppLog.e("Отопление: таймеры Mi Home не прочитаны", e)
+                    }
+                }
+            }
+            if (found.isEmpty()) return@launch
             val now = System.currentTimeMillis()
-            val byId = devices.filter { it.id in ids }.associateBy { it.id }
             _state.update { st ->
                 st.copy(
                     deployedTimers = engine.store.deployedTimers(),
                     thermostats = st.thermostats.map { t ->
-                        byId[t.id]?.let { d -> t.copy(moduleTimers = d.moduleTimers, timersAt = now) } ?: t
+                        found[t.id]?.let { list -> t.copy(moduleTimers = list, timersAt = now) } ?: t
                     },
                 )
             }
@@ -339,7 +353,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
 
     /** Прочитать недельные программы термостатов зон (они в теневых свойствах, список устройств их не обновляет). */
     fun reloadPrograms(force: Boolean = false) {
-        val ids = _state.value.settings.zones.mapNotNull { it.deviceId }.filterNot { app.tuyacontrol.rubetek.RubetekMapper.isRubetek(it) }
+        val ids = _state.value.settings.zones.mapNotNull { it.deviceId }.filterNot { HeatingEngine.isOnOff(it) }
         if (ids.isEmpty()) return
         if (!force && System.currentTimeMillis() - programsReadAt < 60_000) return
         programsReadAt = System.currentTimeMillis()
@@ -374,7 +388,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 s.zones.map { z ->
                     // Rubetek: температура — уставка самого конвектора, план только вкл/выкл
                     val own = _state.value.thermostats.firstOrNull { it.id == z.deviceId }?.setpoint
-                    val onOff = z.deviceId != null && app.tuyacontrol.rubetek.RubetekMapper.isRubetek(z.deviceId)
+                    val onOff = z.deviceId != null && HeatingEngine.isOnOff(z.deviceId)
                     val planZone = if (own != null && onOff) {
                         HeatingEngine.rubetekZone(z, own)
                     } else z
@@ -498,6 +512,10 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     fun testStudioTimer(zoneId: String) {
         val zone = _state.value.settings.zones.firstOrNull { it.id == zoneId } ?: return
         val id = zone.deviceId ?: return
+        if (app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id)) {
+            _state.update { it.copy(message = "Для обогревателя Xiaomi тест не нужен: запись таймеров проверяется при «Записать план»") }
+            return
+        }
         if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id)) {
             testRubetekOff(zone.name, id)
             return

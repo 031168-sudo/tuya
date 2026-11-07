@@ -37,6 +37,16 @@ data class MiTimer(
     val offAt: Int?,
     val days: Set<Int>,
 ) {
+    /** Срабатывающие события этого таймера в виде строк таймеров модуля (выключенный таймер не срабатывает). */
+    fun asModuleTimers(): List<app.tuyacontrol.rubetek.ModuleTimer> {
+        if (!enabled || countdown) return emptyList()
+        val mask = if (days.size >= 7 || days.isEmpty()) 127 else days.fold(0) { a, d -> a or (1 shl d) }
+        return listOfNotNull(
+            onAt?.let { app.tuyacontrol.rubetek.ModuleTimer(it, true, mask) },
+            offAt?.let { app.tuyacontrol.rubetek.ModuleTimer(it, false, mask) },
+        )
+    }
+
     fun text(): String {
         if (countdown) return "обратный отсчёт"
         fun hm(m: Int) = "%02d:%02d".format(m / 60, m % 60)
@@ -489,6 +499,33 @@ class XiaomiCloud(private val store: XiaomiStore) {
         return items.filter { it.optString("identify") == did || it.optJSONObject("setting")?.has("on_time") == true }
             .mapNotNull { MiTimer.parse(it) }
             .sortedBy { it.onAt ?: it.offAt ?: 0 }
+    }
+
+    /**
+     * Создать таймер Mi Home: в [minutes] (местное время, от полуночи) каждый день включить или выключить питание
+     * (siid 2, piid 1 — «on» нагревателя). Формат — как у таймеров, созданных самим Mi Home: сцена st_id 8,
+     * время в cron по пекинскому времени, команда set_properties.
+     */
+    suspend fun createTimer(did: String, name: String, minutes: Int, on: Boolean) {
+        val t = Math.floorMod(minutes - MiTimer.shiftToLocal(), 1440)
+        val cron = "${t % 60} ${t / 60} * * 0,1,2,3,4,5,6"
+        fun param(v: Boolean) = JSONArray().put(JSONObject().put("did", did).put("siid", 2).put("piid", 1).put("value", v))
+        val setting = JSONObject()
+            .put("enable_timer", "1")
+            .put("enable_timer_on", if (on) "1" else "0")
+            .put("enable_timer_off", if (on) "0" else "1")
+            .put("on_time", cron).put("off_time", cron)
+            .put("on_method", "set_properties").put("off_method", "set_properties")
+            .put("on_param", param(true)).put("off_param", param(false))
+            .put("on_filter", "").put("off_filter", "")
+            .put("timer_type", "0")
+        val body = JSONObject()
+            .put("name", name).put("st_id", 8).put("identify", did)
+            .put("status", 1)
+            .put("setting", setting)
+            .put("authed", JSONArray().put(did))
+        val r = api("/scene/edit", body)
+        AppLog.i("Xiaomi: таймер «$name» создан → ${r?.toString()?.take(200)}")
     }
 
     /** Удалить таймер Mi Home (сцену) по us_id. */

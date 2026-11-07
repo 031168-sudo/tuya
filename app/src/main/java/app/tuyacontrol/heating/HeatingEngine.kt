@@ -13,6 +13,10 @@ import app.tuyacontrol.sensor.SensorDb
 import app.tuyacontrol.rubetek.RubetekClient
 import app.tuyacontrol.rubetek.RubetekMapper
 import app.tuyacontrol.rubetek.RubetekStore
+import app.tuyacontrol.xiaomi.XiaomiCloud
+import app.tuyacontrol.xiaomi.XiaomiHub
+import app.tuyacontrol.xiaomi.XiaomiMapper
+import app.tuyacontrol.xiaomi.XiaomiStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.LocalDate
@@ -100,13 +104,34 @@ class HeatingEngine(context: Context) {
         var ok = 0
         // Расписания телефона: оставляем только зоны с включённым управлением, обновляемые перезапишем
         val controlled = s.zones.filter { it.control }.mapNotNull { it.deviceId }.toSet()
-        val schedules = store.loadSchedules().filterKeys { it in controlled && !RubetekMapper.isRubetek(it) }.toMutableMap()
+        val schedules = store.loadSchedules().filterKeys { it in controlled && !isOnOff(it) }.toMutableMap()
         for (zone in s.zones) {
             if (!zone.control || (onlyZone != null && zone.id != onlyZone)) continue
             val id = zone.deviceId ?: continue
             // Конвекторы Rubetek: расписания уставок у них нет — переключает телефон по будильнику
             // Конвекторы Rubetek: температура — та, что выставлена на конвекторе; по плану только включаем и
             // выключаем таймерами, которые хранятся в самом модуле (работают без интернета и телефона)
+            if (XiaomiMapper.isXiaomi(id)) {
+                try {
+                    val d = XiaomiHub(app).readOne(id, app.tuyacontrol.ControlMode.AUTO)
+                        ?: throw IllegalStateException("обогреватель не найден в Mi Home")
+                    val own = (d.status["temp_set"] as? Number)?.toDouble()?.let { it / 10.0.pow(d.spec["temp_set"]?.scale ?: 0) }
+                        ?: throw IllegalStateException("неизвестна уставка обогревателя")
+                    val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat)
+                    val events = onOffEvents(plan)
+                    val foreign = writeMiTimers(XiaomiCloud(XiaomiStore(app)), id, zone.name, events)
+                    schedules.remove(id)
+                    lines += "${zone.name}: расписание Mi Home — " + events.joinToString(", ") { (m, on) ->
+                        "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл")
+                    } + " (температура ${own.toInt()}° с обогревателя)" +
+                        if (foreign > 0) "; удалено чужих таймеров: $foreign" else ""
+                    ok++
+                } catch (e: Exception) {
+                    AppLog.e("Отопление: ${zone.name} — Mi Home не ответил", e)
+                    lines += "${zone.name}: ошибка Mi Home — ${e.message ?: e.javaClass.simpleName}"
+                }
+                continue
+            }
             if (RubetekMapper.isRubetek(id)) {
                 try {
                     val rubetek = RubetekClient(RubetekStore(app))
@@ -193,6 +218,18 @@ class HeatingEngine(context: Context) {
         val id = zone.deviceId ?: return "${zone.name}: нет устройства"
         store.saveSchedules(store.loadSchedules() - id)
         HeatingAlarm.scheduleNext(app)
+        if (XiaomiMapper.isXiaomi(id)) {
+            val line = try {
+                val n = clearMiTimers(XiaomiCloud(XiaomiStore(app)), id, onlyOurs = true)
+                store.setDeployedTimers(id, null)
+                "${zone.name}: наших таймеров Mi Home снято: $n, обогреватель не трогали"
+            } catch (e: Exception) {
+                AppLog.e("Отопление: ${zone.name} — таймеры Mi Home не сняты", e)
+                "${zone.name}: ошибка Mi Home — ${e.message ?: e.javaClass.simpleName}"
+            }
+            store.deployResult = line
+            return line
+        }
         if (RubetekMapper.isRubetek(id)) {
             // Rubetek: все таймеры модуля отключаем; сам конвектор не трогаем (вкл остаётся вкл, выкл — выкл)
             val line = try {
@@ -222,6 +259,11 @@ class HeatingEngine(context: Context) {
         HeatingAlarm.cancel(app)
         for (zone in s.zones) {
             val id = zone.deviceId ?: continue
+            if (XiaomiMapper.isXiaomi(id)) {
+                lines += runCatching { clearMiTimers(XiaomiCloud(XiaomiStore(app)), id, onlyOurs = true) }
+                    .fold({ "${zone.name}: таймеров Mi Home снято: $it" }, { "${zone.name}: ошибка Mi Home — ${it.message}" })
+                continue
+            }
             if (RubetekMapper.isRubetek(id)) {
                 lines += "${zone.name}: телефон больше не переключает"
                 continue
@@ -410,6 +452,55 @@ class HeatingEngine(context: Context) {
         return lines.joinToString("\n").ifEmpty { "Нет зон" }
     }
 
+    /** Префикс названий таймеров Mi Home, созданных приложением. */
+    private val MI_NAME = "Мой дом"
+
+    /**
+     * Снять таймеры обогревателя в Mi Home: только наши (по названию) или все. Возвращает, сколько удалено;
+     * исключение — если после удаления что-то осталось.
+     */
+    suspend fun clearMiTimers(cloud: XiaomiCloud, id: String, onlyOurs: Boolean): Int {
+        val did = XiaomiMapper.did(id)
+        val before = cloud.timers(did).filter { !onlyOurs || it.name.startsWith(MI_NAME) }
+        before.forEach { cloud.deleteTimer(did, it.usId) }
+        if (before.isNotEmpty()) {
+            val left = cloud.timers(did).filter { t -> before.any { it.usId == t.usId } }
+            if (left.isNotEmpty()) throw IllegalStateException("облако Mi Home не удалило ${left.size} из ${before.size} таймеров")
+        }
+        return before.size
+    }
+
+    /** Снять все таймеры Mi Home обогревателя (кнопка «Очистить все»). */
+    suspend fun clearMiTimers(id: String) = clearMiTimers(XiaomiCloud(XiaomiStore(app)), id, onlyOurs = false)
+
+    /**
+     * Записать план в облачное расписание Mi Home: все старые таймеры обогревателя удаляются (зона под управлением —
+     * единственный источник расписания), затем создаётся по таймеру на каждое переключение и всё перечитывается.
+     * Возвращает, сколько чужих таймеров удалено.
+     */
+    private suspend fun writeMiTimers(cloud: XiaomiCloud, id: String, zoneName: String, events: List<Pair<Int, Boolean>>): Int {
+        val did = XiaomiMapper.did(id)
+        val old = cloud.timers(did)
+        val foreign = old.count { !it.name.startsWith(MI_NAME) }
+        clearMiTimers(cloud, id, onlyOurs = false)
+        for ((m, on) in events.take(MI_MAX_TIMERS)) {
+            cloud.createTimer(did, "$MI_NAME: %02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл"), m, on)
+        }
+        var got: Set<Pair<Int, Boolean>> = emptySet()
+        val want = events.take(MI_MAX_TIMERS).toSet()
+        for (attempt in 1..3) {
+            kotlinx.coroutines.delay(1500)
+            got = cloud.timers(did).flatMap { it.asModuleTimers() }.map { it.minutes to it.on }.toSet()
+            if (got == want) {
+                AppLog.i("Отопление: Mi Home ${did.takeLast(4)} — облако подтвердило таймеры (попытка $attempt)")
+                store.setDeployedTimers(id, events.take(MI_MAX_TIMERS))
+                return foreign
+            }
+        }
+        AppLog.i("Отопление: Mi Home ${did.takeLast(4)} — таймеры не совпали: нужно $want, в облаке $got")
+        throw IllegalStateException("облако приняло, но таймеры не совпали с планом (нужно ${want.size}, в облаке ${got.size})")
+    }
+
     /** Снять все таймеры модуля конвектора Rubetek (с проверкой; исключение — если модуль не подтвердил). */
     suspend fun clearRubetekTimers(id: String) = writeRubetekTimers(RubetekClient(RubetekStore(app)), id, emptyList())
 
@@ -483,6 +574,12 @@ class HeatingEngine(context: Context) {
     }
 
     companion object {
+        /** Не больше таймеров на одно устройство в Mi Home (лимит облака неизвестен, берём с запасом). */
+        private const val MI_MAX_TIMERS = 10
+
+        /** Приборы, которыми план управляет таймерами вкл/выкл: Rubetek (в модуле) и Xiaomi (в облаке Mi Home). */
+        fun isOnOff(id: String) = RubetekMapper.isRubetek(id) || XiaomiMapper.isXiaomi(id)
+
         /** Дни недели для таймеров Rubetek: все семь. */
         private const val EVERY_DAY = 127
 
@@ -505,6 +602,7 @@ class HeatingEngine(context: Context) {
         /** Гистерезис по умолчанию для устройства (как описал хозяин дома; если прибор сообщает — с прибора). */
         fun defaultHysteresis(d: app.tuyacontrol.DeviceUi): Double = when {
             RubetekMapper.isRubetek(d.id) -> -1.0
+            XiaomiMapper.isXiaomi(d.id) -> -1.0   // как у конвектора: греет до уставки, включается на градус ниже (подстройте в зоне)
             (d.status["Temp_dif"] as? Number) != null -> (d.status["Temp_dif"] as Number).toDouble()   // спальня
             (d.status["qidongwencha"] as? Number) != null -> (d.status["qidongwencha"] as Number).toDouble() / 10  // «Temp»
             d.switchIsRelay -> -0.5                          // батарея в ванной: включение на 0,5 ниже порога
