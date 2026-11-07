@@ -43,8 +43,8 @@ object DeviceDiagnostics {
         // 2. Журнал за 7 дней: 5 — команды из облака, 7 — отчёты устройства, 10 — информация о таймерах
         val now = System.currentTimeMillis()
         val from = now - 7 * 24 * 3600_000L
-        val main = runCatching { client.getDeviceLogs(device.id, code, from, now, maxPages = 20, type = "5,7") }
-        val timing = runCatching { client.getDeviceLogs(device.id, "", from, now, maxPages = 5, type = "10") }
+        val main = runCatching { client.getDeviceLogs(device.id, code, from, now, maxPages = 20, type = "5,7", keepRaw = true) }
+        val timing = runCatching { client.getDeviceLogs(device.id, "", from, now, maxPages = 20, type = "10", keepRaw = true) }
 
         sb.appendLine().appendLine("ЖУРНАЛ «$code» ЗА 7 ДНЕЙ (новые сверху)")
         val logs = main.getOrNull()
@@ -60,17 +60,24 @@ object DeviceDiagnostics {
             var byItself = 0
             val lines = mutableListOf<Pair<Long, String>>()
             for (c in commands) {
-                lines += c.time to "${at(c.time)}  команда из облака: ${word(c)}  (приложение, расписание или сценарий)"
+                lines += c.time to "${at(c.time)}  команда из облака: ${word(c)}  (приложение, расписание или сценарий)${src(c)}"
             }
-            for (r in reports) {
+            var last: String? = null
+            for (r in reports.sortedBy { it.time }) {
                 val cmd = commands.minByOrNull { kotlin.math.abs(it.time - r.time) }
                 val paired = cmd != null && kotlin.math.abs(cmd.time - r.time) <= PAIR_MS && cmd.value == r.value
+                val repeat = r.value == last
+                last = r.value
                 val on = r.value == "true"
-                if (on) if (paired) byCloud++ else byItself++
-                val who = if (paired) "по команде из облака" else "БЕЗ команды из облака — сама розетка (таймер в прошивке, кнопка)"
-                lines += r.time to "${at(r.time)}  розетка сообщила: ${word(r)}  — $who"
+                if (on && !repeat) if (paired) byCloud++ else byItself++
+                val who = when {
+                    repeat -> "повторный отчёт, состояние не менялось"
+                    paired -> "по команде из облака"
+                    else -> "БЕЗ команды из облака — сама розетка (таймер в прошивке, кнопка)"
+                }
+                lines += r.time to "${at(r.time)}  розетка сообщила: ${word(r)}  — $who${src(r)}"
             }
-            lines.sortedByDescending { it.first }.take(80).forEach { sb.appendLine(it.second) }
+            lines.sortedByDescending { it.first }.take(150).forEach { sb.appendLine(it.second) }
             sb.appendLine()
             sb.appendLine("Включений за 7 дней: по команде из облака — $byCloud, сама — $byItself")
         }
@@ -80,9 +87,19 @@ object DeviceDiagnostics {
         when {
             t == null -> sb.appendLine("не прочитаны: ${timing.exceptionOrNull()?.message}")
             t.isEmpty() -> sb.appendLine("записей нет")
-            else -> t.sortedByDescending { it.time }.take(40).forEach { sb.appendLine("${at(it.time)}  ${it.code} = ${it.value}") }
+            else -> {
+                sb.appendLine("Все поля как отдаёт облако (${t.size} шт.):")
+                t.sortedByDescending { it.time }.take(300).forEach { sb.appendLine("${at(it.time)}  ${it.raw}") }
+            }
         }
         return sb.toString().trimEnd()
+    }
+
+    /** Источник события, если облако его указывает (поле event_from и т.п.). */
+    private fun src(e: LogEntry): String {
+        val o = runCatching { org.json.JSONObject(e.raw) }.getOrNull() ?: return ""
+        val from = listOf("event_from", "source", "from").firstNotNullOfOrNull { k -> o.opt(k)?.toString()?.takeIf { it.isNotEmpty() }?.let { k to it } }
+        return from?.let { "  [${it.first}=${it.second}]" } ?: ""
     }
 
     private fun word(e: LogEntry) = when (e.value) {

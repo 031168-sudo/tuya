@@ -37,7 +37,7 @@ data class CloudDevice(
 data class StatType(val code: String, val statType: String)
 
 /** Запись журнала. eventId: 1 — устройство в сети, 2 — не в сети, 7 — отчёт DP. */
-data class LogEntry(val code: String, val value: String, val time: Long, val eventId: Int = 7)
+data class LogEntry(val code: String, val value: String, val time: Long, val eventId: Int = 7, val raw: String = "")
 
 class TuyaApiException(val code: Int, message: String) : Exception(message)
 

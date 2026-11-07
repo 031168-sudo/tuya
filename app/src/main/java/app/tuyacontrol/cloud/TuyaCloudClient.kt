@@ -370,6 +370,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
         maxPages: Int = 50,
         onPage: (Int) -> Unit = {},
         type: String = "7",
+        keepRaw: Boolean = false,
     ): List<LogEntry> {
         val entries = mutableListOf<LogEntry>()
         var rowKey = ""
@@ -394,6 +395,7 @@ class TuyaCloudClient(private val credentials: Credentials) {
                     o.optString("value"),
                     o.optLong("event_time"),
                     o.optInt("event_id", 7),
+                    if (keepRaw) o.toString() else "",
                 )
             }
             rowKey = result.optString("next_row_key", "")
