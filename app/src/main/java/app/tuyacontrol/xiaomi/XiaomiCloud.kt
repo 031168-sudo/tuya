@@ -46,12 +46,25 @@ data class MiTimer(
     }
 
     companion object {
-        /** Минуты от полуночи из cron «28 23 * * 0,1,…»; null — не разобрать. */
-        fun minutes(cron: String): Int? {
+        /**
+         * Время в cron таймеров Mi Home хранится по пекинскому времени (UTC+8), а не по часовому поясу телефона:
+         * таймер на 18:28 в Москве лежит в облаке как «28 23». Выведено из наблюдения (разница ровно +5 часов).
+         */
+        private const val CRON_UTC_OFFSET_MIN = 8 * 60
+
+        /** Сдвиг от времени облака к местному времени телефона, минуты (Москва: −300). */
+        fun shiftToLocal(): Int =
+            java.time.ZoneId.systemDefault().rules.getOffset(java.time.Instant.now()).totalSeconds / 60 - CRON_UTC_OFFSET_MIN
+
+        /** Минуты от полуночи из cron «28 23 * * 0,1,…» в местном времени; days сдвигаются, если перешли через полночь. */
+        fun minutes(cron: String): Int? = local(cron)?.first
+
+        private fun local(cron: String): Pair<Int, Int>? {
             val f = cron.trim().split(Regex("\\s+"))
             val m = f.getOrNull(0)?.toIntOrNull() ?: return null
             val h = f.getOrNull(1)?.toIntOrNull() ?: return null
-            return h * 60 + m
+            val t = h * 60 + m + shiftToLocal()
+            return Math.floorMod(t, 1440) to Math.floorDiv(t, 1440)
         }
 
         fun parse(o: JSONObject): MiTimer? {
@@ -60,8 +73,10 @@ data class MiTimer(
             val offOn = st.optString("enable_timer_off") == "1"
             val onCron = st.optString("on_time")
             val offCron = st.optString("off_time")
-            val dow = (onCron.ifEmpty { offCron }).trim().split(Regex("\\s+")).getOrNull(4).orEmpty()
-            val days = dow.split(",").mapNotNull { it.trim().toIntOrNull() }.toSet()
+            val ref = onCron.ifEmpty { offCron }
+            val dow = ref.trim().split(Regex("\\s+")).getOrNull(4).orEmpty()
+            val dayShift = local(ref)?.second ?: 0
+            val days = dow.split(",").mapNotNull { it.trim().toIntOrNull() }.map { Math.floorMod(it + dayShift, 7) }.toSet()
             return MiTimer(
                 usId = o.optLong("us_id"),
                 name = o.optString("name"),
