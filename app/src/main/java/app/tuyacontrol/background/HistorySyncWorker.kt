@@ -93,7 +93,7 @@ class HistorySyncWorker(context: Context, params: WorkerParameters) : CoroutineW
         runCatching { heating.learnAll(TuyaCloudClient(creds)) }
             .onSuccess { AppLog.i("Фон: подбор параметров зон\n$it") }
             .onFailure { AppLog.e("Фон: подбор параметров зон не удался", it) }
-        val heatingSettings = heating.store.load()
+        val heatingSettings = heating.store.loadActive()
         if (heatingSettings.zones.any { it.control }) {
             runCatching { heating.deploy(TuyaCloudClient(creds), heatingSettings) }
                 .onFailure { AppLog.e("Фон: план отопления не обновлён", it) }

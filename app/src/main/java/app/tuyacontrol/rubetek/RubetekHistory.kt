@@ -80,7 +80,7 @@ class RubetekSampleWorker(context: Context, params: WorkerParameters) : Coroutin
         val now = System.currentTimeMillis()
         if (now - prefs.getLong("tuya_sample", 0) < 29 * 60_000L) return
         val creds = app.tuyacontrol.data.CredentialsStore(applicationContext).load() ?: return
-        val ids = app.tuyacontrol.heating.HeatingStore(applicationContext).load().zones
+        val ids = app.tuyacontrol.heating.HeatingStore(applicationContext).allZones()
             .mapNotNull { it.deviceId }.filterNot { RubetekMapper.isRubetek(it) }.toSet()
         val sensors = app.tuyacontrol.background.SyncTargets(applicationContext).sensors().filter { it.id in ids }
         if (sensors.isEmpty()) return

@@ -68,6 +68,7 @@ fun AppBottomBar(
     onCategories: () -> Unit,
     onHeating: () -> Unit,
     onMap: () -> Unit = {},
+    onDuty: () -> Unit = {},
 ) {
     NavigationBar {
         NavigationBarItem(
@@ -93,6 +94,12 @@ fun AppBottomBar(
             onClick = onHeating,
             icon = { Icon(DeviceIcons.vector("whatshot"), contentDescription = null) },
             label = { NavLabel("Отопление") },
+        )
+        NavigationBarItem(
+            selected = selected == 4,
+            onClick = onDuty,
+            icon = { Icon(DeviceIcons.vector("ac_unit"), contentDescription = null) },
+            label = { NavLabel("Дежурство") },
         )
     }
 }

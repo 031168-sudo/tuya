@@ -26,10 +26,11 @@ import kotlin.math.pow
 import kotlin.math.roundToLong
 
 /** Расчёт планов и запись их в облачное расписание термостатов. */
-class HeatingEngine(context: Context) {
+class HeatingEngine(context: Context, duty: Boolean = false) {
 
     private val app = context.applicationContext
-    val store = HeatingStore(app)
+    /** Настройки профиля: «Отопление» или «Дежурство» (duty). */
+    val store = HeatingStore(app, duty)
     private val weather = Weather(app)
 
     /** Цены по часам на сегодня из тарифов, введённых в приложении. */
@@ -292,7 +293,7 @@ class HeatingEngine(context: Context) {
 
     /** Будильник: выставить конвекторам Rubetek уставку текущего часа и завести следующий. */
     suspend fun applyRubetekNow() {
-        if (store.load().zones.none { it.control }) return
+        if (store.loadActive().zones.none { it.control }) return
         val hour = LocalTime.now().hour
         val tuya = CredentialsStore(app).load()?.let { TuyaCloudClient(it) }
         for ((id, sp) in store.loadSchedules()) {
@@ -429,6 +430,14 @@ class HeatingEngine(context: Context) {
      * обновляются (за раз не больше чем вдвое, чтобы один странный день не ломал план).
      */
     suspend fun learnAll(client: TuyaCloudClient?): String {
+        // Оба профиля: «Отопление» и «Дежурство» (у дежурных зон свои параметры, подбираются так же)
+        val home = learnProfile(client, HeatingStore(app, false))
+        val duty = HeatingStore(app, true)
+        if (duty.load().zones.none { it.deviceId != null }) return home
+        return home + "\nДежурство:\n" + learnProfile(client, duty)
+    }
+
+    private suspend fun learnProfile(client: TuyaCloudClient?, store: HeatingStore): String {
         val s = store.load()
         val learner = ZoneLearner(app)
         val relays = store.relayDevices

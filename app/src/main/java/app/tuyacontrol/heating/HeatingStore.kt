@@ -4,12 +4,34 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Настройки отопления и сведения о последней записи плана в облако. */
-class HeatingStore(context: Context) {
+/**
+ * Настройки отопления и сведения о последней записи плана в облако.
+ *
+ * Два профиля с одинаковым устройством: «Отопление» (дома) и «Дежурство» (уехал — держать комнаты от замерзания).
+ * Зоны, окна и параметры у каждого свои; всё про устройства (что записано, расписания телефона) — общее.
+ * В устройства пишется действующий профиль ([loadActive]).
+ */
+class HeatingStore(context: Context, private val duty: Boolean = false) {
 
     private val prefs = context.applicationContext.getSharedPreferences("heating", Context.MODE_PRIVATE)
 
-    fun load(): HeatingSettings {
+    fun load(): HeatingSettings = if (duty) loadDuty() else loadHome()
+
+    fun save(s: HeatingSettings) {
+        if (!duty) {
+            prefs.edit().putString(KEY_SETTINGS, toJson(s).toString()).apply()
+            return
+        }
+        prefs.edit().putString(KEY_DUTY, toJson(s).toString()).apply()
+        // Место дома и уличный датчик — общие для обоих профилей
+        val home = loadHome()
+        if (home.latitude != s.latitude || home.longitude != s.longitude || home.outdoorSensorId != s.outdoorSensorId || home.outdoorCode != s.outdoorCode) {
+            val h = home.copy(latitude = s.latitude, longitude = s.longitude, outdoorSensorId = s.outdoorSensorId, outdoorCode = s.outdoorCode)
+            prefs.edit().putString(KEY_SETTINGS, toJson(h).toString()).apply()
+        }
+    }
+
+    private fun loadHome(): HeatingSettings {
         val text = prefs.getString(KEY_SETTINGS, null) ?: return HeatingSettings.defaults()
         return try {
             parse(JSONObject(text))
@@ -18,9 +40,36 @@ class HeatingStore(context: Context) {
         }
     }
 
-    fun save(s: HeatingSettings) {
-        prefs.edit().putString(KEY_SETTINGS, toJson(s).toString()).apply()
+    /** Профиль «Дежурство»: свои зоны (вначале пусто), место дома и уличный датчик — из «Отопления». */
+    private fun loadDuty(): HeatingSettings {
+        val home = loadHome()
+        val own = prefs.getString(KEY_DUTY, null)?.let { runCatching { parse(JSONObject(it)) }.getOrNull() }
+            ?: HeatingSettings(zones = emptyList())
+        return own.copy(
+            latitude = home.latitude, longitude = home.longitude,
+            outdoorSensorId = home.outdoorSensorId, outdoorCode = home.outdoorCode, autopilot = false,
+        )
     }
+
+    /** Действует «Дежурство» (хозяин уехал). */
+    var dutyActive: Boolean
+        get() = prefs.getBoolean("duty_active", false)
+        set(v) = prefs.edit().putBoolean("duty_active", v).apply()
+
+    /**
+     * Что сейчас пишется в устройства. Дома — профиль «Отопление». На дежурстве — зоны «Дежурства», а приборы,
+     * которых в «Дежурстве» нет (или там у них управление выключено), продолжают работать по «Отоплению».
+     */
+    fun loadActive(): HeatingSettings {
+        val home = loadHome()
+        if (!dutyActive) return home
+        val d = loadDuty()
+        val taken = d.zones.filter { it.control }.mapNotNull { it.deviceId }.toSet()
+        return d.copy(zones = d.zones + home.zones.filter { it.deviceId == null || it.deviceId !in taken })
+    }
+
+    /** Зоны обоих профилей (для истории и подбора параметров). */
+    fun allZones(): List<HeatZone> = loadHome().zones + loadDuty().zones
 
     /** Когда план последний раз записан в расписание Tuya (мс) и итог записи. */
     var deployedAt: Long
@@ -199,5 +248,6 @@ class HeatingStore(context: Context) {
 
     private companion object {
         const val KEY_SETTINGS = "settings"
+        const val KEY_DUTY = "settings_duty"
     }
 }

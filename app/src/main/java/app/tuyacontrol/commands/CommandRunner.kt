@@ -94,7 +94,13 @@ class CommandRunner(context: Context) {
                 val updated = s.copy(zones = s.zones.map { if (it.id == z.id) it.copy(control = on) else it })
                 engine.store.save(updated)
                 val zone = updated.zones.first { it.id == z.id }
-                val report = if (on) engine.deploy(c, updated, onlyZone = z.id) else engine.stopZone(c, zone)
+                // В устройство пишется только действующий профиль (дома или на дежурстве)
+                val live = engine.store.loadActive().zones.any { it.id == z.id }
+                val report = when {
+                    on -> engine.deploy(c, engine.store.loadActive(), onlyZone = z.id)
+                    live -> engine.stopZone(c, zone)
+                    else -> "${zone.name}: сейчас действует «Дежурство», прибор не трогали"
+                }
                 if ("ошибка" in report.lowercase()) report else null
             }
         }

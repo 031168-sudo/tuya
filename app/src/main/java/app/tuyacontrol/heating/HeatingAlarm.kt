@@ -23,7 +23,7 @@ object HeatingAlarm {
         val ctx = context.applicationContext
         val store = HeatingStore(ctx)
         val schedules = store.loadSchedules()
-        if (store.load().zones.none { it.control } || schedules.isEmpty()) {
+        if (store.loadActive().zones.none { it.control } || schedules.isEmpty()) {
             cancel(ctx)
             return
         }

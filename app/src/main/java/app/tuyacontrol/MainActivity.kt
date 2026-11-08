@@ -40,6 +40,7 @@ class MainActivity : ComponentActivity() {
     private val energyViewModel: EnergyViewModel by viewModels()
     private val sensorViewModel: SensorViewModel by viewModels()
     private val heatingViewModel: HeatingViewModel by viewModels()
+    private val dutyViewModel: DutyViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,7 +63,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             AppTheme {
-                App(viewModel, energyViewModel, sensorViewModel, heatingViewModel)
+                App(viewModel, energyViewModel, sensorViewModel, heatingViewModel, dutyViewModel)
             }
         }
     }
@@ -86,11 +87,13 @@ private fun App(
     energyViewModel: EnergyViewModel,
     sensorViewModel: SensorViewModel,
     heatingViewModel: HeatingViewModel,
+    dutyViewModel: DutyViewModel,
 ) {
     val state by viewModel.state.collectAsState()
     val energy by energyViewModel.state.collectAsState()
     val sensor by sensorViewModel.state.collectAsState()
     val heating by heatingViewModel.state.collectAsState()
+    val dutyHeating by dutyViewModel.state.collectAsState()
 
     // Устройства со счётчиком энергии передаём на экран «Энергия»
     val energyDevices = remember(state.devices) {
@@ -109,7 +112,10 @@ private fun App(
     }
     // Термостаты для экрана «Отопление»
     LaunchedEffect(state.devices) {
-        if (state.devices.isNotEmpty()) heatingViewModel.setDevices(state.devices)
+        if (state.devices.isNotEmpty()) {
+            heatingViewModel.setDevices(state.devices)
+            dutyViewModel.setDevices(state.devices)
+        }
     }
     LaunchedEffect(energyDevices, state.screen) {
         if (state.screen == Screen.Energy || state.screen == Screen.Tariffs) {
@@ -145,6 +151,7 @@ private fun App(
             onCategories = { viewModel.open(Screen.Categories) },
             onHeating = { viewModel.open(Screen.Heating) },
             onMap = { viewModel.open(Screen.Map) },
+            onDuty = { viewModel.open(Screen.Duty) },
         )
     }
 
@@ -250,6 +257,27 @@ private fun App(
             onMessageShown = heatingViewModel::messageShown,
             bottomBar = { bottomBar(2) },
         )
+        // «Дежурство»: тот же экран и расчёт, свои зоны; переключатель — какой профиль пишется в приборы
+        Screen.Duty -> HeatingScreen(
+            state = dutyHeating,
+            onRecompute = dutyViewModel::recompute,
+            onDeploy = dutyViewModel::deploy,
+            onZoneControl = dutyViewModel::setZoneControl,
+            onProgramMode = dutyViewModel::setProgramMode,
+            onTestStudio = dutyViewModel::testStudioTimer,
+            onLearn = dutyViewModel::learnNow,
+            onSaveZone = dutyViewModel::saveZone,
+            onDeleteZone = dutyViewModel::deleteZone,
+            onLocation = dutyViewModel::setLocation,
+            onAddRubetek = dutyViewModel::addRubetekZones,
+            onInTotal = dutyViewModel::setInTotal,
+            onDutyActive = { on ->
+                dutyViewModel.setDutyActive(on)
+                heatingViewModel.refreshDutyFlag()
+            },
+            onMessageShown = dutyViewModel::messageShown,
+            bottomBar = { bottomBar(4) },
+        )
         Screen.Map -> app.tuyacontrol.ui.MapScreen(
             devices = state.devices,
             heating = heating,
@@ -341,7 +369,10 @@ private fun App(
     }
     // Команда могла включить/выключить управление зонами — экран «Отопление» перечитывает настройки
     LaunchedEffect(state.commandRun?.done) {
-        if (state.commandRun?.done == true) heatingViewModel.reloadSettings()
+        if (state.commandRun?.done == true) {
+            heatingViewModel.reloadSettings()
+            dutyViewModel.reloadSettings()
+        }
     }
 
     editDevice?.let { d ->

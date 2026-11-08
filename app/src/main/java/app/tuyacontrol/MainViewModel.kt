@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Map, Commands, RoomDevices, Backup }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Duty, Map, Commands, RoomDevices, Backup }
 
 data class DeviceUi(
     val id: String,

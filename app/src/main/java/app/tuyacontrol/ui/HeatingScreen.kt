@@ -128,6 +128,7 @@ fun HeatingScreen(
     onLocation: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
     onAddRubetek: () -> Unit,
     onInTotal: (String, Boolean) -> Unit,
+    onDutyActive: (Boolean) -> Unit = {},
     onMessageShown: () -> Unit,
     bottomBar: @Composable () -> Unit,
 ) {
@@ -144,7 +145,7 @@ fun HeatingScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Отопление") },
+                title = { Text(if (state.duty) "Дежурство" else "Отопление") },
                 actions = {
                     IconButton(onClick = onRecompute) { Icon(Icons.Filled.Refresh, contentDescription = "Пересчитать") }
                 },
@@ -159,6 +160,7 @@ fun HeatingScreen(
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (state.duty || state.dutyActive) item { DutyCard(state, onDutyActive) }
                 item { SummaryCard(state, onDeploy) }
                 items(state.plans, key = { it.zone.id }) { plan ->
                     val thermostat = state.thermostats.firstOrNull { it.id == plan.zone.deviceId }
@@ -176,16 +178,26 @@ fun HeatingScreen(
                         measure = plan.zone.tempDeviceId?.let { id -> state.tempSources.firstOrNull { it.id == id } },
                         learning = state.learning,
                         onLearn = onLearn,
+                        idleNote = when {
+                            plan.zone.id !in state.idleZones -> null
+                            state.duty -> "«Дежурство» выключено — план только для расчёта, в прибор не пишется"
+                            else -> "Сейчас действует «Дежурство» — этим прибором управляет оно"
+                        },
                     )
                 }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = {
-                            editing = HeatZone(
-                                id = UUID.randomUUID().toString().take(8),
-                                name = "",
-                                windows = listOf(ComfortWindow(7, 23, 21.0)),
-                            )
+                            editing = if (state.duty) {
+                                // На дежурстве окон комфорта нет — только дежурная температура
+                                HeatZone(id = UUID.randomUUID().toString().take(8), name = "", windows = emptyList(), baseTemp = 10.0, maxTemp = 15.0)
+                            } else {
+                                HeatZone(
+                                    id = UUID.randomUUID().toString().take(8),
+                                    name = "",
+                                    windows = listOf(ComfortWindow(7, 23, 21.0)),
+                                )
+                            }
                         }) {
                             Icon(Icons.Filled.Add, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
@@ -230,6 +242,45 @@ fun HeatingScreen(
             onDismiss = { editLocation = false },
             onSave = { la, lo, sensor -> onLocation(la, lo, sensor); editLocation = false },
         )
+    }
+}
+
+/**
+ * «Дежурство»: на своей вкладке — переключатель (уехал / дома); на вкладке «Отопление» — напоминание,
+ * что сейчас действует дежурство.
+ */
+@Composable
+private fun DutyCard(state: HeatingUiState, onDutyActive: (Boolean) -> Unit) {
+    val on = state.dutyActive
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (on) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (state.duty) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (on) "Дежурство включено" else "Дежурство выключено", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Switch(checked = on, onCheckedChange = onDutyActive, enabled = !state.deploying)
+                }
+                Text(
+                    if (on) {
+                        "В приборы пишется план этой вкладки. Приборы, которых здесь нет (или у них выключено " +
+                            "управление), работают по вкладке «Отопление»."
+                    } else {
+                        "Включите, когда уезжаете: приборы этой вкладки перейдут на её зоны и настройки. " +
+                            "Выключите по возвращении — всё вернётся к «Отоплению»."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                Text("Сейчас действует «Дежурство»", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Приборы, которые есть на вкладке «Дежурство», управляются оттуда. Остальные — по этой вкладке.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
     }
 }
 
@@ -317,6 +368,7 @@ private fun ZoneCard(
     measure: app.tuyacontrol.TempSource? = null,
     learning: Boolean = false,
     onLearn: () -> Unit = {},
+    idleNote: String? = null,
 ) {
     val zone = plan.zone
     Card {
@@ -361,6 +413,9 @@ private fun ZoneCard(
                 "${num(plan.kwh)} кВт·ч · ≈ ${rub(plan.cost)}  (без оптимизации ${rub(plan.baselineCost)})",
                 style = MaterialTheme.typography.bodyMedium,
             )
+            idleNote?.let {
+                Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.tertiary)
+            }
             // Управление: включено — уставки по плану выставляются и обновляются; выключено — устройство не трогаем
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

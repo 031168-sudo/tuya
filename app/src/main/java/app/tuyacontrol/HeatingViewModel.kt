@@ -93,11 +93,22 @@ data class HeatingUiState(
     val learning: Boolean = false,
     /** Что приложение записало и проверило в программах термостатов: id -> base64. */
     val deployedPrograms: Map<String, String> = emptyMap(),
+    /** Экран профиля «Дежурство» (иначе — «Отопление»). */
+    val duty: Boolean = false,
+    /** Сейчас действует «Дежурство» (хозяин уехал). */
+    val dutyActive: Boolean = false,
+    /** Зоны с включённым управлением, которые сейчас в приборы не пишутся (действует другой профиль). */
+    val idleZones: Set<String> = emptySet(),
 )
 
-class HeatingViewModel(application: Application) : AndroidViewModel(application) {
+/** Профиль «Дежурство»: тот же расчёт и те же приборы, свои зоны и настройки. */
+class DutyViewModel(application: Application) : HeatingViewModel(application, true)
 
-    private val engine = HeatingEngine(application)
+open class HeatingViewModel(application: Application, val duty: Boolean) : AndroidViewModel(application) {
+
+    constructor(application: Application) : this(application, false)
+
+    private val engine = HeatingEngine(application, duty)
     private val credentials = CredentialsStore(application)
 
     private val _state = MutableStateFlow(
@@ -108,19 +119,21 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
             deployedTimers = engine.store.deployedTimers(),
             deployedPrograms = engine.store.deployedPrograms(),
             learned = engine.store.learned(),
+            duty = duty,
+            dutyActive = engine.store.dutyActive,
         )
     )
     val state: StateFlow<HeatingUiState> = _state.asStateFlow()
 
     init {
         // Тест таймера Rubetek прервался (приложение закрыли) — снимаем тестовый таймер, иначе он сработает завтра
-        engine.store.rubetekTest?.let { pending ->
+        if (!duty) engine.store.rubetekTest?.let { pending ->
             viewModelScope.launch { clearRubetekTest(pending) }
         }
         // Раньше был общий автопилот. Теперь управление включается по зонам: если автопилот был включён,
         // один раз снимаем все наши расписания (уставки на устройствах остаются как есть)
         val s = engine.store.load()
-        if (s.autopilot) {
+        if (!duty && s.autopilot) {
             val cleared = s.copy(autopilot = false)
             engine.store.save(cleared)
             _state.update { it.copy(settings = cleared) }
@@ -282,6 +295,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 deployedTimers = engine.store.deployedTimers(),
                 deployedPrograms = engine.store.deployedPrograms(),
                 learned = engine.store.learned(),
+                dutyActive = engine.store.dutyActive,
             )
         }
         reloadModuleTimers(force = true)
@@ -402,6 +416,7 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                 it.copy(
                     prices = prices, outdoor = forecast.temps, forecastFresh = forecast.fresh,
                     outdoorBias = forecast.bias, plans = plans, computing = false,
+                    dutyActive = engine.store.dutyActive, idleZones = idleZones(s),
                 )
             }
         }
@@ -424,8 +439,9 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
                     id = java.util.UUID.randomUUID().toString().take(8),
                     name = t.name.filter { it.isLetterOrDigit() || it == ' ' || it == ',' }.trim().ifEmpty { t.name },
                     deviceId = t.id,
-                    windows = listOf(app.tuyacontrol.heating.ComfortWindow(0, 0, 21.0)),
-                    baseTemp = 16.0,
+                    // На дежурстве окон комфорта нет — только дежурная температура
+                    windows = if (duty) emptyList() else listOf(app.tuyacontrol.heating.ComfortWindow(0, 0, 21.0)),
+                    baseTemp = if (duty) 10.0 else 16.0,
                     peakDrop = 1.0,
                     maxTemp = 23.0,
                     // Конвектор греет воздух быстро, но и остывает комната быстрее, чем с тёплым полом
@@ -458,12 +474,13 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
     fun deleteZone(id: String) {
         val s = _state.value.settings
         val zone = s.zones.firstOrNull { it.id == id }
+        val wasLive = isLive(id)
         val rest = s.copy(zones = s.zones.filterNot { it.id == id })
         engine.store.save(rest)
         _state.update { it.copy(settings = rest) }
         recompute()
         // Удалённая зона с управлением: снимаем её расписание, остальные не трогаем
-        if (zone?.control == true) runCloud { client -> engine.stopZone(client, zone) }
+        if (zone?.control == true && wasLive) runCloud { client -> stopAndHandOver(client, zone) }
     }
 
     fun setLocation(lat: Double, lon: Double, outdoor: OutdoorSensor?) = applySettings(
@@ -480,30 +497,80 @@ class HeatingViewModel(application: Application) : AndroidViewModel(application)
         engine.store.save(s)
         _state.update { it.copy(settings = s) }
         recompute()
-        // Зоны с включённым управлением сразу получают новый план
-        if (s.zones.any { it.control }) deploy()
+        // Зоны с включённым управлением сразу получают новый план (если этот профиль сейчас действует)
+        if (s.zones.any { it.control } && (!duty || engine.store.dutyActive)) deploy()
     }
 
     /** Управление зоной: включить — выставить уставки по плану и обновлять их; выключить — перестать трогать. */
     fun setZoneControl(id: String, on: Boolean) {
         val s = _state.value.settings
+        val wasLive = isLive(id)
         val updated = s.copy(zones = s.zones.map { if (it.id == id) it.copy(control = on) else it })
         engine.store.save(updated)
         _state.update { st ->
             st.copy(
                 settings = updated,
                 plans = st.plans.map { p -> if (p.zone.id == id) p.withZone(p.zone.copy(control = on)) else p },
+                idleZones = idleZones(updated),
             )
         }
         val zone = updated.zones.first { it.id == id }
-        if (on) {
-            runCloud { client -> engine.deploy(client, updated, onlyZone = id) }
-        } else {
-            runCloud { client -> engine.stopZone(client, zone) }
+        when {
+            on && isLive(id) -> runCloud { client -> engine.deploy(client, engine.store.loadActive(), onlyZone = id) }
+            on -> _state.update {
+                it.copy(message = if (duty) "Сохранено. Заработает, когда включите «Дежурство»" else "Сохранено. Сейчас действует «Дежурство» — этим прибором управляет оно")
+            }
+            wasLive -> runCloud { client -> stopAndHandOver(client, zone) }
         }
     }
 
-    fun deploy() = runCloud { client -> engine.deploy(client, _state.value.settings) }
+    private fun idleZones(s: HeatingSettings): Set<String> {
+        val live = engine.store.loadActive().zones.map { it.id }.toSet()
+        return s.zones.filter { it.control && it.id !in live }.map { it.id }.toSet()
+    }
+
+    /** Зона сейчас пишется в прибор (её профиль действует и прибор не занят другим профилем). */
+    private fun isLive(id: String) = engine.store.loadActive().zones.any { it.id == id && it.control }
+
+    /** Снять план зоны; если прибор есть в другом действующем профиле — сразу записать план оттуда. */
+    private suspend fun stopAndHandOver(client: TuyaCloudClient, zone: HeatZone): String {
+        val line = engine.stopZone(client, zone)
+        val next = engine.store.loadActive().zones.filter { it.control && it.deviceId == zone.deviceId && it.id != zone.id }
+        val more = next.map { engine.deploy(client, engine.store.loadActive(), onlyZone = it.id) }
+        return (listOf(line) + more).joinToString("\n")
+    }
+
+    /**
+     * Включить или выключить «Дежурство». Приборы, которые были под управлением и больше ни одной зоной
+     * не управляются, отпускаются (наши расписания снимаются); остальным сразу пишется план действующего профиля.
+     */
+    fun setDutyActive(on: Boolean) {
+        val before = engine.store.loadActive()
+        engine.store.dutyActive = on
+        val after = engine.store.loadActive()
+        _state.update { it.copy(dutyActive = on, idleZones = idleZones(it.settings)) }
+        runCloud { client ->
+            val lines = mutableListOf(if (on) "Дежурство включено" else "Дежурство выключено, работает «Отопление»")
+            for (z in before.zones) {
+                if (!z.control || z.deviceId == null) continue
+                if (after.zones.any { it.control && it.deviceId == z.deviceId }) continue
+                lines += engine.stopZone(client, z)
+            }
+            if (after.zones.any { it.control }) lines += engine.deploy(client, after)
+            lines.joinToString("\n")
+        }
+    }
+
+    /** Флаг «Дежурство» поменяли на другом экране — перечитать. */
+    fun refreshDutyFlag() = _state.update { it.copy(dutyActive = engine.store.dutyActive, idleZones = idleZones(it.settings)) }
+
+    fun deploy() {
+        if (duty && !engine.store.dutyActive) {
+            _state.update { it.copy(message = "«Дежурство» выключено — в приборы ничего не пишется") }
+            return
+        }
+        runCloud { client -> engine.deploy(client, engine.store.loadActive()) }
+    }
 
     /**
      * Проверка: можно ли писать в «Heating mode schedule» (облачная группа studio). Добавляет ОДНУ запись
