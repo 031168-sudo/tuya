@@ -214,6 +214,7 @@ private fun App(
             categories = state.categories,
             prefs = state.devicePrefs,
             zones = heating.settings.zones.map { it.id to it.name },
+            dutyZones = dutyHeating.settings.zones.map { it.id to it.name },
             onBack = { viewModel.back() },
             onSave = viewModel::saveCommand,
             onDelete = viewModel::deleteCommand,
@@ -245,7 +246,8 @@ private fun App(
             state = heating,
             onRecompute = heatingViewModel::recompute,
             onDeploy = heatingViewModel::deploy,
-            onZoneControl = heatingViewModel::setZoneControl,
+            // Прибор управляется с одной вкладки: включение здесь могло выключить его на «Дежурстве»
+            onZoneControl = { id, on -> heatingViewModel.setZoneControl(id, on); dutyViewModel.reloadZones() },
             onProgramMode = heatingViewModel::setProgramMode,
             onTestStudio = heatingViewModel::testStudioTimer,
             onLearn = heatingViewModel::learnNow,
@@ -257,12 +259,12 @@ private fun App(
             onMessageShown = heatingViewModel::messageShown,
             bottomBar = { bottomBar(2) },
         )
-        // «Дежурство»: тот же экран и расчёт, свои зоны; переключатель — какой профиль пишется в приборы
+        // «Дежурство»: тот же экран и расчёт, свои зоны
         Screen.Duty -> HeatingScreen(
             state = dutyHeating,
             onRecompute = dutyViewModel::recompute,
             onDeploy = dutyViewModel::deploy,
-            onZoneControl = dutyViewModel::setZoneControl,
+            onZoneControl = { id, on -> dutyViewModel.setZoneControl(id, on); heatingViewModel.reloadZones() },
             onProgramMode = dutyViewModel::setProgramMode,
             onTestStudio = dutyViewModel::testStudioTimer,
             onLearn = dutyViewModel::learnNow,
@@ -271,10 +273,6 @@ private fun App(
             onLocation = dutyViewModel::setLocation,
             onAddRubetek = dutyViewModel::addRubetekZones,
             onInTotal = dutyViewModel::setInTotal,
-            onDutyActive = { on ->
-                dutyViewModel.setDutyActive(on)
-                heatingViewModel.refreshDutyFlag()
-            },
             onMessageShown = dutyViewModel::messageShown,
             bottomBar = { bottomBar(4) },
         )

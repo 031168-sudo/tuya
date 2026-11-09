@@ -193,6 +193,7 @@ fun CommandsScreen(
     categories: List<app.tuyacontrol.data.Category>,
     prefs: Map<String, app.tuyacontrol.data.DevicePref>,
     zones: List<Pair<String, String>> = emptyList(),
+    dutyZones: List<Pair<String, String>> = emptyList(),
     onBack: () -> Unit,
     onSave: (Command) -> Unit,
     onDelete: (String) -> Unit,
@@ -200,7 +201,7 @@ fun CommandsScreen(
     var editing by remember { mutableStateOf<Command?>(null) }
     // Группы устройств для выбора в действиях: устройство выбирается отдельно, группы лишь объединяют
     val groups = remember(devices, categories, prefs) {
-        Target.entries.filter { it != Target.ZONES && it != Target.ZONE }.associateWith { app.tuyacontrol.commands.groupDevices(it, devices, categories, prefs) }
+        Target.entries.filter { it != Target.ZONES && it != Target.ZONE && it != Target.DUTY_ZONES && it != Target.DUTY_ZONE }.associateWith { app.tuyacontrol.commands.groupDevices(it, devices, categories, prefs) }
     }
     Scaffold(
         topBar = {
@@ -245,6 +246,7 @@ fun CommandsScreen(
         CommandEditDialog(
             groups = groups,
             zones = zones,
+            dutyZones = dutyZones,
             initial = c,
             isNew = commands.none { it.id == c.id },
             onDismiss = { editing = null },
@@ -259,6 +261,7 @@ fun CommandsScreen(
 private fun CommandEditDialog(
     groups: Map<Target, List<app.tuyacontrol.DeviceUi>>,
     zones: List<Pair<String, String>>,
+    dutyZones: List<Pair<String, String>>,
     initial: Command,
     isNew: Boolean,
     onDismiss: () -> Unit,
@@ -332,7 +335,7 @@ private fun CommandEditDialog(
     }
 
     if (picking) {
-        ActionPicker(groups, zones, onDismiss = { picking = false }, onPick = { actions.add(it); picking = false })
+        ActionPicker(groups, zones, dutyZones, onDismiss = { picking = false }, onPick = { actions.add(it); picking = false })
     }
     if (confirmDelete) {
         AlertDialog(
@@ -352,6 +355,7 @@ private fun CommandEditDialog(
 private fun ActionPicker(
     groups: Map<Target, List<app.tuyacontrol.DeviceUi>>,
     zones: List<Pair<String, String>>,
+    dutyZones: List<Pair<String, String>>,
     onDismiss: () -> Unit,
     onPick: (Action) -> Unit,
 ) {
@@ -388,11 +392,33 @@ private fun ActionPicker(
                         ActionKind.entries.filter { it.target == Target.ZONES }.forEach { a -> PickRow(a.title) { onPick(Action(a)) } }
                         if (zones.isNotEmpty()) {
                             Text(
-                                "Отопление: одна зона — управление по плану включить",
+                                "Отопление: одна зона — управление по плану",
                                 style = MaterialTheme.typography.titleSmall,
                                 modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
                             )
-                            zones.forEach { (id, name) -> PickRow(name) { onPick(Action(ActionKind.ZONE_CONTROL_ON, null, id, name)) } }
+                            zones.forEach { (id, name) ->
+                                ZoneOnOffRow(
+                                    name,
+                                    onOn = { onPick(Action(ActionKind.ZONE_CONTROL_ON, null, id, name)) },
+                                    onOff = { onPick(Action(ActionKind.ZONE_CONTROL_OFF, null, id, name)) },
+                                )
+                            }
+                        }
+                        Text(Target.DUTY_ZONES.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp))
+                        ActionKind.entries.filter { it.target == Target.DUTY_ZONES }.forEach { a -> PickRow(a.title) { onPick(Action(a)) } }
+                        if (dutyZones.isNotEmpty()) {
+                            Text(
+                                "Дежурство: одна зона",
+                                style = MaterialTheme.typography.titleSmall,
+                                modifier = Modifier.padding(top = 12.dp, bottom = 2.dp),
+                            )
+                            dutyZones.forEach { (id, name) ->
+                                ZoneOnOffRow(
+                                    name,
+                                    onOn = { onPick(Action(ActionKind.DUTY_ZONE_ON, null, id, name)) },
+                                    onOff = { onPick(Action(ActionKind.DUTY_ZONE_OFF, null, id, name)) },
+                                )
+                            }
                         }
                         groups.forEach { (t, list) ->
                             Text(t.title, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 2.dp))
@@ -424,6 +450,19 @@ private fun ActionPicker(
             }) { Text(if (k != null || dev != null) "Назад" else "Отмена") }
         },
     )
+}
+
+/** Зона в выборе действия: название и две кнопки — включить / выключить управление. */
+@Composable
+private fun ZoneOnOffRow(name: String, onOn: () -> Unit, onOff: () -> Unit) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().padding(start = 8.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        TextButton(onClick = onOn) { Text("Вкл") }
+        TextButton(onClick = onOff) { Text("Выкл") }
+    }
 }
 
 @Composable

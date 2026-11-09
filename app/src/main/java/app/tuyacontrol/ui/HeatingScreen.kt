@@ -82,6 +82,7 @@ import app.tuyacontrol.HeatingUiState
 import app.tuyacontrol.Thermostat
 import app.tuyacontrol.heating.ComfortWindow
 import app.tuyacontrol.heating.HeatZone
+import app.tuyacontrol.rubetek.RubetekMapper
 import app.tuyacontrol.heating.HeatingPlanner
 import app.tuyacontrol.heating.HourPrices
 import app.tuyacontrol.heating.ZonePlan
@@ -128,7 +129,6 @@ fun HeatingScreen(
     onLocation: (Double, Double, app.tuyacontrol.OutdoorSensor?) -> Unit,
     onAddRubetek: () -> Unit,
     onInTotal: (String, Boolean) -> Unit,
-    onDutyActive: (Boolean) -> Unit = {},
     onMessageShown: () -> Unit,
     bottomBar: @Composable () -> Unit,
 ) {
@@ -160,7 +160,7 @@ fun HeatingScreen(
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (state.duty || state.dutyActive) item { DutyCard(state, onDutyActive) }
+                if (state.duty) item { DutyHint() }
                 item { SummaryCard(state, onDeploy) }
                 items(state.plans, key = { it.zone.id }) { plan ->
                     val thermostat = state.thermostats.firstOrNull { it.id == plan.zone.deviceId }
@@ -178,11 +178,6 @@ fun HeatingScreen(
                         measure = plan.zone.tempDeviceId?.let { id -> state.tempSources.firstOrNull { it.id == id } },
                         learning = state.learning,
                         onLearn = onLearn,
-                        idleNote = when {
-                            plan.zone.id !in state.idleZones -> null
-                            state.duty -> "«Дежурство» выключено — план только для расчёта, в прибор не пишется"
-                            else -> "Сейчас действует «Дежурство» — этим прибором управляет оно"
-                        },
                     )
                 }
                 item {
@@ -228,6 +223,7 @@ fun HeatingScreen(
             thermostats = state.thermostats,
             tempSources = state.tempSources,
             isNew = state.settings.zones.none { it.id == z.id },
+            duty = state.duty,
             onDismiss = { editing = null },
             onSave = { onSaveZone(it); editing = null },
             onDelete = { onDeleteZone(z.id); editing = null },
@@ -245,42 +241,17 @@ fun HeatingScreen(
     }
 }
 
-/**
- * «Дежурство»: на своей вкладке — переключатель (уехал / дома); на вкладке «Отопление» — напоминание,
- * что сейчас действует дежурство.
- */
+/** Подсказка вверху вкладки «Дежурство». */
 @Composable
-private fun DutyCard(state: HeatingUiState, onDutyActive: (Boolean) -> Unit) {
-    val on = state.dutyActive
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = if (on) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh,
-        ),
-    ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (state.duty) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (on) "Дежурство включено" else "Дежурство выключено", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    Switch(checked = on, onCheckedChange = onDutyActive, enabled = !state.deploying)
-                }
-                Text(
-                    if (on) {
-                        "В приборы пишется план этой вкладки. Приборы, которых здесь нет (или у них выключено " +
-                            "управление), работают по вкладке «Отопление»."
-                    } else {
-                        "Включите, когда уезжаете: приборы этой вкладки перейдут на её зоны и настройки. " +
-                            "Выключите по возвращении — всё вернётся к «Отоплению»."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            } else {
-                Text("Сейчас действует «Дежурство»", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Приборы, которые есть на вкладке «Дежурство», управляются оттуда. Остальные — по этой вкладке.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
+private fun DutyHint() {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)) {
+        Text(
+            "Уезжая, включите управление в нужных зонах здесь — эти приборы перейдут с «Отопления» на " +
+                "«Дежурство». Вернувшись, включите их снова на вкладке «Отопление». Прибор управляется только с " +
+                "одной вкладки. Конвекторы Rubetek здесь считаются стоящими на 12° (меняется в зоне).",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+        )
     }
 }
 
@@ -415,6 +386,17 @@ private fun ZoneCard(
             )
             idleNote?.let {
                 Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.tertiary)
+            }
+            zone.assumedSetpoint?.let { a ->
+                val real = thermostat?.setpoint
+                val differs = real != null && kotlin.math.abs(real - a) > 0.01
+                Text(
+                    "Считается, что конвектор стоит на ${deg(a)}. Сейчас у него уставка " +
+                        (real?.let { deg(it) } ?: "неизвестна") +
+                        if (differs) " — включённый, он будет греть до ${deg(real!!)}" else "",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (differs) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.tertiary,
+                )
             }
             // Управление: включено — уставки по плану выставляются и обновляются; выключено — устройство не трогаем
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -799,7 +781,7 @@ private fun ModuleTimersBlock(
     val timers = thermostat?.moduleTimers
     val ok = Color(0xFF43A047)
     // Конвектор держит [S + h, S]: если окно комфорта выше низа полосы — подсказать, что поставить на конвекторе
-    thermostat?.setpoint?.let { s ->
+    (zone.assumedSetpoint ?: thermostat?.setpoint)?.let { s ->
         val low = s + minOf(zone.hyst, 0.0)
         val need = zone.windows.maxOfOrNull { it.temp } ?: return@let
         Text(
@@ -885,11 +867,15 @@ private fun ZoneDialog(
     thermostats: List<Thermostat>,
     tempSources: List<app.tuyacontrol.TempSource> = emptyList(),
     isNew: Boolean,
+    duty: Boolean = false,
     onDismiss: () -> Unit,
     onSave: (HeatZone) -> Unit,
     onDelete: () -> Unit,
 ) {
     var name by remember { mutableStateOf(initial.name) }
+    var assumed by remember {
+        mutableStateOf(fieldText(initial.assumedSetpoint ?: app.tuyacontrol.heating.HeatingStore.DUTY_RUBETEK_SETPOINT))
+    }
     var device by remember { mutableStateOf(initial.deviceId) }
     var tempDevice by remember { mutableStateOf(initial.tempDeviceId) }
     val windows = remember {
@@ -933,6 +919,9 @@ private fun ZoneDialog(
             storeHeat = storeHeat,
             autoTune = autoTune,
             tempDeviceId = tempDevice?.takeIf { it != device },
+            assumedSetpoint = if (duty && device?.let { RubetekMapper.isRubetek(it) } == true) {
+                (parse(assumed) ?: return null).coerceIn(5.0, 30.0)
+            } else null,
         )
     }
     val result = build()
@@ -1044,6 +1033,15 @@ private fun ZoneDialog(
                     )
                 }
 
+                if (duty && device?.let { RubetekMapper.isRubetek(it) } == true) {
+                    NumberField(assumed, { assumed = it }, "Считать, что на конвекторе стоит, °C", Modifier.fillMaxWidth())
+                    Text(
+                        "Расчёт ведётся так, будто на конвекторе выставлена эта температура, какая бы ни стояла " +
+                            "сейчас. Перед отъездом поставьте её на самом конвекторе.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 NumberField(hyst, { hyst = it }, "Гистерезис термостата °C", Modifier.fillMaxWidth(), signed = true)
                 Text(
                     "Как термостат держит уставку S. Плюс — греет до S + гистерезис и включается при S " +

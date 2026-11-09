@@ -31,6 +31,7 @@ class CommandRunner(context: Context) {
 
     private val app = context.applicationContext
     private val engine = HeatingEngine(app)
+    private val dutyEngine = HeatingEngine(app, true)
     private val tuya: TuyaCloudClient? by lazy { CredentialsStore(app).load()?.let { TuyaCloudClient(it) } }
     private val rubetek: RubetekClient by lazy { RubetekClient(RubetekStore(app)) }
     private val xiaomi by lazy { XiaomiHub(app) }
@@ -66,10 +67,13 @@ class CommandRunner(context: Context) {
     // ---------- Разворачивание действий по устройствам ----------
 
     private fun expand(a: Action, devices: List<DeviceUi>, categories: List<Category>, prefs: Map<String, DevicePref>): List<Job> {
-        if (a.kind.target == Target.ZONES) return zoneJobs(a.kind == ActionKind.ZONES_CONTROL_ON)
-        if (a.kind == ActionKind.ZONE_CONTROL_ON) {
-            val one = zoneJobs(true, a.deviceId)
-            return one.ifEmpty { listOf(Job("Зона «${a.deviceName}»: управление по плану вкл") { "зона не найдена" }) }
+        if (a.kind.target == Target.ZONES) return zoneJobs(engine, a.kind == ActionKind.ZONES_CONTROL_ON)
+        if (a.kind.target == Target.DUTY_ZONES) return zoneJobs(dutyEngine, a.kind == ActionKind.DUTY_ZONES_ON)
+        if (a.kind.target == Target.ZONE || a.kind.target == Target.DUTY_ZONE) {
+            val on = a.kind == ActionKind.ZONE_CONTROL_ON || a.kind == ActionKind.DUTY_ZONE_ON
+            val e = if (a.kind.target == Target.DUTY_ZONE) dutyEngine else engine
+            val one = zoneJobs(e, on, a.deviceId)
+            return one.ifEmpty { listOf(Job("${a.deviceName}: ${a.kind.title}") { "зона не найдена" }) }
         }
         val label = "${a.kind.title}${a.temp?.let { " ${fmt(it)}°" } ?: ""}"
         // Конкретное устройство
@@ -84,23 +88,16 @@ class CommandRunner(context: Context) {
         return group.map { d -> Job("${d.name}: $label") { perform(a, d) } }
     }
 
-    private fun zoneJobs(on: Boolean, onlyId: String? = null): List<Job> {
-        val zones = engine.store.load().zones.filter { it.deviceId != null && (onlyId == null || it.id == onlyId) }
-        if (zones.isEmpty()) return if (onlyId != null) emptyList() else listOf(Job("Отопление: зон нет") { "нет зон отопления" })
+    /** Управление зонами вкладки «Отопление» или «Дежурство» — так же, как переключатель на экране. */
+    private fun zoneJobs(e: HeatingEngine, on: Boolean, onlyId: String? = null): List<Job> {
+        val tab = if (e === dutyEngine) "Дежурство" else "Отопление"
+        val zones = e.store.load().zones.filter { it.deviceId != null && (onlyId == null || it.id == onlyId) }
+        if (zones.isEmpty()) return if (onlyId != null) emptyList() else listOf(Job("$tab: зон нет") { "нет зон на вкладке «$tab»" })
         return zones.map { z ->
-            Job("Зона «${z.name}»: управление по плану ${if (on) "вкл" else "выкл"}") {
+            Job("$tab, зона «${z.name}»: управление ${if (on) "вкл" else "выкл"}") {
                 val c = tuya ?: return@Job "нет ключей Tuya"
-                val s = engine.store.load()
-                val updated = s.copy(zones = s.zones.map { if (it.id == z.id) it.copy(control = on) else it })
-                engine.store.save(updated)
-                val zone = updated.zones.first { it.id == z.id }
-                // В устройство пишется только действующий профиль (дома или на дежурстве)
-                val live = engine.store.loadActive().zones.any { it.id == z.id }
-                val report = when {
-                    on -> engine.deploy(c, engine.store.loadActive(), onlyZone = z.id)
-                    live -> engine.stopZone(c, zone)
-                    else -> "${zone.name}: сейчас действует «Дежурство», прибор не трогали"
-                }
+                val ch = e.switchControl(z.id, on) ?: return@Job "зона не найдена"
+                val report = e.applyControl(c, ch)
                 if ("ошибка" in report.lowercase()) report else null
             }
         }
@@ -149,7 +146,8 @@ class CommandRunner(context: Context) {
         }
 
         ActionKind.WATER_TIMERS_ON, ActionKind.WATER_TIMERS_OFF -> waterTimers(d, a.kind == ActionKind.WATER_TIMERS_ON)
-        ActionKind.ZONES_CONTROL_ON, ActionKind.ZONES_CONTROL_OFF, ActionKind.ZONE_CONTROL_ON -> "не для устройства"
+        ActionKind.ZONES_CONTROL_ON, ActionKind.ZONES_CONTROL_OFF, ActionKind.ZONE_CONTROL_ON, ActionKind.ZONE_CONTROL_OFF,
+        ActionKind.DUTY_ZONES_ON, ActionKind.DUTY_ZONES_OFF, ActionKind.DUTY_ZONE_ON, ActionKind.DUTY_ZONE_OFF -> "не для устройства"
     } }
 
     /** Ручной и «по программе» режимы термостата: спальня — manual/auto, «Temp» — cold/hot. */

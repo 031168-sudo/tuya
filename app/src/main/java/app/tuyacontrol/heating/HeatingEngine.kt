@@ -26,7 +26,7 @@ import kotlin.math.pow
 import kotlin.math.roundToLong
 
 /** Расчёт планов и запись их в облачное расписание термостатов. */
-class HeatingEngine(context: Context, duty: Boolean = false) {
+class HeatingEngine(context: Context, private val duty: Boolean = false) {
 
     private val app = context.applicationContext
     /** Настройки профиля: «Отопление» или «Дежурство» (duty). */
@@ -139,7 +139,9 @@ class HeatingEngine(context: Context, duty: Boolean = false) {
                     val rubetek = RubetekClient(RubetekStore(app))
                     val device = rubetek.allDevices().firstOrNull { it.id == id }
                         ?: throw IllegalStateException("конвектор не найден в Rubetek")
-                    val own = (device.status["temp_set"] as? Number)?.toDouble()
+                    val real = (device.status["temp_set"] as? Number)?.toDouble()
+                    // Дежурство: считаем, что на конвекторе стоит дежурная уставка (обычно 12°), а не домашняя
+                    val own = zone.assumedSetpoint ?: real
                         ?: throw IllegalStateException("неизвестна уставка конвектора")
                     val plan = HeatingPlanner.plan(rubetekZone(zone, own), prices, forecast.temps, 1.0, peakBan = !zone.peakHeat, onOff = true)
                     val events = onOffEvents(plan)
@@ -147,7 +149,9 @@ class HeatingEngine(context: Context, duty: Boolean = false) {
                     schedules.remove(id)
                     lines += "${zone.name}: таймеры в модуле — " + events.joinToString(", ") { (m, on) ->
                         "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл")
-                    } + " (температура ${own.toInt()}° с конвектора)"
+                    } + if (zone.assumedSetpoint != null) {
+                        " (считается, что на конвекторе ${own.toInt()}°; сейчас на нём ${real?.let { "${it.toInt()}°" } ?: "неизвестно"})"
+                    } else " (температура ${own.toInt()}° с конвектора)"
                     ok++
                 } catch (e: Exception) {
                     AppLog.e("Отопление: ${zone.name} — Rubetek не ответил", e)
@@ -216,6 +220,54 @@ class HeatingEngine(context: Context, duty: Boolean = false) {
      * Выключить управление зоной: перестать обновлять уставки. Текущие значения на устройстве не трогаем,
      * только убираем наше облачное расписание и будильник телефона.
      */
+    /** Что поменялось при переключении управления зоной: сама зона и зоны другой вкладки с тем же прибором. */
+    data class ControlChange(val zone: HeatZone, val on: Boolean, val displaced: List<HeatZone>)
+
+    private fun title(duty: Boolean) = if (duty) "Дежурство" else "Отопление"
+
+    /**
+     * Включить или выключить управление зоной (только настройки, без облака). Прибор управляется только
+     * с одной вкладки: при включении управление тем же прибором на другой вкладке выключается.
+     */
+    fun switchControl(zoneId: String, on: Boolean): ControlChange? {
+        val s = store.load()
+        val zone = s.zones.firstOrNull { it.id == zoneId } ?: return null
+        store.save(s.copy(zones = s.zones.map { if (it.id == zoneId) it.copy(control = on) else it }))
+        var displaced = emptyList<HeatZone>()
+        if (on && zone.deviceId != null) {
+            val other = HeatingStore(app, !duty)
+            val o = other.load()
+            displaced = o.zones.filter { it.control && it.deviceId == zone.deviceId }
+            if (displaced.isNotEmpty()) {
+                other.save(o.copy(zones = o.zones.map { if (it.control && it.deviceId == zone.deviceId) it.copy(control = false) else it }))
+            }
+        }
+        return ControlChange(zone.copy(control = on), on, displaced)
+    }
+
+    /**
+     * Записать переключение в приборы. Перевод с другой вкладки: сначала снимаются её таймеры и расписания,
+     * потом ставятся таймеры этой вкладки. Выключение: наши таймеры снимаются.
+     */
+    suspend fun applyControl(client: TuyaCloudClient, ch: ControlChange): String {
+        val lines = mutableListOf<String>()
+        if (!ch.on) {
+            lines += stopZone(client, ch.zone)
+            return lines.joinToString("\n")
+        }
+        for (z in ch.displaced) {
+            lines += "«${z.name}»: управление выключено на вкладке «${title(!duty)}»"
+            lines += stopZone(client, z)
+        }
+        lines += deploy(client, store.loadActive(), onlyZone = ch.zone.id)
+        return lines.joinToString("\n")
+    }
+
+    /** Сообщение для экрана о переводе прибора с другой вкладки (null — не переводили). */
+    fun displacedNote(ch: ControlChange): String? = ch.displaced.takeIf { it.isNotEmpty() }?.let { d ->
+        d.joinToString(", ") { "«${it.name}»" } + ": управление выключено на вкладке «${title(!duty)}», прибор переведён на «${title(duty)}»"
+    }
+
     suspend fun stopZone(client: TuyaCloudClient, zone: HeatZone): String {
         val id = zone.deviceId ?: return "${zone.name}: нет устройства"
         store.saveSchedules(store.loadSchedules() - id)

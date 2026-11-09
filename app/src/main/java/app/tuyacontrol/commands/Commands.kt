@@ -9,6 +9,8 @@ import java.util.UUID
 enum class Target(val title: String) {
     ZONES("Отопление: все зоны"),
     ZONE("Отопление: зона"),
+    DUTY_ZONES("Дежурство: все зоны"),
+    DUTY_ZONE("Дежурство: зона"),
     RUBETEK("Rubetek"),
     XIAOMI("Xiaomi"),
     HEATING("Отопление (кроме ванны)"),
@@ -22,6 +24,11 @@ enum class ActionKind(val target: Target, val title: String, val needsTemp: Bool
     ZONES_CONTROL_OFF(Target.ZONES, "Управление по плану — выключить"),
     /** Одна зона (id зоны — в Action.deviceId, название — в deviceName). */
     ZONE_CONTROL_ON(Target.ZONE, "Управление по плану — включить"),
+    ZONE_CONTROL_OFF(Target.ZONE, "Управление по плану — выключить"),
+    DUTY_ZONES_ON(Target.DUTY_ZONES, "Дежурство — включить"),
+    DUTY_ZONES_OFF(Target.DUTY_ZONES, "Дежурство — выключить"),
+    DUTY_ZONE_ON(Target.DUTY_ZONE, "Дежурство — включить"),
+    DUTY_ZONE_OFF(Target.DUTY_ZONE, "Дежурство — выключить"),
 
     RUBETEK_ON(Target.RUBETEK, "Включить"),
     RUBETEK_OFF(Target.RUBETEK, "Выключить"),
@@ -134,7 +141,7 @@ fun groupDevices(
     }
     val rubetek = { d: app.tuyacontrol.DeviceUi -> app.tuyacontrol.rubetek.RubetekMapper.isRubetek(d.id) }
     return when (target) {
-        Target.ZONES, Target.ZONE -> emptyList()
+        Target.ZONES, Target.ZONE, Target.DUTY_ZONES, Target.DUTY_ZONE -> emptyList()
         Target.RUBETEK -> devices.filter { rubetek(it) && it.setpointCode != null }
         Target.XIAOMI -> devices.filter { app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(it.id) && it.setpointCode != null }
         Target.HEATING -> byCategory("отоплен").filter {

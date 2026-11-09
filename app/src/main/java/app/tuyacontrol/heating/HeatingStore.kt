@@ -1,6 +1,7 @@
 package app.tuyacontrol.heating
 
 import android.content.Context
+import app.tuyacontrol.rubetek.RubetekMapper
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -46,26 +47,25 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
         val own = prefs.getString(KEY_DUTY, null)?.let { runCatching { parse(JSONObject(it)) }.getOrNull() }
             ?: HeatingSettings(zones = emptyList())
         return own.copy(
+            // Конвекторы Rubetek на дежурстве считаются стоящими на 12°, пока в зоне не задано другое
+            zones = own.zones.map { z ->
+                if (z.assumedSetpoint == null && z.deviceId?.let { RubetekMapper.isRubetek(it) } == true) z.copy(assumedSetpoint = DUTY_RUBETEK_SETPOINT) else z
+            },
             latitude = home.latitude, longitude = home.longitude,
             outdoorSensorId = home.outdoorSensorId, outdoorCode = home.outdoorCode, autopilot = false,
         )
     }
 
-    /** Действует «Дежурство» (хозяин уехал). */
-    var dutyActive: Boolean
-        get() = prefs.getBoolean("duty_active", false)
-        set(v) = prefs.edit().putBoolean("duty_active", v).apply()
-
     /**
-     * Что сейчас пишется в устройства. Дома — профиль «Отопление». На дежурстве — зоны «Дежурства», а приборы,
-     * которых в «Дежурстве» нет (или там у них управление выключено), продолжают работать по «Отоплению».
+     * Что сейчас пишется в устройства: зоны обеих вкладок. Прибор управляется только с одной вкладки —
+     * включение управления на одной выключает его на другой ([HeatingEngine.switchControl]).
      */
     fun loadActive(): HeatingSettings {
         val home = loadHome()
-        if (!dutyActive) return home
         val d = loadDuty()
         val taken = d.zones.filter { it.control }.mapNotNull { it.deviceId }.toSet()
-        return d.copy(zones = d.zones + home.zones.filter { it.deviceId == null || it.deviceId !in taken })
+        // На всякий случай (старые настройки): если прибор под управлением на обеих вкладках — действует «Дежурство»
+        return home.copy(zones = home.zones.map { if (it.control && it.deviceId in taken) it.copy(control = false) else it } + d.zones)
     }
 
     /** Зоны обоих профилей (для истории и подбора параметров). */
@@ -199,6 +199,7 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
                     .put("store_heat", z.storeHeat ?: JSONObject.NULL)
                     .put("auto_tune", z.autoTune)
                     .put("temp_device", z.tempDeviceId ?: JSONObject.NULL)
+                    .put("assumed_set", z.assumedSetpoint ?: JSONObject.NULL)
                     .put("windows", JSONArray().apply {
                         z.windows.forEach { w ->
                             put(JSONObject().put("from", w.from).put("to", w.to).put("temp", w.temp))
@@ -234,6 +235,7 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
                 storeHeat = if (z.isNull("store_heat") || !z.has("store_heat")) null else z.optBoolean("store_heat"),
                 autoTune = z.optBoolean("auto_tune", true),
                 tempDeviceId = if (z.isNull("temp_device") || !z.has("temp_device")) null else z.optString("temp_device").ifEmpty { null },
+                assumedSetpoint = if (!z.has("assumed_set") || z.isNull("assumed_set")) null else z.optDouble("assumed_set"),
             )
         }
         return HeatingSettings(
@@ -249,5 +251,7 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
     private companion object {
         const val KEY_SETTINGS = "settings"
         const val KEY_DUTY = "settings_duty"
+        /** Уставка, на которой считается конвектор Rubetek на дежурстве. */
+        const val DUTY_RUBETEK_SETPOINT = 12.0
     }
 }
