@@ -12,6 +12,9 @@ import org.json.JSONObject
  * Зоны, окна и параметры у каждого свои; всё про устройства (что записано, расписания телефона) — общее.
  * В устройства пишется действующий профиль ([loadActive]).
  */
+/** Уставка, на которой считается конвектор Rubetek на дежурстве. */
+const val DUTY_RUBETEK_SETPOINT = 12.0
+
 class HeatingStore(context: Context, private val duty: Boolean = false) {
 
     private val prefs = context.applicationContext.getSharedPreferences("heating", Context.MODE_PRIVATE)
@@ -251,7 +254,5 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
     private companion object {
         const val KEY_SETTINGS = "settings"
         const val KEY_DUTY = "settings_duty"
-        /** Уставка, на которой считается конвектор Rubetek на дежурстве. */
-        const val DUTY_RUBETEK_SETPOINT = 12.0
     }
 }

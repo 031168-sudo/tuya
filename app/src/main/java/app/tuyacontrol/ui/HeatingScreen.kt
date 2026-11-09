@@ -874,7 +874,7 @@ private fun ZoneDialog(
 ) {
     var name by remember { mutableStateOf(initial.name) }
     var assumed by remember {
-        mutableStateOf(fieldText(initial.assumedSetpoint ?: app.tuyacontrol.heating.HeatingStore.DUTY_RUBETEK_SETPOINT))
+        mutableStateOf(fieldText(initial.assumedSetpoint ?: app.tuyacontrol.heating.DUTY_RUBETEK_SETPOINT))
     }
     var device by remember { mutableStateOf(initial.deviceId) }
     var tempDevice by remember { mutableStateOf(initial.tempDeviceId) }

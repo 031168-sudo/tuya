@@ -435,7 +435,7 @@ open class HeatingViewModel(application: Application, val duty: Boolean) : Andro
                     // На дежурстве окон комфорта нет — только дежурная температура
                     windows = if (duty) emptyList() else listOf(app.tuyacontrol.heating.ComfortWindow(0, 0, 21.0)),
                     baseTemp = if (duty) 10.0 else 16.0,
-                    assumedSetpoint = if (duty) app.tuyacontrol.heating.HeatingStore.DUTY_RUBETEK_SETPOINT else null,
+                    assumedSetpoint = if (duty) app.tuyacontrol.heating.DUTY_RUBETEK_SETPOINT else null,
                     peakDrop = 1.0,
                     maxTemp = 23.0,
                     // Конвектор греет воздух быстро, но и остывает комната быстрее, чем с тёплым полом
