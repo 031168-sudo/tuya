@@ -249,7 +249,7 @@ private fun DeviceCard(
         !(device.isSensor && it.value is Boolean) &&
             !(device.switchIsRelay && it.key in DeviceUi.MAIN_SWITCHES) &&
             // Режим ручной/программа показан отдельным переключателем
-            !(it.key == "mode" && device.programModes != null)
+            !(it.key == "mode" && (device.programModes != null || device.isThresholdHeater))
     }
     val primary = entries.filter { DpLabels.isPrimary(it.key, device.spec[it.key]) || isFallbackSwitch(it, device) }
     val secondary = entries - primary.toSet()

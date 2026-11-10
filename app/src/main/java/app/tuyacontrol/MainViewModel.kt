@@ -169,6 +169,10 @@ data class DeviceUi(
             return null
         }
 
+    /** Прибор с порогами нагрева (батарея в ванной). */
+    val isThresholdHeater: Boolean
+        get() = "heating_temp_start" in status && "heating_temp_stop" in status
+
     /** Пороги нагрева есть — можно «включить/выключить отопление» сменой порогов. null — не такое устройство. */
     val heatingPresetOn: Boolean?
         get() {
@@ -186,6 +190,8 @@ data class DeviceUi(
     val programModes: Pair<String, String>?
         get() {
             if (app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) || app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id)) return null
+            // Батарея в ванной (пороги нагрева): управляется только порогами, режимы ручной/программа не показываем
+            if (isThresholdHeater) return null
             // Сначала по текущему значению: в общей спецификации Tuya у «Temp» в списке режимов есть и auto/manual,
             // хотя сам прибор понимает только cold/hot/wind
             val now = status["mode"]?.toString() ?: return null
