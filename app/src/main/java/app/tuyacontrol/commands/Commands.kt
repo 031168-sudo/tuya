@@ -46,7 +46,7 @@ enum class ActionKind(val target: Target, val title: String, val needsTemp: Bool
     HEATING_SET_TEMP(Target.HEATING, "Ручной режим и температура", needsTemp = true),
 
     BATH_ON(Target.BATH, "Включить (пороги 19° / 20°)"),
-    BATH_OFF(Target.BATH, "Выключить (пороги 12° / 13°)"),
+    BATH_OFF(Target.BATH, "Выключить (пороги 9° / 10°)"),
 
     WATER_ON(Target.WATER, "Включить"),
     WATER_OFF(Target.WATER, "Выключить"),

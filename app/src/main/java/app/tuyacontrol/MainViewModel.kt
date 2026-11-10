@@ -175,7 +175,7 @@ data class DeviceUi(
             val stop = (status["heating_temp_stop"] as? Number)?.toDouble() ?: return null
             if ("heating_temp_start" !in status) return null
             val t = stop / Math.pow(10.0, (spec["heating_temp_stop"]?.scale ?: 1).toDouble())
-            // Выключено — порог выключения около 13°; всё, что выше, считаем включённым
+            // Выключено — порог выключения около 10°; всё, что выше, считаем включённым
             return t > PRESET_OFF.second + 0.5
         }
 
@@ -251,7 +251,7 @@ data class DeviceUi(
         const val RUBETEK_TIMERS_CLEAR = "__rubetek_timers_clear"
         /** Пороги (включение, выключение), °C. */
         val PRESET_ON = 19.0 to 20.0
-        val PRESET_OFF = 12.0 to 13.0
+        val PRESET_OFF = 9.0 to 10.0
     }
 }
 
@@ -838,7 +838,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 
     /**
-     * Батарея в ванной (пороги нагрева): «включено» — греть с 19° до 20°, «выключено» — с 12° до 13°.
+     * Батарея в ванной (пороги нагрева): «включено» — греть с 19° до 20°, «выключено» — с 9° до 10°.
      * Порядок записи такой, чтобы порог включения всегда оставался ниже порога выключения.
      */
     private fun loadMiTimers(deviceId: String) {

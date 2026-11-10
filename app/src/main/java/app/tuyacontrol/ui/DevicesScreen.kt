@@ -400,13 +400,13 @@ private fun DeviceCard(
                 )
             }
             if (primary.isNotEmpty()) Spacer(Modifier.size(6.dp))
-            // Батарея с порогами нагрева: «Отопление» вкл (19→20°) / выкл (12→13°)
+            // Батарея с порогами нагрева: «Отопление» вкл (19→20°) / выкл (9→10°)
             device.heatingPresetOn?.let { on ->
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text("Отопление", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            if (on) "греть с 19° до 20°" else "дежурно: с 12° до 13°",
+                            if (on) "греть с 19° до 20°" else "дежурно: с 9° до 10°",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
