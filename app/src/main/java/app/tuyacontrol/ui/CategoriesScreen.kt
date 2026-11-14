@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -35,6 +36,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -52,8 +54,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.tuyacontrol.DeviceUi
@@ -104,17 +110,37 @@ fun AppBottomBar(
     }
 }
 
-/** Подпись в нижней панели: мелко и в одну строку, чтобы при крупном шрифте системы не переносилась. */
+/** Подпись в нижней панели: мелко, в одну строку и сжимается, если не влезает в ширину пункта. */
 @Composable
 private fun NavLabel(text: String) {
-    Text(
-        text,
-        fontSize = 11.sp,
-        letterSpacing = 0.sp,
-        maxLines = 1,
-        softWrap = false,
-        overflow = TextOverflow.Visible,
-    )
+    val measurer = rememberTextMeasurer()
+    val baseStyle = LocalTextStyle.current.copy(fontSize = 11.sp, letterSpacing = 0.sp)
+    BoxWithConstraints {
+        val available = constraints.maxWidth
+        val fontSize = if (available == Constraints.Infinity || available <= 0) {
+            11.sp
+        } else {
+            val oneLine = measurer.measure(
+                text = AnnotatedString(text),
+                style = baseStyle,
+                maxLines = 1,
+                softWrap = false,
+            ).size.width
+            // Чуть меньше ширины пункта, чтобы округление не обрезало последнюю букву
+            val fit = if (oneLine > available) available.toFloat() / oneLine * 0.97f else 1f
+            (11f * fit).coerceAtLeast(7f).sp
+        }
+        Text(
+            text,
+            modifier = Modifier.fillMaxWidth(),
+            fontSize = fontSize,
+            letterSpacing = 0.sp,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Clip,
+            textAlign = TextAlign.Center,
+        )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
