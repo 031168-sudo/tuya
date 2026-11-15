@@ -2,12 +2,21 @@ package app.tuyacontrol.energy
 
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
+import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 import java.util.Locale
 
 enum class PeriodType(val title: String) { DAY("День"), WEEK("Неделя"), MONTH("Месяц"), YEAR("Год") }
+
+/** Произвольный период: с какого по какой день включительно. Даты можно передать в любом порядке. */
+data class CustomPeriod(val from: LocalDate, val to: LocalDate) {
+    val start: LocalDate get() = minOf(from, to)
+    val end: LocalDate get() = maxOf(from, to)
+    val days: Long get() = ChronoUnit.DAYS.between(start, end) + 1
+}
 
 /** Строка отчёта: час, день, месяц или устройство. */
 data class Bucket(
@@ -45,6 +54,8 @@ data class EnergyReport(
     /** Выбранные часы дня [hourFrom, hourTo): 0..24 — весь день. Только для периода «День». */
     val hourFrom: Int = 0,
     val hourTo: Int = 24,
+    /** «Свой период» длиннее месяца: график и список — по месяцам, а не по дням. */
+    val monthly: Boolean = false,
 )
 
 object EnergyReports {
@@ -84,6 +95,17 @@ object EnergyReports {
 
     private fun monthName(d: LocalDate): String = d.month.getDisplayName(TextStyle.FULL_STANDALONE, RU)
 
+    /** Заголовок произвольного периода: «01.11 – 14.11.2026» или с годами, если они разные. */
+    fun customTitle(from: LocalDate, to: LocalDate): String {
+        val start = minOf(from, to)
+        val end = maxOf(from, to)
+        return if (start.year == end.year) {
+            "${start.format(SHORT)} – ${end.format(SHORT)}.${end.year}"
+        } else {
+            "${start.format(SHORT)}.${start.year} – ${end.format(SHORT)}.${end.year}"
+        }
+    }
+
     /** Тариф на день: тариф устройства важнее общего, при пересечении — с более поздним началом. */
     fun tariffFor(tariffs: List<Tariff>, deviceId: String, day: LocalDate): Tariff? =
         tariffs.filter { it.deviceId == deviceId && it.covers(day) }.maxByOrNull { it.start.toEpochDay() }
@@ -111,6 +133,7 @@ object EnergyReports {
     /**
      * @param hourly почасовые данные (устройство, день) -> 24 значения
      * @param profiles средний профиль по часам для каждого устройства (для дней без почасовых данных)
+     * @param custom произвольный период «с … по …»; если задан, [type] и [anchor] не используются
      */
     fun build(
         type: PeriodType,
@@ -123,11 +146,15 @@ object EnergyReports {
         today: LocalDate,
         hourFrom: Int = 0,
         hourTo: Int = 24,
+        custom: CustomPeriod? = null,
     ): EnergyReport {
-        val (from, to) = range(type, anchor)
+        val (from, to) = custom?.let { it.start to it.end } ?: range(type, anchor)
         // Часы дня имеют смысл только на экране одного дня
-        val hFrom = if (type == PeriodType.DAY) hourFrom.coerceIn(0, 23) else 0
-        val hTo = if (type == PeriodType.DAY) hourTo.coerceIn(hFrom + 1, 24) else 24
+        val byDayPeriod = custom == null && type == PeriodType.DAY
+        val hFrom = if (byDayPeriod) hourFrom.coerceIn(0, 23) else 0
+        val hTo = if (byDayPeriod) hourTo.coerceIn(hFrom + 1, 24) else 24
+        // Долгий свой период удобнее смотреть по месяцам
+        val monthly = if (custom != null) custom.days > 31 else type == PeriodType.YEAR
 
         // Суточный расход берём из статистики, а по часам раскладываем по почасовым долям
         val hours = mutableListOf<HourCost>()
@@ -169,31 +196,35 @@ object EnergyReports {
                 drillDate = drillDate,
             )
 
-        val buckets: List<Bucket> = when (type) {
-            PeriodType.DAY -> {
+        fun monthlyBuckets(): List<Bucket> {
+            val byMonth = hours.groupBy { YearMonth.from(it.day) }
+            val last = YearMonth.from(to)
+            return generateSequence(YearMonth.from(from)) { it.plusMonths(1) }
+                .takeWhile { !it.isAfter(last) }
+                .map { ym ->
+                    val first = ym.atDay(1)
+                    val name = monthName(first).replaceFirstChar { it.uppercase(RU) } +
+                        if (from.year != to.year) " ${ym.year}" else ""
+                    bucket(name, byMonth[ym].orEmpty(), PeriodType.MONTH, first)
+                }.toList()
+        }
+
+        fun dailyBuckets(): List<Bucket> {
+            val byDay = hours.groupBy { it.day }
+            return generateSequence(from) { it.plusDays(1) }.takeWhile { !it.isAfter(to) }.map { day ->
+                bucket(day.format(DAY_ROW), byDay[day].orEmpty(), PeriodType.DAY, day)
+            }.toList()
+        }
+
+        val buckets: List<Bucket> = when {
+            byDayPeriod -> {
                 val byHour = hours.groupBy { it.hour }
                 (0 until 24).map { h ->
                     bucket("${h.toString().padStart(2, '0')}:00", byHour[h].orEmpty()).copy(selected = h in hFrom until hTo)
                 }
             }
-            PeriodType.WEEK, PeriodType.MONTH -> {
-                val byDay = hours.groupBy { it.day }
-                generateSequence(from) { it.plusDays(1) }.takeWhile { !it.isAfter(to) }.map { day ->
-                    bucket(day.format(DAY_ROW), byDay[day].orEmpty(), PeriodType.DAY, day)
-                }.toList()
-            }
-            PeriodType.YEAR -> {
-                val byMonth = hours.groupBy { it.day.monthValue }
-                (1..12).map { m ->
-                    val first = from.withMonth(m)
-                    bucket(
-                        monthName(first).replaceFirstChar { it.uppercase(RU) },
-                        byMonth[m].orEmpty(),
-                        PeriodType.MONTH,
-                        first,
-                    )
-                }
-            }
+            monthly -> monthlyBuckets()
+            else -> dailyBuckets()
         }
 
         val perDevice = chosen.groupBy { it.deviceId }
@@ -208,7 +239,7 @@ object EnergyReports {
         val lastDay = if (to.isBefore(today)) to else today
         val elapsedDays = if (lastDay.isBefore(from)) 0L else lastDay.toEpochDay() - from.toEpochDay() + 1
         return EnergyReport(
-            title = title(type, anchor),
+            title = custom?.let { customTitle(it.start, it.end) } ?: title(type, anchor),
             from = from,
             to = to,
             kwh = total.kwh,
@@ -222,6 +253,7 @@ object EnergyReports {
             perDevice = perDevice,
             hourFrom = hFrom,
             hourTo = hTo,
+            monthly = monthly,
         )
     }
 

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import app.tuyacontrol.cloud.TuyaCloudClient
 import app.tuyacontrol.data.AppLog
 import app.tuyacontrol.data.CredentialsStore
+import app.tuyacontrol.energy.CustomPeriod
 import app.tuyacontrol.energy.DayEnergy
 import app.tuyacontrol.energy.EnergyDb
 import app.tuyacontrol.energy.EnergyDevice
@@ -32,6 +33,8 @@ data class EnergyUiState(
     val selected: String? = null,
     val period: PeriodType = PeriodType.MONTH,
     val anchor: LocalDate = LocalDate.now(),
+    /** «Свой период»: с какого по какой день; null — обычный период. */
+    val custom: CustomPeriod? = null,
     /** Часы дня [с, по): 0..24 — весь день. Действуют на экране «День». */
     val hourFrom: Int = 0,
     val hourTo: Int = 24,
@@ -86,7 +89,24 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setPeriod(type: PeriodType, anchor: LocalDate = _state.value.anchor) {
-        _state.update { it.copy(period = type, anchor = anchor) }
+        _state.update { it.copy(period = type, anchor = anchor, custom = null) }
+        reload()
+    }
+
+    /** Пункт «Свой период»: при первом выборе показываем последние 7 дней. */
+    fun openCustom() {
+        _state.update { s ->
+            if (s.custom != null) s else {
+                val to = LocalDate.now()
+                s.copy(custom = CustomPeriod(to.minusDays(6), to))
+            }
+        }
+        reload()
+    }
+
+    /** «Свой период»: с [from] по [to] включительно. */
+    fun setCustomRange(from: LocalDate, to: LocalDate) {
+        _state.update { it.copy(custom = CustomPeriod(from, to)) }
         reload()
     }
 
@@ -99,12 +119,25 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun shift(delta: Long) {
-        _state.update { it.copy(anchor = EnergyReports.shift(it.period, it.anchor, delta)) }
+        _state.update { s ->
+            val c = s.custom
+            if (c == null) {
+                s.copy(anchor = EnergyReports.shift(s.period, s.anchor, delta))
+            } else {
+                // Сдвигаем весь свой период на его же длину
+                val d = delta * c.days
+                s.copy(custom = CustomPeriod(c.start.plusDays(d), c.end.plusDays(d)))
+            }
+        }
         reload()
     }
 
     fun today() {
-        _state.update { it.copy(anchor = LocalDate.now()) }
+        val now = LocalDate.now()
+        _state.update { s ->
+            val c = s.custom
+            if (c == null) s.copy(anchor = now) else s.copy(custom = CustomPeriod(now.minusDays(c.days - 1), now))
+        }
         reload()
     }
 
@@ -166,7 +199,7 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
         reloadJob = viewModelScope.launch {
             val s = _state.value
             val ids = s.selected?.let { listOf(it) } ?: s.devices.map { it.id }
-            val (from, to) = EnergyReports.range(s.period, s.anchor)
+            val (from, to) = s.custom?.let { it.start to it.end } ?: EnergyReports.range(s.period, s.anchor)
             val loaded = withContext(Dispatchers.IO) {
                 Loaded(
                     days = db.getDays(ids, from, to),
@@ -182,13 +215,13 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
             val report = withContext(Dispatchers.Default) {
                 EnergyReports.build(
                     s.period, s.anchor, loaded.days, loaded.hourly, loaded.profiles, tariffs, names, LocalDate.now(),
-                    s.hourFrom, s.hourTo,
+                    s.hourFrom, s.hourTo, s.custom,
                 )
             }
             _state.update {
                 // Пока грузили, пользователь мог сменить период — применяем только актуальный отчёт
                 if (it.period == s.period && it.anchor == s.anchor && it.selected == s.selected &&
-                    it.hourFrom == s.hourFrom && it.hourTo == s.hourTo
+                    it.hourFrom == s.hourFrom && it.hourTo == s.hourTo && it.custom == s.custom
                 ) {
                     it.copy(report = report, tariffs = tariffs, meta = meta)
                 } else {

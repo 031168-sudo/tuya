@@ -20,6 +20,8 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,6 +42,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Card
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedButton
@@ -56,6 +60,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -74,12 +79,14 @@ import app.tuyacontrol.energy.EnergyDb
 import app.tuyacontrol.energy.EnergyReport
 import app.tuyacontrol.energy.EnergyReports
 import app.tuyacontrol.energy.PeriodType
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 private val DATE = DateTimeFormatter.ofPattern("dd.MM.yyyy")
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun EnergyScreen(
     state: EnergyUiState,
@@ -91,6 +98,8 @@ fun EnergyScreen(
     onShift: (Long) -> Unit,
     onToday: () -> Unit,
     onHours: (Int, Int) -> Unit = { _, _ -> },
+    onCustom: () -> Unit = {},
+    onCustomRange: (LocalDate, LocalDate) -> Unit = { _, _ -> },
     onMessageShown: () -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -171,14 +180,33 @@ fun EnergyScreen(
             }
 
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     PeriodType.entries.forEach { p ->
                         FilterChip(
-                            selected = state.period == p,
+                            selected = state.custom == null && state.period == p,
                             onClick = { onPeriod(p, null) },
                             label = { Text(p.title) },
                         )
                     }
+                    FilterChip(
+                        selected = state.custom != null,
+                        onClick = onCustom,
+                        label = { Text("Свой период") },
+                    )
+                }
+            }
+
+            // Свой период: любые две даты, без часов
+            if (state.custom != null) {
+                item {
+                    CustomRangeRow(
+                        from = state.custom.start,
+                        to = state.custom.end,
+                        onChange = onCustomRange,
+                    )
                 }
             }
 
@@ -188,7 +216,9 @@ fun EnergyScreen(
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Раньше")
                     }
                     Text(
-                        state.report?.title ?: EnergyReports.title(state.period, state.anchor),
+                        state.report?.title
+                            ?: state.custom?.let { EnergyReports.customTitle(it.start, it.end) }
+                            ?: EnergyReports.title(state.period, state.anchor),
                         style = MaterialTheme.typography.titleMedium,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.weight(1f),
@@ -201,7 +231,7 @@ fun EnergyScreen(
             }
 
             // Часы внутри дня: считать не всё сутки, а только с … по …
-            if (state.period == PeriodType.DAY) {
+            if (state.period == PeriodType.DAY && state.custom == null) {
                 item { HoursRow(state.hourFrom, state.hourTo, onHours) }
             }
 
@@ -221,14 +251,18 @@ fun EnergyScreen(
                 if (report.buckets.isNotEmpty()) {
                     item {
                         SectionTitle(
-                            when (state.period) {
-                                PeriodType.YEAR -> "По месяцам"
-                                PeriodType.DAY -> "По часам"
+                            when {
+                                state.period == PeriodType.DAY && state.custom == null -> "По часам"
+                                report.monthly -> "По месяцам"
                                 else -> "По дням"
                             },
                         )
                     }
-                    val rows = if (state.period == PeriodType.DAY) report.buckets.filter { it.selected } else report.buckets.reversed()
+                    val rows = if (state.period == PeriodType.DAY && state.custom == null) {
+                        report.buckets.filter { it.selected }
+                    } else {
+                        report.buckets.reversed()
+                    }
                     items(rows) { b ->
                         BucketRow(
                             b,
@@ -313,6 +347,52 @@ private fun HoursRow(from: Int, to: Int, onChange: (Int, Int) -> Unit) {
         }
     }
 }
+
+/** «Свой период»: две даты, каждая выбирается в календаре. Часов здесь нет. */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomRangeRow(from: LocalDate, to: LocalDate, onChange: (LocalDate, LocalDate) -> Unit) {
+    var picking by remember { mutableStateOf<Pick?>(null) }
+    FlowRow(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("Период", style = MaterialTheme.typography.bodyMedium)
+        OutlinedButton(onClick = { picking = Pick.START }) { Text("с ${from.format(DATE)}") }
+        OutlinedButton(onClick = { picking = Pick.END }) { Text("по ${to.format(DATE)}") }
+        picking?.let { target ->
+            val initial = if (target == Pick.START) from else to
+            val picker = rememberDatePickerState(initialSelectedDateMillis = initial.toUtcMillis())
+            DatePickerDialog(
+                onDismissRequest = { picking = null },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val picked = picker.selectedDateMillis?.toLocalDateUtc()
+                        picking = null
+                        if (picked != null) {
+                            if (target == Pick.START) {
+                                // Начало позже конца — конец подтягиваем к началу
+                                onChange(picked, if (picked.isAfter(to)) picked else to)
+                            } else {
+                                onChange(if (picked.isBefore(from)) picked else from, picked)
+                            }
+                        }
+                    }) { Text("Готово") }
+                },
+                dismissButton = { TextButton(onClick = { picking = null }) { Text("Отмена") } },
+            ) {
+                DatePicker(state = picker)
+            }
+        }
+    }
+}
+
+private enum class Pick { START, END }
+
+/** Календарь Material3 работает в UTC-миллисекундах от начала суток. */
+private fun LocalDate.toUtcMillis(): Long = atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+
+private fun Long.toLocalDateUtc(): LocalDate = Instant.ofEpochMilli(this).atZone(ZoneOffset.UTC).toLocalDate()
 
 @Composable
 private fun SectionTitle(text: String) {
@@ -619,10 +699,10 @@ private fun bucketWhen(label: String, index: Int, count: Int): String =
 
 /** «05.03, пн» → «05» (для месяца) / «пн» (для недели); «Январь» → «янв». */
 private fun shortLabel(label: String, count: Int): String = when {
-    count == 12 -> label.take(3).lowercase()
     count == 24 -> label.substringBefore(":")
-    count == 7 -> label.substringAfter(", ", label)
-    else -> label.substringBefore(".")
+    count == 7 && label.contains(", ") -> label.substringAfter(", ")
+    label.firstOrNull()?.isDigit() == true -> label.substringBefore(".")
+    else -> label.take(3).lowercase()
 }
 
 @Composable
