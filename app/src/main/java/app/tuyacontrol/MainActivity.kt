@@ -32,6 +32,7 @@ import app.tuyacontrol.ui.DevicesScreen
 import app.tuyacontrol.ui.LogScreen
 import app.tuyacontrol.ui.SetupScreen
 import app.tuyacontrol.ui.LocalScreen
+import app.tuyacontrol.ui.NartisScreen
 import app.tuyacontrol.ui.HeatingScreen
 
 class MainActivity : ComponentActivity() {
@@ -41,6 +42,7 @@ class MainActivity : ComponentActivity() {
     private val sensorViewModel: SensorViewModel by viewModels()
     private val heatingViewModel: HeatingViewModel by viewModels()
     private val dutyViewModel: DutyViewModel by viewModels()
+    private val nartisViewModel: NartisViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,7 +65,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             AppTheme {
-                App(viewModel, energyViewModel, sensorViewModel, heatingViewModel, dutyViewModel)
+                App(viewModel, energyViewModel, sensorViewModel, heatingViewModel, dutyViewModel, nartisViewModel)
             }
         }
     }
@@ -88,12 +90,14 @@ private fun App(
     sensorViewModel: SensorViewModel,
     heatingViewModel: HeatingViewModel,
     dutyViewModel: DutyViewModel,
+    nartisViewModel: NartisViewModel,
 ) {
     val state by viewModel.state.collectAsState()
     val energy by energyViewModel.state.collectAsState()
     val sensor by sensorViewModel.state.collectAsState()
     val heating by heatingViewModel.state.collectAsState()
     val dutyHeating by dutyViewModel.state.collectAsState()
+    val nartis by nartisViewModel.state.collectAsState()
 
     // Устройства со счётчиком энергии передаём на экран «Энергия»
     val energyDevices = remember(state.devices) {
@@ -163,6 +167,7 @@ private fun App(
             onBack = { viewModel.back() },
             onOpenLog = { viewModel.open(Screen.Log) },
             onOpenLocal = { viewModel.open(Screen.Local) },
+            onOpenNartis = { viewModel.open(Screen.Nartis) },
             onOpenBackup = { viewModel.open(Screen.Backup) },
             onRubetekSendCode = viewModel::rubetekSendCode,
             onRubetekSignIn = viewModel::rubetekSignIn,
@@ -176,6 +181,16 @@ private fun App(
             onXiaomiBrowserDone = viewModel::xiaomiBrowserDone,
         )
         Screen.Backup -> app.tuyacontrol.ui.BackupScreen(onBack = { viewModel.back() })
+        Screen.Nartis -> NartisScreen(
+            state = nartis,
+            onBack = { viewModel.back() },
+            onScan = nartisViewModel::startScan,
+            onStopScan = nartisViewModel::stopScan,
+            onRead = nartisViewModel::read,
+            onPin = nartisViewModel::setPin,
+            onPassword = nartisViewModel::setPassword,
+            onClearLog = nartisViewModel::clearLog,
+        )
         Screen.Local -> LocalScreen(
             state = state,
             onBack = { viewModel.open(Screen.Setup) },

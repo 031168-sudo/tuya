@@ -66,6 +66,11 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // DLMS/COSEM для счётчика НАРТИС лежит в исходниках: com/pivotaccess/dlmscosem (MIT).
+    // jSerialComm (RS-485) не нужен — на телефоне связь только через Bluetooth/TCP-мост.
+    implementation("org.slf4j:slf4j-api:2.0.9")
+    implementation("org.slf4j:slf4j-nop:2.0.9")
+
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.work:work-runtime-ktx:2.9.1")

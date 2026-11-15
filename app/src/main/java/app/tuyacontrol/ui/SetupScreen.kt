@@ -69,6 +69,7 @@ fun SetupScreen(
     onBack: () -> Unit,
     onOpenLog: () -> Unit,
     onOpenLocal: () -> Unit = {},
+    onOpenNartis: () -> Unit = {},
     onOpenBackup: () -> Unit = {},
     onRubetekSendCode: (String) -> Unit = {},
     onRubetekSignIn: (String) -> Unit = {},
@@ -202,6 +203,9 @@ fun SetupScreen(
                 }
                 OutlinedButton(onClick = onOpenLocal, modifier = Modifier.fillMaxWidth()) {
                     Text("Устройства в локальной сети (Wi-Fi)")
+                }
+                OutlinedButton(onClick = onOpenNartis, modifier = Modifier.fillMaxWidth()) {
+                    Text("Счётчик НАРТИС (Bluetooth)")
                 }
                 BackgroundSyncSection()
                 RubetekSection(state, onRubetekSendCode, onRubetekSignIn, onRubetekCancel, onRubetekSignOut)
