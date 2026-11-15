@@ -51,6 +51,9 @@ object NartisMeter {
             }
             add(Attempt(twoByte, "1/17", 16, AarqApdu.AuthenticationLevel.NONE, null))
             add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.NONE, null))
+            // Управляющий клиент 1 — встречается у НАРТИС в заводских настройках
+            add(Attempt(twoByte, "1/17", 1, AarqApdu.AuthenticationLevel.NONE, null))
+            add(Attempt(twoByte, "1/17", 1, AarqApdu.AuthenticationLevel.LOW, "00000001"))
             add(Attempt(oneByte, "1", 16, AarqApdu.AuthenticationLevel.NONE, null))
             add(Attempt(oneByte, "1", 32, AarqApdu.AuthenticationLevel.NONE, null))
         }

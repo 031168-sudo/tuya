@@ -29,17 +29,14 @@ class WeatherNow(context: Context) {
         val saved = cached(key)
         if (saved != null && System.currentTimeMillis() - saved.time < MAX_AGE) return@withContext saved
         try {
-            val url = String.format(
+            val query = String.format(
                 Locale.US,
-                "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f" +
+                "?latitude=%.4f&longitude=%.4f" +
                     "&current=weather_code,is_day&daily=temperature_2m_max,temperature_2m_min" +
                     "&forecast_days=1&timezone=auto",
                 lat, lon,
             )
-            val text = http.newCall(Request.Builder().url(url).build()).execute().use { r ->
-                if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
-                r.body?.string().orEmpty()
-            }
+            val text = fetch(query)
             val o = JSONObject(text)
             val cur = o.getJSONObject("current")
             val daily = o.optJSONObject("daily")
@@ -65,6 +62,22 @@ class WeatherNow(context: Context) {
         }
     }
 
+    /** Сначала свой сервер (телефон в VPN не всегда видит Open-Meteo), потом напрямую. */
+    private fun fetch(query: String): String {
+        var last: Exception? = null
+        for (base in BASE_URLS) {
+            try {
+                http.newCall(Request.Builder().url(base + query).build()).execute().use { r ->
+                    if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code} ($base)")
+                    return r.body?.string().orEmpty()
+                }
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw last ?: IllegalStateException("нет ответа")
+    }
+
     private fun cached(key: String): Now? {
         if (prefs.getString("key", null) != key) return null
         val time = prefs.getLong("time", 0)
@@ -86,6 +99,10 @@ class WeatherNow(context: Context) {
 
     companion object {
         private const val MAX_AGE = 30 * 60_000L
+        private val BASE_URLS = listOf(
+            "https://diag.alfanomy.ru/weather",
+            "https://api.open-meteo.com/v1/forecast",
+        )
 
         fun kind(code: Int): Kind = when (code) {
             0 -> Kind.CLEAR

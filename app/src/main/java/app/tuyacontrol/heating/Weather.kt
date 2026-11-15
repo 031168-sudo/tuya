@@ -38,16 +38,13 @@ class Weather(context: Context) {
             return@withContext Forecast(saved.temps, fresh = true, yesterday = saved.yesterday)
         }
         try {
-            val url = String.format(
+            val query = String.format(
                 Locale.US,
-                "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f" +
+                "?latitude=%.4f&longitude=%.4f" +
                     "&hourly=temperature_2m&past_days=1&forecast_days=2&timezone=auto",
                 lat, lon,
             )
-            val text = http.newCall(Request.Builder().url(url).build()).execute().use { r ->
-                if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code}")
-                r.body?.string().orEmpty()
-            }
+            val text = fetch(query)
             // past_days=1: первые 24 часа — вчера (для сверки с уличным датчиком), дальше сегодня и завтра
             val arr = JSONObject(text).getJSONObject("hourly").getJSONArray("temperature_2m")
             val yesterday = DoubleArray(24) { i -> arr.optDouble(i, Double.NaN) }
@@ -63,6 +60,22 @@ class Weather(context: Context) {
             AppLog.e("Прогноз погоды не получен", e)
             cached() ?: Forecast(DoubleArray(48) { FALLBACK_TEMP }, fresh = false)
         }
+    }
+
+    /** Сначала свой сервер (телефон в VPN не всегда видит Open-Meteo), потом напрямую. */
+    private fun fetch(query: String): String {
+        var last: Exception? = null
+        for (base in BASE_URLS) {
+            try {
+                http.newCall(Request.Builder().url(base + query).build()).execute().use { r ->
+                    if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code} ($base)")
+                    return r.body?.string().orEmpty()
+                }
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw last ?: IllegalStateException("нет ответа")
     }
 
     private fun cached(): Forecast? {
@@ -90,5 +103,9 @@ class Weather(context: Context) {
     private companion object {
         const val FALLBACK_TEMP = -5.0
         const val CACHE_MS = 30 * 60 * 1000L
+        val BASE_URLS = listOf(
+            "https://diag.alfanomy.ru/weather",
+            "https://api.open-meteo.com/v1/forecast",
+        )
     }
 }
