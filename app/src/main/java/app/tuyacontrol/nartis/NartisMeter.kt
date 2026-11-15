@@ -1,7 +1,6 @@
 package app.tuyacontrol.nartis
 
 import com.pivotaccess.dlmscosem.apdu.AarqApdu
-import com.pivotaccess.dlmscosem.cosem.CosemClassId
 import com.pivotaccess.dlmscosem.cosem.CosemClient
 import com.pivotaccess.dlmscosem.cosem.CosemClientConfig
 import com.pivotaccess.dlmscosem.cosem.ObisCode
@@ -44,11 +43,9 @@ object NartisMeter {
             MeterAddress.hdlcServer(1) to "1",
             MeterAddress.hdlcServer(1, 17) to "1/17",
         )
-        val passwords = if (password.isNotBlank()) {
-            listOf(password)
-        } else {
-            listOf("00002080", "00000001")
-        }
+        // 00000001 — общий пароль чтения НАРТИС (проверено на этом счётчике).
+        // 00002080 не пробуем: счётчик его отвергает, а лишние попытки ни к чему.
+        val passwords = if (password.isNotBlank()) listOf(password) else listOf("00000001")
         val attempts = buildList {
             // Пароль на чтение: сначала рабочий пример И300, потом общий 00000001
             servers.forEach { (server, label) ->
@@ -121,13 +118,9 @@ object NartisMeter {
             val power = register("1.0.1.7.0.255")
             val voltage = register("1.0.12.7.0.255")
             val current = register("1.0.11.7.0.255")
-            val serial = try {
-                client.get(ObisCode.of("0.0.96.1.0.255"), CosemClassId.DATA, 2)
-                    .getOctetStringAsTextOrNull(Charsets.UTF_8)
-            } catch (e: Exception) {
-                log("Серийный номер не прочитан: ${e.message}")
-                null
-            }
+            // Серийный номер не читаем: счётчик присылает лишний байт 7E в конце
+            // кадра, и библиотека рвёт обмен уже после основных показаний.
+            val serial: String? = null
 
             if (total == null && t1 == null && t2 == null && t3 == null && power == null) {
                 throw IllegalStateException("счётчик отвечает, но показания не прочитаны (см. журнал)")
