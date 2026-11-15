@@ -14,8 +14,18 @@ data class MeterReading(
     val t2Kwh: Double?,
     val t3Kwh: Double?,
     val powerW: Double?,
-    val voltageV: Double?,
+    /** Фазные напряжения A/B/C, В. */
+    val voltageA: Double?,
+    val voltageB: Double?,
+    val voltageC: Double?,
+    /** Фазные токи A/B/C, А. */
     val currentA: Double?,
+    val currentB: Double?,
+    val currentC: Double?,
+    /** Ток нейтрали, А. */
+    val neutralCurrent: Double?,
+    /** Частота сети, Гц. */
+    val frequency: Double?,
     val serial: String?,
     val withPassword: Boolean,
 )
@@ -116,8 +126,15 @@ object NartisMeter {
             val t2 = energy("1.0.1.8.2.255")
             val t3 = energy("1.0.1.8.3.255")
             val power = register("1.0.1.7.0.255")
-            val voltage = register("1.0.12.7.0.255")
-            val current = register("1.0.11.7.0.255")
+            // Фазные напряжения и токи — коды из руководства НАРТИС-И300 (таблица Ж.1)
+            val voltageA = register("1.0.32.7.0.255")
+            val voltageB = register("1.0.52.7.0.255")
+            val voltageC = register("1.0.72.7.0.255")
+            val currentA = register("1.0.31.7.0.255")
+            val currentB = register("1.0.51.7.0.255")
+            val currentC = register("1.0.71.7.0.255")
+            val neutral = register("1.0.91.7.0.255")
+            val frequency = register("1.0.14.7.0.255")
             // Серийный номер не читаем: счётчик присылает лишний байт 7E в конце
             // кадра, и библиотека рвёт обмен уже после основных показаний.
             val serial: String? = null
@@ -131,8 +148,14 @@ object NartisMeter {
                 t2Kwh = t2,
                 t3Kwh = t3,
                 powerW = power,
-                voltageV = voltage,
-                currentA = current,
+                voltageA = voltageA,
+                voltageB = voltageB,
+                voltageC = voltageC,
+                currentA = currentA,
+                currentB = currentB,
+                currentC = currentC,
+                neutralCurrent = neutral,
+                frequency = frequency,
                 serial = serial,
                 withPassword = attempt.password != null,
             )

@@ -32,6 +32,7 @@ import app.tuyacontrol.ui.DevicesScreen
 import app.tuyacontrol.ui.LogScreen
 import app.tuyacontrol.ui.SetupScreen
 import app.tuyacontrol.ui.LocalScreen
+import app.tuyacontrol.nartis.nartisDeviceUi
 import app.tuyacontrol.ui.NartisScreen
 import app.tuyacontrol.ui.HeatingScreen
 
@@ -98,6 +99,13 @@ private fun App(
     val heating by heatingViewModel.state.collectAsState()
     val dutyHeating by dutyViewModel.state.collectAsState()
     val nartis by nartisViewModel.state.collectAsState()
+    // Счётчик НАРТИС — локальное устройство: показываем его в общем списке и категориях
+    val nartisDevice = remember(nartis.serial, nartis.reading, nartis.lastReadAt) {
+        nartisDeviceUi(nartis)
+    }
+    val displayDevices = remember(state.devices, nartisDevice) {
+        if (nartisDevice != null) state.devices + nartisDevice else state.devices
+    }
 
     // Устройства со счётчиком энергии передаём на экран «Энергия»
     val energyDevices = remember(state.devices) {
@@ -121,6 +129,7 @@ private fun App(
             dutyViewModel.setDevices(state.devices)
         }
     }
+    LaunchedEffect(Unit) { energyViewModel.refreshTariffs() }
     LaunchedEffect(energyDevices, state.screen) {
         if (state.screen == Screen.Energy || state.screen == Screen.Tariffs) {
             energyViewModel.setDevices(energyDevices)
@@ -184,12 +193,14 @@ private fun App(
         Screen.Nartis -> NartisScreen(
             state = nartis,
             onBack = { viewModel.back() },
-            onScan = nartisViewModel::startScan,
-            onStopScan = nartisViewModel::stopScan,
+            onSerial = nartisViewModel::setSerial,
             onRead = nartisViewModel::read,
+            onAutoRead = nartisViewModel::autoReadIfNeeded,
+            onStopScan = nartisViewModel::stopScan,
             onPin = nartisViewModel::setPin,
             onPassword = nartisViewModel::setPassword,
             onClearLog = nartisViewModel::clearLog,
+            tariffs = energy.tariffs,
         )
         Screen.Local -> LocalScreen(
             state = state,
@@ -210,10 +221,18 @@ private fun App(
             onModeChange = viewModel::setMode,
             listState = devicesListState,
             roomNames = roomNameMap,
+            devices = displayDevices,
+            nartisReading = nartis.reading,
+            nartisLastReadAt = nartis.lastReadAt,
+            nartisHistory = nartis.history,
+            tariffs = energy.tariffs,
+            nartisBusy = nartis.busy,
+            onReadNartis = nartisViewModel::read,
+            onOpenNartis = { viewModel.open(Screen.Nartis) },
         )
         Screen.Categories -> CategoriesScreen(
             categories = state.categories,
-            devices = state.devices,
+            devices = displayDevices,
             prefs = state.devicePrefs,
             onOpen = viewModel::openCategory,
             onSave = viewModel::saveCategory,
@@ -247,7 +266,7 @@ private fun App(
                 onOpenSensor = openSensor,
                 onEditDevice = { editDevice = it },
                 title = category?.name ?: "Категория",
-                devices = state.devices.filter { state.devicePrefs[it.id]?.categoryId == state.categoryId },
+                devices = displayDevices.filter { state.devicePrefs[it.id]?.categoryId == state.categoryId },
                 onBack = { viewModel.back() },
                 bottomBar = { bottomBar(1) },
                 onModeChange = viewModel::setMode,
@@ -255,6 +274,13 @@ private fun App(
                     androidx.compose.foundation.lazy.LazyListState()
                 },
                 roomNames = roomNameMap,
+                nartisReading = nartis.reading,
+                nartisLastReadAt = nartis.lastReadAt,
+                nartisHistory = nartis.history,
+                tariffs = energy.tariffs,
+                nartisBusy = nartis.busy,
+                onReadNartis = nartisViewModel::read,
+                onOpenNartis = { viewModel.open(Screen.Nartis) },
             )
         }
         Screen.Heating -> HeatingScreen(
@@ -313,12 +339,19 @@ private fun App(
                 onOpenSensor = openSensor,
                 onEditDevice = { editDevice = it },
                 title = roomName,
-                devices = state.devices.filter { state.devicePrefs[it.id]?.roomId == roomId },
+                devices = displayDevices.filter { state.devicePrefs[it.id]?.roomId == roomId },
                 onBack = { viewModel.back() },
                 bottomBar = { bottomBar(3) },
                 onModeChange = viewModel::setMode,
                 listState = roomListStates.getOrPut(roomId) { androidx.compose.foundation.lazy.LazyListState() },
                 roomNames = roomNameMap,
+                nartisReading = nartis.reading,
+                nartisLastReadAt = nartis.lastReadAt,
+                nartisHistory = nartis.history,
+                tariffs = energy.tariffs,
+                nartisBusy = nartis.busy,
+                onReadNartis = nartisViewModel::read,
+                onOpenNartis = { viewModel.open(Screen.Nartis) },
                 emptyText = "В этой комнате пока нет устройств. Комната выбирается в настройках устройства (⋮ на карточке).",
                 belowTopBar = {
                     androidx.compose.material3.TextButton(onClick = { editRoom = true }) {

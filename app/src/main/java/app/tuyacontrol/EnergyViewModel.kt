@@ -143,6 +143,14 @@ class EnergyViewModel(application: Application) : AndroidViewModel(application) 
 
     fun messageShown() = _state.update { it.copy(message = null) }
 
+    /** Тарифы нужны и вне экрана «Энергия» — например, на карточке счётчика НАРТИС. */
+    fun refreshTariffs() {
+        viewModelScope.launch {
+            val tariffs = withContext(Dispatchers.IO) { db.tariffs() }
+            _state.update { it.copy(tariffs = tariffs) }
+        }
+    }
+
     // ---------- Тарифы ----------
 
     fun saveTariff(t: Tariff) {

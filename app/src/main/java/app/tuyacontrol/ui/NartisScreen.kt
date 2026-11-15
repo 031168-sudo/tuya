@@ -8,7 +8,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,8 +18,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -31,13 +30,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,30 +46,34 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.core.content.ContextCompat
 import app.tuyacontrol.NartisUiState
-import app.tuyacontrol.nartis.MeterReading
-import app.tuyacontrol.nartis.NartisDevice
+import app.tuyacontrol.energy.Tariff
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-/** Экран «Счётчик НАРТИС»: поиск по Bluetooth и чтение показаний. */
+private val HISTORY_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm", Locale("ru"))
+
+/** Экран «Счётчик НАРТИС»: свой счётчик по серийному номеру, чтение и история. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NartisScreen(
     state: NartisUiState,
     onBack: () -> Unit,
-    onScan: () -> Unit,
+    onSerial: (String) -> Unit,
+    onRead: () -> Unit,
+    onAutoRead: () -> Unit,
     onStopScan: () -> Unit,
-    onRead: (String) -> Unit,
     onPin: (String) -> Unit,
     onPassword: (String) -> Unit,
     onClearLog: () -> Unit,
+    tariffs: List<Tariff> = emptyList(),
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -83,16 +86,17 @@ fun NartisScreen(
     }
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { granted -> if (granted.values.all { it }) onScan() }
+    ) { granted -> if (granted.values.all { it }) onRead() }
 
-    fun scanWithPermission() {
+    fun readWithPermission() {
         val ok = permissions.all {
             ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
         }
-        if (ok) onScan() else launcher.launch(permissions)
+        if (ok) onRead() else launcher.launch(permissions)
     }
 
-    // Ушли с экрана — поиск не должен продолжать работать
+    LaunchedEffect(Unit) { onAutoRead() }
+
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose { onStopScan() }
     }
@@ -134,8 +138,29 @@ fun NartisScreen(
         ) {
             item {
                 Text(
-                    "Счётчик отдаёт показания по Bluetooth (DLMS/СПОДЭС). " +
-                        "Сначала закройте «Нартис Пульт»: счётчик пускает только одно подключение.",
+                    "Счётчик читается по Bluetooth, когда телефон рядом с ним (5–10 метров). " +
+                        "Перед чтением закройте «Нартис Пульт»: счётчик пускает только одно подключение.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            item {
+                OutlinedTextField(
+                    value = state.serial,
+                    onValueChange = onSerial,
+                    label = { Text("Серийный номер счётчика") },
+                    placeholder = { Text("например, 023260164390") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            item {
+                Text(
+                    "Подключаемся только к прибору с этим номером. Чтобы читать другой счётчик, " +
+                        "введите его серийный номер.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -156,59 +181,64 @@ fun NartisScreen(
                         onValueChange = onPassword,
                         label = { Text("Пароль чтения") },
                         singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         modifier = Modifier.weight(1f),
                     )
                 }
             }
 
             item {
-                Text(
-                    "PIN обычно 123456. Пароль чтения у НАРТИС общий для всех счётчиков; " +
-                        "если не знаете — оставьте пустым, попробуем стандартные 00000001 и 00002080.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = { if (state.scanning) onStopScan() else scanWithPermission() },
-                        enabled = !state.busy,
-                    ) {
-                        Text(if (state.scanning) "Остановить поиск" else "Найти счётчик")
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Button(onClick = { readWithPermission() }, enabled = !state.busy && state.serial.isNotBlank()) {
+                        Text(if (state.busy) "Читаю…" else "Прочитать")
                     }
-                    if (state.scanning) {
-                        LinearProgressIndicator(Modifier.weight(1f))
-                    }
+                    if (state.busy) LinearProgressIndicator(Modifier.weight(1f))
                 }
-            }
-
-            if (state.scanning && state.devices.isEmpty()) {
-                item {
-                    Text("Ничего не найдено. Счётчик должен быть рядом (до 5–10 метров).",
-                        style = MaterialTheme.typography.bodySmall)
-                }
-            }
-
-            items(state.devices, key = { it.address }) { d ->
-                DeviceRow(d, enabled = !state.busy, onClick = { onRead(d.address) })
-            }
-
-            val reading = state.reading
-            if (reading != null) {
-                item { ReadingCard(reading) }
-            }
-
-            if (state.busy) {
-                item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }
 
             if (state.status.isNotBlank()) {
                 item {
                     Text(state.status, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            val reading = state.reading
+            if (reading != null) {
+                val tariff = NartisPeriods.tariffFor(tariffs, LocalDate.now())
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text("Показания", style = MaterialTheme.typography.titleSmall)
+                            Spacer(Modifier.height(6.dp))
+                            NartisReadings(reading, tariff)
+                        }
+                    }
+                }
+            }
+
+            if (state.history.size > 1) {
+                item { HistoryPeriods(state, tariffs) }
+                item { SectionTitle("Последние чтения") }
+                val rows = state.history.takeLast(20).reversed()
+                rows.forEach { snap ->
+                    item {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                            Text(
+                                HISTORY_TIME.format(Instant.ofEpochMilli(snap.time).atZone(ZoneId.systemDefault())),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                "%.3f кВт·ч".format(Locale("ru"), snap.total ?: 0.0),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        HorizontalDivider()
+                    }
                 }
             }
 
@@ -246,82 +276,37 @@ fun NartisScreen(
 }
 
 @Composable
-private fun DeviceRow(device: NartisDevice, enabled: Boolean, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(vertical = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                device.name,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                "${device.rssi} дБм",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Text(
-            "${device.address} · нажмите, чтобы прочитать",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(4.dp))
-        HorizontalDivider()
-    }
-}
-
-@Composable
-private fun ReadingCard(reading: MeterReading) {
+private fun HistoryPeriods(state: NartisUiState, tariffs: List<Tariff>) {
+    val today = LocalDate.now()
+    val zone = ZoneId.systemDefault()
+    val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+    val monthStart = today.withDayOfMonth(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val tariff = NartisPeriods.tariffFor(tariffs, today)
+    val todayPeriod = NartisPeriods.period(state.history, todayStart, tariff)
+    val monthPeriod = NartisPeriods.period(state.history, monthStart, tariff)
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Text("Показания", style = MaterialTheme.typography.titleSmall)
-            if (reading.serial != null) {
-                Text("Серийный номер: ${reading.serial}", style = MaterialTheme.typography.bodySmall)
-            }
-            Text(
-                if (reading.withPassword) "Прочитано с паролем" else "Прочитано без пароля",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            reading.totalKwh?.let { EnergyRow("Всего", it) }
-            if (reading.t1Kwh != null || reading.t2Kwh != null || reading.t3Kwh != null) {
-                HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                reading.t1Kwh?.let { EnergyRow("Т1", it) }
-                reading.t2Kwh?.let { EnergyRow("Т2", it) }
-                reading.t3Kwh?.let { EnergyRow("Т3", it) }
-            }
-            if (reading.powerW != null || reading.voltageV != null || reading.currentA != null) {
-                HorizontalDivider(Modifier.padding(vertical = 6.dp))
-                reading.powerW?.let { ValueRow("Мощность", fmt(it, "Вт", 0)) }
-                reading.voltageV?.let { ValueRow("Напряжение", fmt(it, "В", 1)) }
-                reading.currentA?.let { ValueRow("Ток", fmt(it, "А", 2)) }
-            }
+            Text("Расход и стоимость", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            PeriodSummary("Сегодня", todayPeriod)
+            PeriodSummary("С начала месяца", monthPeriod)
         }
     }
 }
 
 @Composable
-private fun EnergyRow(name: String, kwh: Double) {
-    Row(Modifier.fillMaxWidth()) {
+private fun PeriodSummary(name: String, period: MeterPeriod) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
         Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Text(fmt(kwh, "кВт·ч", 3), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        Text(
+            "%.3f кВт·ч · %.2f ₽".format(Locale("ru"), period.kwh, period.cost),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
 @Composable
-private fun ValueRow(name: String, value: String) {
-    Row(Modifier.fillMaxWidth()) {
-        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Text(value, style = MaterialTheme.typography.bodyMedium)
-    }
+private fun SectionTitle(text: String) {
+    Text(text, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 6.dp))
 }
-
-private fun fmt(value: Double, unit: String, decimals: Int): String =
-    String.format(Locale("ru"), "%.${decimals}f %s", value, unit)

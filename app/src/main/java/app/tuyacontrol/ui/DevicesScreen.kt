@@ -68,6 +68,9 @@ import app.tuyacontrol.UiState
 import app.tuyacontrol.cloud.DpSpec
 import app.tuyacontrol.data.DpFormat
 import app.tuyacontrol.data.DpLabels
+import app.tuyacontrol.energy.Tariff
+import app.tuyacontrol.nartis.MeterReading
+import app.tuyacontrol.nartis.NartisSnapshot
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -97,6 +100,14 @@ fun DevicesScreen(
     emptyText: String = "В этой категории пока нет устройств",
     /** Строка под шапкой справа, под кнопками (например, «Настройка» комнаты); null — нет. */
     belowTopBar: (@Composable () -> Unit)? = null,
+    /** Счётчик НАРТИС: последние показания, история, тарифы и действия. */
+    nartisReading: MeterReading? = null,
+    nartisLastReadAt: Long = 0,
+    nartisHistory: List<NartisSnapshot> = emptyList(),
+    tariffs: List<Tariff> = emptyList(),
+    nartisBusy: Boolean = false,
+    onReadNartis: () -> Unit = {},
+    onOpenNartis: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val categories = state.categories.associateBy { it.id }
@@ -211,16 +222,32 @@ fun DevicesScreen(
                         }
                     items(list, key = { it.id }) { device ->
                         val pref = state.devicePrefs[device.id]
-                        DeviceCard(
-                            device = device,
-                            category = pref?.categoryId?.let { categories[it] },
-                            room = pref?.roomId?.let { roomNames[it] },
-                            icon = pref?.icon ?: device.defaultIcon,
-                            onEdit = { onEditDevice(device) },
-                            onCommand = onCommand,
-                            onOpenEnergy = { onOpenEnergy(device.id) },
-                            onOpenSensor = onOpenSensor,
-                        )
+                        if (device.id.startsWith("nartis:")) {
+                            NartisMeterCard(
+                                device = device,
+                                reading = nartisReading,
+                                lastReadAt = nartisLastReadAt,
+                                history = nartisHistory,
+                                tariffs = tariffs,
+                                category = pref?.categoryId?.let { categories[it] },
+                                room = pref?.roomId?.let { roomNames[it] },
+                                busy = nartisBusy,
+                                onEdit = { onEditDevice(device) },
+                                onRead = onReadNartis,
+                                onHistory = onOpenNartis,
+                            )
+                        } else {
+                            DeviceCard(
+                                device = device,
+                                category = pref?.categoryId?.let { categories[it] },
+                                room = pref?.roomId?.let { roomNames[it] },
+                                icon = pref?.icon ?: device.defaultIcon,
+                                onEdit = { onEditDevice(device) },
+                                onCommand = onCommand,
+                                onOpenEnergy = { onOpenEnergy(device.id) },
+                                onOpenSensor = onOpenSensor,
+                            )
+                        }
                     }
                     }
                 }
