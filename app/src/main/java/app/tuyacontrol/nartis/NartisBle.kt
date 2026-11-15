@@ -50,11 +50,14 @@ class NartisBle(private val context: Context, private val log: (String) -> Unit)
     private var gatt: BluetoothGatt? = null
     private var rx: BluetoothGattCharacteristic? = null
     private var tx: BluetoothGattCharacteristic? = null
+    /** Сколько байт влезает в одну BLE-посылку (MTU − 3). */
+    private var mtu = 23
 
     private val incoming = LinkedBlockingQueue<ByteArray>()
     private val written = LinkedBlockingQueue<Boolean>()
     private var servicesReady: CompletableDeferred<Unit>? = null
     private var notifyReady: CompletableDeferred<Boolean>? = null
+    private var mtuReady: CompletableDeferred<Unit>? = null
 
     val isConnected: Boolean get() = gatt != null
 
@@ -118,9 +121,13 @@ class NartisBle(private val context: Context, private val log: (String) -> Unit)
 
         val services = CompletableDeferred<Unit>()
         servicesReady = services
+        val mtuSet = CompletableDeferred<Unit>()
+        mtuReady = mtuSet
         gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
 
         withTimeout(25_000) { services.await() }
+        // Дождёмся согласования размера пакета: кадр должен уйти одним куском
+        runCatching { withTimeout(3_000) { mtuSet.await() } }
 
         val g = gatt ?: throw IOException("нет соединения")
         if (device.bondState != BluetoothDevice.BOND_BONDED) {
@@ -178,14 +185,15 @@ class NartisBle(private val context: Context, private val log: (String) -> Unit)
         return out.toByteArray()
     }
 
-    /** Отправляет байты кусками по 20 — столько гарантированно проходит без настройки MTU. */
+    /** Отправляет байты кусками по размеру BLE-пакета: счётчик ждёт кадр целиком. */
     @SuppressLint("MissingPermission")
     fun write(data: ByteArray) {
         val g = gatt ?: throw IOException("нет соединения")
         val c = rx ?: throw IOException("нет характеристики записи")
+        val chunkSize = (mtu - 3).coerceAtLeast(20)
         var offset = 0
         while (offset < data.size) {
-            val n = min(20, data.size - offset)
+            val n = min(chunkSize, data.size - offset)
             val chunk = data.copyOfRange(offset, offset + n)
             written.clear()
             val sent = if (Build.VERSION.SDK_INT >= 33) {
@@ -204,7 +212,7 @@ class NartisBle(private val context: Context, private val log: (String) -> Unit)
             if (!ok) throw IOException("счётчик отклонил запись")
             offset += n
             // Небольшая пауза между кусками — счётчик успевает принять
-            if (offset < data.size) Thread.sleep(15)
+            if (offset < data.size) Thread.sleep(40)
         }
     }
 
@@ -241,6 +249,8 @@ class NartisBle(private val context: Context, private val log: (String) -> Unit)
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) this@NartisBle.mtu = mtu
+            mtuReady?.complete(Unit)
             log("Размер пакета Bluetooth: $mtu")
         }
 
