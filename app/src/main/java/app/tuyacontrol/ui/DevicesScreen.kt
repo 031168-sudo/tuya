@@ -68,9 +68,7 @@ import app.tuyacontrol.UiState
 import app.tuyacontrol.cloud.DpSpec
 import app.tuyacontrol.data.DpFormat
 import app.tuyacontrol.data.DpLabels
-import app.tuyacontrol.energy.Tariff
 import app.tuyacontrol.nartis.MeterReading
-import app.tuyacontrol.nartis.NartisSnapshot
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -100,14 +98,9 @@ fun DevicesScreen(
     emptyText: String = "В этой категории пока нет устройств",
     /** Строка под шапкой справа, под кнопками (например, «Настройка» комнаты); null — нет. */
     belowTopBar: (@Composable () -> Unit)? = null,
-    /** Счётчик НАРТИС: последние показания, история, тарифы и действия. */
+    /** Счётчик НАРТИС: последние показания и время чтения. */
     nartisReading: MeterReading? = null,
     nartisLastReadAt: Long = 0,
-    nartisHistory: List<NartisSnapshot> = emptyList(),
-    tariffs: List<Tariff> = emptyList(),
-    nartisBusy: Boolean = false,
-    onReadNartis: () -> Unit = {},
-    onOpenNartis: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     val categories = state.categories.associateBy { it.id }
@@ -227,14 +220,9 @@ fun DevicesScreen(
                                 device = device,
                                 reading = nartisReading,
                                 lastReadAt = nartisLastReadAt,
-                                history = nartisHistory,
-                                tariffs = tariffs,
                                 category = pref?.categoryId?.let { categories[it] },
                                 room = pref?.roomId?.let { roomNames[it] },
-                                busy = nartisBusy,
                                 onEdit = { onEditDevice(device) },
-                                onRead = onReadNartis,
-                                onHistory = onOpenNartis,
                             )
                         } else {
                             DeviceCard(

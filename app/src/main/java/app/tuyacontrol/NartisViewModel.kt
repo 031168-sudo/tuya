@@ -16,6 +16,9 @@ import app.tuyacontrol.nartis.NartisStore
 import app.tuyacontrol.nartis.NusBridge
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,6 +51,8 @@ class NartisViewModel(application: Application) : AndroidViewModel(application) 
     private val _state = MutableStateFlow(
         NartisUiState(
             serial = store.serial,
+            pin = store.pin,
+            password = store.password,
             // После перезапуска показываем последние сохранённые показания (без токов/напряжений)
             reading = readingFromSnapshot(initialHistory.lastOrNull()),
             lastReadAt = initialHistory.lastOrNull()?.time ?: 0L,
@@ -58,9 +63,16 @@ class NartisViewModel(application: Application) : AndroidViewModel(application) 
 
     private var ble: NartisBle? = null
 
-    fun setPin(value: String) = _state.update { it.copy(pin = value.filter { c -> c.isDigit() }.take(6)) }
+    fun setPin(value: String) {
+        val pin = value.filter { c -> c.isDigit() }.take(6)
+        store.pin = pin
+        _state.update { it.copy(pin = pin) }
+    }
 
-    fun setPassword(value: String) = _state.update { it.copy(password = value) }
+    fun setPassword(value: String) {
+        store.password = value
+        _state.update { it.copy(password = value) }
+    }
 
     fun setSerial(value: String) {
         val serial = value.filter { it.isDigit() }.take(12)
@@ -95,13 +107,44 @@ class NartisViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(scanning = false) }
     }
 
-    /** Автоматическое чтение при открытии экрана: не чаще раза в 2 минуты. */
+    private var autoJob: Job? = null
+
+    /** Пока приложение открыто — проверять раз в 30 минут, не устарели ли показания. */
+    fun startAutoRead() {
+        if (autoJob?.isActive == true) return
+        autoJob = viewModelScope.launch {
+            autoReadIfNeeded()
+            while (isActive) {
+                delay(30 * 60_000L)
+                reloadHistory()
+                autoReadIfNeeded()
+            }
+        }
+    }
+
+    fun stopAutoRead() {
+        autoJob?.cancel()
+        autoJob = null
+    }
+
+    /** Читать, если последние данные старше 30 минут. */
     fun autoReadIfNeeded() {
         val s = _state.value
         if (s.serial.isBlank() || s.busy) return
         if (!hasBluetoothPermission()) return
-        if (System.currentTimeMillis() - s.lastReadAt < 2 * 60_000L) return
+        if (System.currentTimeMillis() - s.lastReadAt < 30 * 60_000L) return
         read()
+    }
+
+    /** Подхватить показания, которые мог прочитать ночной фоновый работник. */
+    fun reloadHistory() {
+        val history = store.snapshots()
+        _state.update {
+            it.copy(
+                history = history,
+                lastReadAt = maxOf(it.lastReadAt, history.lastOrNull()?.time ?: 0L),
+            )
+        }
     }
 
     /** Ищет только свой счётчик по серийному номеру и читает его. */
@@ -115,7 +158,8 @@ class NartisViewModel(application: Application) : AndroidViewModel(application) 
         val s = _state.value
         val link = ble ?: NartisBle(getApplication(), ::log).also { ble = it }
         _state.update {
-            it.copy(busy = true, reading = null, status = "Ищу счётчик $serial…", log = emptyList())
+            // Старые показания не стираем: если чтение не удастся, останутся последние
+            it.copy(busy = true, status = "Ищу счётчик $serial…", log = emptyList())
         }
         viewModelScope.launch {
             var bridge: NusBridge? = null

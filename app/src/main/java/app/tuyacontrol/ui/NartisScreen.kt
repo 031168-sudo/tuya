@@ -51,7 +51,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import app.tuyacontrol.NartisUiState
-import app.tuyacontrol.energy.Tariff
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -73,7 +72,6 @@ fun NartisScreen(
     onPin: (String) -> Unit,
     onPassword: (String) -> Unit,
     onClearLog: () -> Unit,
-    tariffs: List<Tariff> = emptyList(),
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -207,20 +205,18 @@ fun NartisScreen(
 
             val reading = state.reading
             if (reading != null) {
-                val tariff = NartisPeriods.tariffFor(tariffs, LocalDate.now())
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Text("Показания", style = MaterialTheme.typography.titleSmall)
                             Spacer(Modifier.height(6.dp))
-                            NartisReadings(reading, tariff)
+                            NartisReadings(reading)
                         }
                     }
                 }
             }
 
             if (state.history.size > 1) {
-                item { HistoryPeriods(state, tariffs) }
                 item { SectionTitle("Последние чтения") }
                 val rows = state.history.takeLast(20).reversed()
                 rows.forEach { snap ->
@@ -272,37 +268,6 @@ fun NartisScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun HistoryPeriods(state: NartisUiState, tariffs: List<Tariff>) {
-    val today = LocalDate.now()
-    val zone = ZoneId.systemDefault()
-    val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
-    val monthStart = today.withDayOfMonth(1).atStartOfDay(zone).toInstant().toEpochMilli()
-    val tariff = NartisPeriods.tariffFor(tariffs, today)
-    val todayPeriod = NartisPeriods.period(state.history, todayStart, tariff)
-    val monthPeriod = NartisPeriods.period(state.history, monthStart, tariff)
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Расход и стоимость", style = MaterialTheme.typography.titleSmall)
-            Spacer(Modifier.height(6.dp))
-            PeriodSummary("Сегодня", todayPeriod)
-            PeriodSummary("С начала месяца", monthPeriod)
-        }
-    }
-}
-
-@Composable
-private fun PeriodSummary(name: String, period: MeterPeriod) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Text(
-            "%.3f кВт·ч · %.2f ₽".format(Locale("ru"), period.kwh, period.cost),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 

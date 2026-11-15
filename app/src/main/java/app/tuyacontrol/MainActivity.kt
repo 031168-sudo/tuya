@@ -50,6 +50,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         // Ежедневная фоновая загрузка истории (~3:00)
         HistorySyncWorker.schedule(this)
+        app.tuyacontrol.background.NartisReadWorker.schedule(this)
         // Замеры температуры конвекторов Rubetek (их облако истории не хранит)
         if (app.tuyacontrol.rubetek.RubetekStore(this).refreshToken != null) {
             app.tuyacontrol.rubetek.RubetekHistory.schedule(this)
@@ -74,12 +75,15 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         viewModel.setForeground(true)
+        // Счётчик НАРТИС: раз в 30 минут, пока приложение открыто
+        nartisViewModel.startAutoRead()
         // Будильник переключения конвекторов мог потеряться (обновление приложения) — заводим заново
         app.tuyacontrol.heating.HeatingAlarm.scheduleNext(this)
     }
 
     override fun onStop() {
         viewModel.setForeground(false)
+        nartisViewModel.stopAutoRead()
         super.onStop()
     }
 }
@@ -176,7 +180,6 @@ private fun App(
             onBack = { viewModel.back() },
             onOpenLog = { viewModel.open(Screen.Log) },
             onOpenLocal = { viewModel.open(Screen.Local) },
-            onOpenNartis = { viewModel.open(Screen.Nartis) },
             onOpenBackup = { viewModel.open(Screen.Backup) },
             onRubetekSendCode = viewModel::rubetekSendCode,
             onRubetekSignIn = viewModel::rubetekSignIn,
@@ -200,7 +203,6 @@ private fun App(
             onPin = nartisViewModel::setPin,
             onPassword = nartisViewModel::setPassword,
             onClearLog = nartisViewModel::clearLog,
-            tariffs = energy.tariffs,
         )
         Screen.Local -> LocalScreen(
             state = state,
@@ -224,11 +226,6 @@ private fun App(
             devices = displayDevices,
             nartisReading = nartis.reading,
             nartisLastReadAt = nartis.lastReadAt,
-            nartisHistory = nartis.history,
-            tariffs = energy.tariffs,
-            nartisBusy = nartis.busy,
-            onReadNartis = nartisViewModel::read,
-            onOpenNartis = { viewModel.open(Screen.Nartis) },
         )
         Screen.Categories -> CategoriesScreen(
             categories = state.categories,
@@ -276,11 +273,6 @@ private fun App(
                 roomNames = roomNameMap,
                 nartisReading = nartis.reading,
                 nartisLastReadAt = nartis.lastReadAt,
-                nartisHistory = nartis.history,
-                tariffs = energy.tariffs,
-                nartisBusy = nartis.busy,
-                onReadNartis = nartisViewModel::read,
-                onOpenNartis = { viewModel.open(Screen.Nartis) },
             )
         }
         Screen.Heating -> HeatingScreen(
@@ -347,11 +339,6 @@ private fun App(
                 roomNames = roomNameMap,
                 nartisReading = nartis.reading,
                 nartisLastReadAt = nartis.lastReadAt,
-                nartisHistory = nartis.history,
-                tariffs = energy.tariffs,
-                nartisBusy = nartis.busy,
-                onReadNartis = nartisViewModel::read,
-                onOpenNartis = { viewModel.open(Screen.Nartis) },
                 emptyText = "В этой комнате пока нет устройств. Комната выбирается в настройках устройства (⋮ на карточке).",
                 belowTopBar = {
                     androidx.compose.material3.TextButton(onClick = { editRoom = true }) {

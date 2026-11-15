@@ -40,6 +40,14 @@ class NartisStore(context: Context) {
         get() = prefs.getString(KEY_SERIAL, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_SERIAL, value.trim()).apply()
 
+    var pin: String
+        get() = prefs.getString(KEY_PIN, "123456").orEmpty()
+        set(value) = prefs.edit().putString(KEY_PIN, value.trim()).apply()
+
+    var password: String
+        get() = prefs.getString(KEY_PASSWORD, "00000001").orEmpty()
+        set(value) = prefs.edit().putString(KEY_PASSWORD, value.trim()).apply()
+
     fun snapshots(): List<NartisSnapshot> = try {
         val arr = JSONArray(prefs.getString(KEY_HISTORY, "[]"))
         (0 until arr.length()).mapNotNull { i ->
@@ -72,5 +80,7 @@ class NartisStore(context: Context) {
     private companion object {
         const val KEY_SERIAL = "serial"
         const val KEY_HISTORY = "history"
+        const val KEY_PIN = "pin"
+        const val KEY_PASSWORD = "password"
     }
 }
