@@ -104,7 +104,6 @@ class Weather(context: Context) {
         const val FALLBACK_TEMP = -5.0
         const val CACHE_MS = 30 * 60 * 1000L
         val BASE_URLS = listOf(
-            "https://diag.alfanomy.ru/weather",
             "https://api.open-meteo.com/v1/forecast",
         )
     }

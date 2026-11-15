@@ -99,7 +99,7 @@ class NartisViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun log(line: String) {
         _state.update { s ->
-            s.copy(log = (s.log + line).takeLast(300))
+            s.copy(log = (s.log + line).takeLast(1000))
         }
     }
 

@@ -1,8 +1,10 @@
 package app.tuyacontrol.ui
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -71,6 +73,7 @@ fun NartisScreen(
     onClearLog: () -> Unit,
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val permissions = remember {
         if (Build.VERSION.SDK_INT >= 31) {
             arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
@@ -101,6 +104,22 @@ fun NartisScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                    }
+                },
+                actions = {
+                    if (state.log.isNotEmpty()) {
+                        TextButton(onClick = {
+                            clipboard.setText(AnnotatedString(state.log.joinToString("\n")))
+                            Toast.makeText(context, "Журнал скопирован", Toast.LENGTH_SHORT).show()
+                        }) { Text("Копировать") }
+                        TextButton(onClick = {
+                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "Журнал НАРТИС")
+                                putExtra(Intent.EXTRA_TEXT, state.log.joinToString("\n"))
+                            }
+                            context.startActivity(Intent.createChooser(intent, "Передать журнал"))
+                        }) { Text("Поделиться") }
                     }
                 },
             )
@@ -197,9 +216,9 @@ fun NartisScreen(
                 item {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Журнал", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                        val clipboard = LocalClipboardManager.current
                         TextButton(onClick = {
                             clipboard.setText(AnnotatedString(state.log.joinToString("\n")))
+                            Toast.makeText(context, "Журнал скопирован", Toast.LENGTH_SHORT).show()
                         }) { Text("Копировать") }
                         TextButton(onClick = onClearLog) { Text("Очистить") }
                     }
