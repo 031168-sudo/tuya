@@ -38,24 +38,29 @@ object NartisMeter {
     )
 
     fun read(port: Int, password: String, log: (String) -> Unit): MeterReading {
-        // У НАРТИС-И300 адрес счётчика — два байта: логический 1, физический 17.
-        // Однобайтовый адрес 1 оставлен как запасной вариант.
-        val twoByte = MeterAddress.hdlcServer(1, 17)
-        val oneByte = MeterAddress.hdlcServer(1)
-        // Пароль на чтение у НАРТИС общий для всех счётчиков; в документации
-        // и рабочих конфигурациях встречаются 00000001 и 00002080.
-        val passwords = if (password.isNotBlank()) listOf(password) else listOf("00000001", "00002080")
+        // У НАРТИС-И300 встречаются оба варианта адреса: короткий 1 и два байта 1/17.
+        // Рабочий пример BLE для И300 использует server_address 1, клиент 32 и пароль 00002080.
+        val servers = listOf(
+            MeterAddress.hdlcServer(1) to "1",
+            MeterAddress.hdlcServer(1, 17) to "1/17",
+        )
+        val passwords = if (password.isNotBlank()) {
+            listOf(password)
+        } else {
+            listOf("00002080", "00000001")
+        }
         val attempts = buildList {
-            passwords.forEach { pwd ->
-                add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.LOW, pwd))
+            // Пароль на чтение: сначала рабочий пример И300, потом общий 00000001
+            servers.forEach { (server, label) ->
+                passwords.forEach { pwd ->
+                    add(Attempt(server, label, 32, AarqApdu.AuthenticationLevel.LOW, pwd))
+                }
             }
-            add(Attempt(twoByte, "1/17", 16, AarqApdu.AuthenticationLevel.NONE, null))
-            add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.NONE, null))
-            // Управляющий клиент 1 — встречается у НАРТИС в заводских настройках
-            add(Attempt(twoByte, "1/17", 1, AarqApdu.AuthenticationLevel.NONE, null))
-            add(Attempt(twoByte, "1/17", 1, AarqApdu.AuthenticationLevel.LOW, "00000001"))
-            add(Attempt(oneByte, "1", 16, AarqApdu.AuthenticationLevel.NONE, null))
-            add(Attempt(oneByte, "1", 32, AarqApdu.AuthenticationLevel.NONE, null))
+            // Публичный доступ без пароля
+            servers.forEach { (server, label) ->
+                add(Attempt(server, label, 32, AarqApdu.AuthenticationLevel.NONE, null))
+                add(Attempt(server, label, 16, AarqApdu.AuthenticationLevel.NONE, null))
+            }
         }
         var last: Exception? = null
         for (attempt in attempts) {
