@@ -29,9 +29,35 @@ data class MeterReading(
  */
 object NartisMeter {
 
-    /** Пароль чтения по умолчанию: если пусто — пробуем без пароля (публичный клиент). */
+    private data class Attempt(
+        val clientAddress: Int,
+        val level: AarqApdu.AuthenticationLevel,
+        val password: String?,
+    )
+
     fun read(port: Int, password: String, log: (String) -> Unit): MeterReading {
-        val withPassword = password.isNotBlank()
+        val attempts = buildList {
+            if (password.isNotBlank()) add(Attempt(32, AarqApdu.AuthenticationLevel.LOW, password))
+            add(Attempt(16, AarqApdu.AuthenticationLevel.NONE, null))
+            // У НАРТИС уровень чтения — 32; без пароля он тоже может ответить
+            add(Attempt(32, AarqApdu.AuthenticationLevel.NONE, null))
+        }
+        var last: Exception? = null
+        for (attempt in attempts) {
+            try {
+                val how = if (attempt.password != null) "с паролем" else "без пароля"
+                log("Попытка: клиент ${attempt.clientAddress}, $how")
+                return readOnce(port, attempt, log)
+            } catch (e: Exception) {
+                last = e
+                log("Не вышло (клиент ${attempt.clientAddress}): ${e.message ?: e.javaClass.simpleName}")
+                Thread.sleep(400)
+            }
+        }
+        throw last ?: IllegalStateException("не удалось открыть связь")
+    }
+
+    private fun readOnce(port: Int, attempt: Attempt, log: (String) -> Unit): MeterReading {
         val config = CosemClientConfig.builder()
             .transport(
                 TransportConfig.tcp("127.0.0.1", port)
@@ -39,11 +65,8 @@ object NartisMeter {
                     .withConnectTimeoutMs(5_000),
             )
             .serverAddress(MeterAddress.hdlcServer(1))
-            .clientAddress(MeterAddress.hdlcClient(if (withPassword) 32 else 16))
-            .authentication(
-                if (withPassword) AarqApdu.AuthenticationLevel.LOW else AarqApdu.AuthenticationLevel.NONE,
-                if (withPassword) password.toByteArray() else null,
-            )
+            .clientAddress(MeterAddress.hdlcClient(attempt.clientAddress))
+            .authentication(attempt.level, attempt.password?.toByteArray())
             .maxReceivePduSize(512)
             .timeoutMs(6_000)
             .maxRetries(1)
@@ -51,7 +74,7 @@ object NartisMeter {
 
         CosemClient(config).use { client ->
             client.open()
-            log(if (withPassword) "Связь со счётчиком открыта (с паролем)" else "Связь со счётчиком открыта (без пароля)")
+            log("Связь со счётчиком открыта (клиент ${attempt.clientAddress})")
 
             fun energy(obis: String): Double? = try {
                 val register = client.getRegister(ObisCode.of(obis))
@@ -89,7 +112,17 @@ object NartisMeter {
             if (total == null && t1 == null && t2 == null && t3 == null && power == null) {
                 throw IllegalStateException("счётчик отвечает, но показания не прочитаны (см. журнал)")
             }
-            return MeterReading(total, t1, t2, t3, power, voltage, current, serial, withPassword)
+            return MeterReading(
+                totalKwh = total,
+                t1Kwh = t1,
+                t2Kwh = t2,
+                t3Kwh = t3,
+                powerW = power,
+                voltageV = voltage,
+                currentA = current,
+                serial = serial,
+                withPassword = attempt.password != null,
+            )
         }
     }
 }

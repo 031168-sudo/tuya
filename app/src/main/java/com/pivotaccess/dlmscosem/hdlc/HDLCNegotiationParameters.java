@@ -21,7 +21,7 @@ import java.io.ByteArrayOutputStream;
  */
 public final class HDLCNegotiationParameters {
 
-    public static final int DEFAULT_MAX_INFO_LENGTH = 128;
+    public static final int DEFAULT_MAX_INFO_LENGTH = 2000;
     public static final int DEFAULT_WINDOW_SIZE     = 1;
     public static final int MAX_INFO_LENGTH_LIMIT   = 2030;
     public static final int MAX_WINDOW_SIZE_LIMIT   = 7;
@@ -70,11 +70,13 @@ public final class HDLCNegotiationParameters {
     // -------------------------------------------------------------------------
 
     public byte[] encode() {
-        ByteArrayOutputStream params = new ByteArrayOutputStream(16);
-        params.write(TAG_WINDOW_TX);  params.write(0x01); params.write(windowSizeTransmit & 0xFF);
-        params.write(TAG_MAX_INFO_TX); params.write(0x04); writeInt32(params, maxInfoLengthTransmit);
-        params.write(TAG_MAX_INFO_RX); params.write(0x04); writeInt32(params, maxInfoLengthReceive);
-        params.write(TAG_WINDOW_RX);  params.write(0x01); params.write(windowSizeReceive & 0xFF);
+        // Порядок и длины как в стандартных кадрах НАРТИС:
+        // 05 02 <maxInfoTx> 06 02 <maxInfoRx> 07 04 <windowTx> 08 04 <windowRx>
+        ByteArrayOutputStream params = new ByteArrayOutputStream(20);
+        params.write(TAG_MAX_INFO_TX); params.write(0x02); writeInt16(params, maxInfoLengthTransmit);
+        params.write(TAG_MAX_INFO_RX); params.write(0x02); writeInt16(params, maxInfoLengthReceive);
+        params.write(TAG_WINDOW_TX);   params.write(0x04); writeInt32(params, windowSizeTransmit);
+        params.write(TAG_WINDOW_RX);   params.write(0x04); writeInt32(params, windowSizeReceive);
         byte[] inner = params.toByteArray();
 
         ByteArrayOutputStream out = new ByteArrayOutputStream(inner.length + 3);
@@ -139,6 +141,11 @@ public final class HDLCNegotiationParameters {
     public String toString() {
         return String.format("HDLCNegotiationParameters{maxInfoTx=%d, maxInfoRx=%d, windowTx=%d, windowRx=%d}",
                 maxInfoLengthTransmit, maxInfoLengthReceive, windowSizeTransmit, windowSizeReceive);
+    }
+
+    private static void writeInt16(ByteArrayOutputStream out, int value) {
+        out.write((value >> 8) & 0xFF);
+        out.write(value & 0xFF);
     }
 
     private static void writeInt32(ByteArrayOutputStream out, int value) {

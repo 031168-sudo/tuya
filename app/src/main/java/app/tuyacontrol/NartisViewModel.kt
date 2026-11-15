@@ -78,6 +78,8 @@ class NartisViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 withContext(Dispatchers.IO) {
                     link.connect(address, s.pin)
+                    // Счётчику нужно немного времени после включения уведомлений
+                    kotlinx.coroutines.delay(500)
                     bridge = NusBridge(link, ::log).also { it.start() }
                     val reading = NartisMeter.read(bridge!!.port, s.password, ::log)
                     _state.update { it.copy(reading = reading, status = "Готово") }

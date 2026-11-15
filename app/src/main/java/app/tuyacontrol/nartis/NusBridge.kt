@@ -65,8 +65,8 @@ class NusBridge(private val ble: NartisBle, private val log: (String) -> Unit) :
                 val n = input.read(buffer)
                 if (n < 0) break
                 val data = buffer.copyOf(n)
-                // Содержимое запросов не пишем: в первом запросе (AARQ) идёт пароль
-                log("→ ${data.size} Б")
+                // Содержимое длинных запросов не пишем: в AARQ идёт пароль
+                log(if (data.size <= 40) "→ ${hex(data)}" else "→ ${data.size} Б")
                 ble.write(data)
             }
         } catch (e: Exception) {
