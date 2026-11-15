@@ -180,6 +180,7 @@ private fun App(
             onBack = { viewModel.back() },
             onOpenLog = { viewModel.open(Screen.Log) },
             onOpenLocal = { viewModel.open(Screen.Local) },
+            onOpenNartis = { viewModel.open(Screen.Nartis) },
             onOpenBackup = { viewModel.open(Screen.Backup) },
             onRubetekSendCode = viewModel::rubetekSendCode,
             onRubetekSignIn = viewModel::rubetekSignIn,
