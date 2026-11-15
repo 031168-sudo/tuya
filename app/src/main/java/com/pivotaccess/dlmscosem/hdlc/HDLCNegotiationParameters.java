@@ -21,7 +21,7 @@ import java.io.ByteArrayOutputStream;
  */
 public final class HDLCNegotiationParameters {
 
-    public static final int DEFAULT_MAX_INFO_LENGTH = 2000;
+    public static final int DEFAULT_MAX_INFO_LENGTH = 2030;
     public static final int DEFAULT_WINDOW_SIZE     = 1;
     public static final int MAX_INFO_LENGTH_LIMIT   = 2030;
     public static final int MAX_WINDOW_SIZE_LIMIT   = 7;

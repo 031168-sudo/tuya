@@ -30,23 +30,32 @@ data class MeterReading(
 object NartisMeter {
 
     private data class Attempt(
+        val server: MeterAddress,
+        val serverLabel: String,
         val clientAddress: Int,
         val level: AarqApdu.AuthenticationLevel,
         val password: String?,
     )
 
     fun read(port: Int, password: String, log: (String) -> Unit): MeterReading {
+        // У НАРТИС-И300 адрес счётчика — два байта: логический 1, физический 17.
+        // Однобайтовый адрес 1 оставлен как запасной вариант.
+        val twoByte = MeterAddress.hdlcServer(1, 17)
+        val oneByte = MeterAddress.hdlcServer(1)
         val attempts = buildList {
-            if (password.isNotBlank()) add(Attempt(32, AarqApdu.AuthenticationLevel.LOW, password))
-            add(Attempt(16, AarqApdu.AuthenticationLevel.NONE, null))
-            // У НАРТИС уровень чтения — 32; без пароля он тоже может ответить
-            add(Attempt(32, AarqApdu.AuthenticationLevel.NONE, null))
+            if (password.isNotBlank()) {
+                add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.LOW, password))
+            }
+            add(Attempt(twoByte, "1/17", 16, AarqApdu.AuthenticationLevel.NONE, null))
+            add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.NONE, null))
+            add(Attempt(oneByte, "1", 16, AarqApdu.AuthenticationLevel.NONE, null))
+            add(Attempt(oneByte, "1", 32, AarqApdu.AuthenticationLevel.NONE, null))
         }
         var last: Exception? = null
         for (attempt in attempts) {
             try {
                 val how = if (attempt.password != null) "с паролем" else "без пароля"
-                log("Попытка: клиент ${attempt.clientAddress}, $how")
+                log("Попытка: адрес ${attempt.serverLabel}, клиент ${attempt.clientAddress}, $how")
                 return readOnce(port, attempt, log)
             } catch (e: Exception) {
                 last = e
@@ -64,7 +73,7 @@ object NartisMeter {
                     .withReadTimeoutMs(6_000)
                     .withConnectTimeoutMs(5_000),
             )
-            .serverAddress(MeterAddress.hdlcServer(1))
+            .serverAddress(attempt.server)
             .clientAddress(MeterAddress.hdlcClient(attempt.clientAddress))
             .authentication(attempt.level, attempt.password?.toByteArray())
             .maxReceivePduSize(512)
