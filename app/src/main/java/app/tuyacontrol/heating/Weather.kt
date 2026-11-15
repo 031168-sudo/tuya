@@ -19,10 +19,24 @@ class Weather(context: Context) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            chain.proceed(
+                chain.request().newBuilder()
+                    .header("User-Agent", "MoyDom/1.0 (Android; +https://github.com/031168-sudo/tuya)")
+                    .build(),
+            )
+        }
         .build()
 
     /** 48 значений с 00:00 сегодняшнего дня; при ошибке — последний сохранённый прогноз. */
     suspend fun forecast(lat: Double, lon: Double): Forecast = withContext(Dispatchers.IO) {
+        val today = LocalDate.now()
+        // Свежий прогноз не чаще раза в полчаса: меньше запросов и не упираемся в лимит Open-Meteo
+        val saved = cached()
+        val age = System.currentTimeMillis() - prefs.getLong("fetched_at", 0L)
+        if (saved != null && prefs.getString("day", null) == today.toString() && age in 0 until CACHE_MS) {
+            return@withContext Forecast(saved.temps, fresh = true, yesterday = saved.yesterday)
+        }
         try {
             val url = String.format(
                 Locale.US,
@@ -41,7 +55,8 @@ class Weather(context: Context) {
             prefs.edit().putString("yesterday", JSONArray(yesterday.map { if (it.isNaN()) JSONObject.NULL else it }).toString()).apply()
             prefs.edit()
                 .putString("temps", JSONArray(temps.toList()).toString())
-                .putString("day", LocalDate.now().toString())
+                .putString("day", today.toString())
+                .putLong("fetched_at", System.currentTimeMillis())
                 .apply()
             Forecast(temps, fresh = true, yesterday = yesterday)
         } catch (e: Exception) {
@@ -74,5 +89,6 @@ class Weather(context: Context) {
 
     private companion object {
         const val FALLBACK_TEMP = -5.0
+        const val CACHE_MS = 30 * 60 * 1000L
     }
 }

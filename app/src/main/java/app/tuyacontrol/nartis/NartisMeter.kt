@@ -42,9 +42,12 @@ object NartisMeter {
         // Однобайтовый адрес 1 оставлен как запасной вариант.
         val twoByte = MeterAddress.hdlcServer(1, 17)
         val oneByte = MeterAddress.hdlcServer(1)
+        // Пароль на чтение у НАРТИС общий для всех счётчиков; в документации
+        // и рабочих конфигурациях встречаются 00000001 и 00002080.
+        val passwords = if (password.isNotBlank()) listOf(password) else listOf("00000001", "00002080")
         val attempts = buildList {
-            if (password.isNotBlank()) {
-                add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.LOW, password))
+            passwords.forEach { pwd ->
+                add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.LOW, pwd))
             }
             add(Attempt(twoByte, "1/17", 16, AarqApdu.AuthenticationLevel.NONE, null))
             add(Attempt(twoByte, "1/17", 32, AarqApdu.AuthenticationLevel.NONE, null))
