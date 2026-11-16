@@ -131,6 +131,7 @@ fun HeatingScreen(
     onInTotal: (String, Boolean) -> Unit,
     onMessageShown: () -> Unit,
     bottomBar: @Composable () -> Unit,
+    onOpenHeat: () -> Unit = {},
 ) {
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.message) {
@@ -147,6 +148,7 @@ fun HeatingScreen(
             TopAppBar(
                 title = { Text(if (state.duty) "Дежурство" else "Отопление") },
                 actions = {
+                    TextButton(onClick = onOpenHeat) { Text("Тепло") }
                     IconButton(onClick = onRecompute) { Icon(Icons.Filled.Refresh, contentDescription = "Пересчитать") }
                 },
             )

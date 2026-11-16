@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.time.LocalTime
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -47,19 +48,64 @@ class WeatherNow(context: Context) {
                 min = daily?.optJSONArray("temperature_2m_min")?.optDouble(0)?.takeUnless { it.isNaN() },
                 time = System.currentTimeMillis(),
             )
-            prefs.edit()
-                .putString("key", key)
-                .putInt("code", now.code)
-                .putBoolean("day", now.isDay)
-                .putString("max", now.max?.toString())
-                .putString("min", now.min?.toString())
-                .putLong("time", now.time)
-                .apply()
+            save(key, now)
             now
         } catch (e: Exception) {
-            AppLog.e("Погода сейчас не получена", e)
-            saved
+            val fallback = runCatching { wttrNow(lat, lon) }.getOrNull()
+            if (fallback != null) {
+                save(key, fallback)
+                fallback
+            } else {
+                AppLog.e("Погода сейчас не получена (Open-Meteo и wttr.in)", e)
+                saved
+            }
         }
+    }
+
+    /** Запасной источник wttr.in: текущая погода, макс/мин на сегодня. */
+    private fun wttrNow(lat: Double, lon: Double): Now {
+        val url = String.format(Locale.US, "https://wttr.in/%.4f,%.4f?format=j1&lang=ru", lat, lon)
+        val root = JSONObject(get(url))
+        val cur = root.getJSONArray("current_condition").getJSONObject(0)
+        val day = root.getJSONArray("weather").getJSONObject(0)
+        val hour = LocalTime.now().hour
+        return Now(
+            code = wwoToWmo(cur.optInt("weatherCode", -1)),
+            isDay = hour in 6..18,
+            max = day.optString("maxtempC").toDoubleOrNull(),
+            min = day.optString("mintempC").toDoubleOrNull(),
+            time = System.currentTimeMillis(),
+        )
+    }
+
+    private fun save(key: String, now: Now) {
+        prefs.edit()
+            .putString("key", key)
+            .putInt("code", now.code)
+            .putBoolean("day", now.isDay)
+            .putString("max", now.max?.toString())
+            .putString("min", now.min?.toString())
+            .putLong("time", now.time)
+            .apply()
+    }
+
+    private fun get(url: String): String {
+        http.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) throw IllegalStateException("HTTP ${r.code} — $url")
+            return r.body?.string().orEmpty()
+        }
+    }
+
+    /** Коды wttr.in (WWO) → коды WMO, по которым рисуется значок. */
+    private fun wwoToWmo(code: Int): Int = when (code) {
+        113 -> 0
+        116 -> 1
+        119, 122 -> 3
+        143, 248, 260 -> 45
+        176, 263, 266, 293, 296, 299, 302, 305, 308, 353, 356, 359 -> 61
+        179, 182, 185, 227, 230, 317, 320, 323, 326, 329, 332, 335, 338, 350, 368, 371, 374, 377, 392, 395 -> 71
+        200, 386, 389 -> 95
+        else -> -1
     }
 
     /** Сначала свой сервер (телефон в VPN не всегда видит Open-Meteo), потом напрямую. */

@@ -34,6 +34,7 @@ import app.tuyacontrol.ui.SetupScreen
 import app.tuyacontrol.ui.LocalScreen
 import app.tuyacontrol.nartis.nartisDeviceUi
 import app.tuyacontrol.ui.NartisScreen
+import app.tuyacontrol.ui.HeatScreen
 import app.tuyacontrol.ui.HeatingScreen
 
 class MainActivity : ComponentActivity() {
@@ -292,6 +293,7 @@ private fun App(
             onInTotal = heatingViewModel::setInTotal,
             onMessageShown = heatingViewModel::messageShown,
             bottomBar = { bottomBar(2) },
+            onOpenHeat = { viewModel.open(Screen.Heat) },
         )
         // «Дежурство»: тот же экран и расчёт, свои зоны
         Screen.Duty -> HeatingScreen(
@@ -309,6 +311,13 @@ private fun App(
             onInTotal = dutyViewModel::setInTotal,
             onMessageShown = dutyViewModel::messageShown,
             bottomBar = { bottomBar(4) },
+            onOpenHeat = { viewModel.open(Screen.Heat) },
+        )
+        Screen.Heat -> HeatScreen(
+            state = heating,
+            devicePrefs = state.devicePrefs,
+            roomNames = roomNames,
+            onBack = { viewModel.back() },
         )
         Screen.Map -> app.tuyacontrol.ui.MapScreen(
             devices = state.devices,

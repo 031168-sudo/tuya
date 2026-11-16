@@ -38,7 +38,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Duty, Map, Commands, RoomDevices, Backup, Nartis }
+enum class Screen { Setup, Devices, Log, Energy, Tariffs, Sensor, Categories, CategoryDevices, Local, Heating, Duty, Map, Heat, Commands, RoomDevices, Backup, Nartis }
 
 data class DeviceUi(
     val id: String,
@@ -481,6 +481,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else if ((s.screen == Screen.Sensor || s.screen == Screen.Energy) && s.returnTo != null) {
             // Обратно туда, откуда открыли: в список устройств или в ту же категорию
             _state.update { it.copy(screen = s.returnTo, returnTo = null) }; true
+        } else if (s.screen == Screen.Heat) {
+            open(Screen.Heating); true
         } else if (s.screen == Screen.RoomDevices) {
             open(Screen.Map); true
         } else if (s.screen == Screen.Backup) {
