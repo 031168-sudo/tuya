@@ -14,16 +14,15 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
- * Прогноз уличной температуры по часам на сегодня и завтра.
- * Сначала Open-Meteo, если он недоступен (например, у оператора нет маршрута) — wttr.in.
+ * Прогноз уличной температуры по часам на сегодня и завтра — wttr.in.
+ * Open-Meteo больше не используем: с мобильной сети он не открывается.
  */
 class Weather(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences("weather", Context.MODE_PRIVATE)
     private val http = OkHttpClient.Builder()
-        // Короткий таймаут: если Open-Meteo не отвечает, быстрее перейти к запасному источнику
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(7, TimeUnit.SECONDS)
+        .connectTimeout(8, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
         .addInterceptor { chain ->
             chain.proceed(
                 chain.request().newBuilder()
@@ -40,36 +39,19 @@ class Weather(context: Context) {
         val saved = cached()
         val age = System.currentTimeMillis() - prefs.getLong("fetched_at", 0L)
         if (saved != null && prefs.getString("day", null) == today.toString() && age in 0 until CACHE_MS) {
-            return@withContext Forecast(saved.temps, fresh = true, yesterday = saved.yesterday)
+            return@withContext Forecast(saved.temps, fresh = true)
         }
         try {
-            val openMeteo = runCatching { openMeteo(lat, lon) }.getOrNull()
-            val temps = openMeteo?.first ?: wttr(lat, lon)
-            val yesterday = openMeteo?.second ?: DoubleArray(24) { Double.NaN }
-            save(temps, yesterday)
-            Forecast(temps, fresh = true, yesterday = yesterday)
+            val temps = wttr(lat, lon)
+            save(temps)
+            Forecast(temps, fresh = true)
         } catch (e: Exception) {
-            AppLog.e("Прогноз погоды не получен (Open-Meteo и wttr.in)", e)
+            AppLog.e("Прогноз погоды не получен (wttr.in)", e)
             cached() ?: Forecast(DoubleArray(48) { FALLBACK_TEMP }, fresh = false)
         }
     }
 
-    private fun openMeteo(lat: Double, lon: Double): Pair<DoubleArray, DoubleArray> {
-        val query = String.format(
-            Locale.US,
-            "?latitude=%.4f&longitude=%.4f" +
-                "&hourly=temperature_2m&past_days=1&forecast_days=2&timezone=auto",
-            lat, lon,
-        )
-        val text = get("https://api.open-meteo.com/v1/forecast$query")
-        val arr = JSONObject(text).getJSONObject("hourly").getJSONArray("temperature_2m")
-        // past_days=1: первые 24 часа — вчера, дальше сегодня и завтра
-        val yesterday = DoubleArray(24) { i -> arr.optDouble(i, Double.NaN) }
-        val temps = DoubleArray(48) { i -> arr.optDouble((24 + i).coerceAtMost(arr.length() - 1), 0.0) }
-        return temps to yesterday
-    }
-
-    /** wttr.in отдаёт температуру раз в 3 часа; раскладываем на часы. */
+    /** wttr.in отдаёт температуру раз в 3 часа; раскладываем на часы линейно. */
     private fun wttr(lat: Double, lon: Double): DoubleArray {
         val url = String.format(Locale.US, "https://wttr.in/%.4f,%.4f?format=j1&lang=ru", lat, lon)
         val root = JSONObject(get(url))
@@ -90,14 +72,26 @@ class Weather(context: Context) {
                 if (index in out.indices) out[index] = t
             }
         }
-        // Заполняем пропуски: сначала вперёд, потом назад
-        var last = out.firstOrNull { !it.isNaN() } ?: throw IllegalStateException("wttr.in: нет температуры")
+        if (out.all { it.isNaN() }) throw IllegalStateException("wttr.in: нет температуры")
+
+        // Линейно заполняем пропуски между известными точками
+        var prev = -1
         for (i in out.indices) {
-            if (out[i].isNaN()) out[i] = last else last = out[i]
+            if (out[i].isNaN()) continue
+            if (prev >= 0 && i - prev > 1) {
+                val a = out[prev]
+                val b = out[i]
+                for (k in prev + 1 until i) {
+                    out[k] = a + (b - a) * (k - prev) / (i - prev)
+                }
+            }
+            prev = i
         }
-        last = out.last()
-        for (i in out.indices.reversed()) {
-            if (out[i].isNaN()) out[i] = last else last = out[i]
+        // Края — крайними значениями
+        if (prev >= 0) {
+            for (i in 0 until out.indexOfFirst { !it.isNaN() }) out[i] = out[prev]
+            val last = out.last { !it.isNaN() }
+            for (i in out.indices.reversed()) if (out[i].isNaN()) out[i] = last else break
         }
         return out
     }
@@ -109,10 +103,9 @@ class Weather(context: Context) {
         }
     }
 
-    private fun save(temps: DoubleArray, yesterday: DoubleArray) {
+    private fun save(temps: DoubleArray) {
         prefs.edit()
             .putString("temps", JSONArray(temps.toList()).toString())
-            .putString("yesterday", JSONArray(yesterday.map { if (it.isNaN()) JSONObject.NULL else it }).toString())
             .putString("day", LocalDate.now().toString())
             .putLong("fetched_at", System.currentTimeMillis())
             .apply()
@@ -125,15 +118,9 @@ class Weather(context: Context) {
         val all = DoubleArray(arr.length()) { arr.optDouble(it, FALLBACK_TEMP) }
         // Вчерашний прогноз: берём его «завтра» как сегодня
         val shift = if (day != null && day.plusDays(1) == LocalDate.now()) 24 else 0
-        val yesterdayText = prefs.getString("yesterday", null)
-        val yesterday = yesterdayText?.let { t ->
-            val ya = JSONArray(t)
-            DoubleArray(24) { i -> ya.optDouble(i, Double.NaN) }
-        } ?: DoubleArray(24) { Double.NaN }
         return Forecast(
             DoubleArray(48) { all.getOrElse(it + shift) { all.lastOrNull() ?: FALLBACK_TEMP } },
             fresh = false,
-            yesterday = yesterday,
         )
     }
 
