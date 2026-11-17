@@ -2,6 +2,7 @@ package app.tuyacontrol.heating
 
 import android.content.Context
 import app.tuyacontrol.data.AppLog
+import app.tuyacontrol.data.GismeteoClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -14,12 +15,14 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
- * Прогноз уличной температуры по часам на сегодня и завтра — wttr.in.
+ * Прогноз уличной температуры по часам на сегодня и завтра.
+ * Основной источник — Gismeteo (работает из России), запасной — wttr.in.
  * Open-Meteo больше не используем: с мобильной сети он не открывается.
  */
 class Weather(context: Context) {
 
     private val prefs = context.applicationContext.getSharedPreferences("weather", Context.MODE_PRIVATE)
+    private val gismeteo = GismeteoClient(context)
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
@@ -42,12 +45,18 @@ class Weather(context: Context) {
             return@withContext Forecast(saved.temps, fresh = true)
         }
         try {
-            val temps = wttr(lat, lon)
+            val temps = gismeteo.forecast(lat, lon)
             save(temps)
             Forecast(temps, fresh = true)
         } catch (e: Exception) {
-            AppLog.e("Прогноз погоды не получен (wttr.in)", e)
-            cached() ?: Forecast(DoubleArray(48) { FALLBACK_TEMP }, fresh = false)
+            try {
+                val temps = wttr(lat, lon)
+                save(temps)
+                Forecast(temps, fresh = true)
+            } catch (e2: Exception) {
+                AppLog.e("Прогноз погоды не получен (Gismeteo и wttr.in)", e2)
+                cached() ?: Forecast(DoubleArray(48) { FALLBACK_TEMP }, fresh = false)
+            }
         }
     }
 

@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Погода «сейчас» для экрана «Карта»: код погоды (для пиктограммы) и мин/макс на сегодня.
- * Источник — wttr.in (Open-Meteo с мобильной сети не открывается); ответ хранится 30 минут.
+ * Основной источник — Gismeteo, запасной — wttr.in; ответ хранится 30 минут.
  */
 class WeatherNow(context: Context) {
 
@@ -20,6 +20,7 @@ class WeatherNow(context: Context) {
     data class Now(val code: Int, val isDay: Boolean, val max: Double?, val min: Double?, val time: Long)
 
     private val prefs = context.applicationContext.getSharedPreferences("weather_now", Context.MODE_PRIVATE)
+    private val gismeteo = GismeteoClient(context)
     private val http = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
@@ -30,12 +31,19 @@ class WeatherNow(context: Context) {
         val saved = cached(key)
         if (saved != null && System.currentTimeMillis() - saved.time < MAX_AGE) return@withContext saved
         try {
-            val now = wttrNow(lat, lon)
+            val g = gismeteo.now(lat, lon)
+            val now = Now(g.code, g.isDay, g.max, g.min, System.currentTimeMillis())
             save(key, now)
             now
         } catch (e: Exception) {
-            AppLog.e("Погода сейчас не получена (wttr.in)", e)
-            saved
+            try {
+                val now = wttrNow(lat, lon)
+                save(key, now)
+                now
+            } catch (e2: Exception) {
+                AppLog.e("Погода сейчас не получена (Gismeteo и wttr.in)", e2)
+                saved
+            }
         }
     }
 
