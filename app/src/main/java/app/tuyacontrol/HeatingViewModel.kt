@@ -11,6 +11,7 @@ import app.tuyacontrol.heating.HeatingPlanner
 import app.tuyacontrol.heating.HeatingSettings
 import app.tuyacontrol.heating.HourPrices
 import app.tuyacontrol.heating.ZonePlan
+import app.tuyacontrol.sensor.SensorDb
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalTime
 
 /** Датчик температуры, который можно назначить уличным. */
 data class OutdoorSensor(val id: String, val name: String, val code: String)
@@ -381,6 +383,17 @@ open class HeatingViewModel(application: Application, val duty: Boolean) : Andro
         }
     }
 
+    /** Свежая фактическая температура зоны — с её датчика (или с нагревательного прибора). */
+    private fun actualTemp(z: HeatZone): Double? {
+        val id = z.tempDeviceId ?: z.deviceId ?: return null
+        val src = _state.value.tempSources.firstOrNull { it.id == id }
+        if (src?.current != null && !src.stale) return src.current
+        val th = _state.value.thermostats.firstOrNull { it.id == id }
+        if (th?.current != null && th.online && !th.tempStale) return th.current
+        val last = runCatching { SensorDb(getApplication()).last(id, "temp_current") }.getOrNull()
+        return if (last != null && System.currentTimeMillis() - last.time <= 2 * 3600_000L) last.value else null
+    }
+
     fun recompute() {
         logDeviceTimers(_state.value.settings)
         reloadModuleTimers()
@@ -392,6 +405,7 @@ open class HeatingViewModel(application: Application, val duty: Boolean) : Andro
             val prices = engine.prices()
             val forecast = engine.forecast(s)
             val steps = _state.value.thermostats.associate { it.id to it.step }
+            val nowHour = LocalTime.now().hour
             val plans = withContext(Dispatchers.Default) {
                 s.zones.map { z ->
                     // Rubetek: температура — уставка самого конвектора, план только вкл/выкл
@@ -403,6 +417,7 @@ open class HeatingViewModel(application: Application, val duty: Boolean) : Andro
                     HeatingPlanner.plan(
                         planZone, prices, forecast.temps, steps[z.deviceId] ?: 0.5,
                         peakBan = onOff && !z.peakHeat, onOff = onOff,
+                        startTemp = actualTemp(z), startHour = nowHour,
                     ).withZone(z)
                 }
             }

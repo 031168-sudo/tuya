@@ -24,10 +24,15 @@ class ZonePlan(
     val kwhByZone: DoubleArray,
     /** Сколько шагов не удаётся удержать нижнюю границу (мощности не хватает). */
     val shortSteps: Int,
+    /** Час суток, с которого начинается план (0..23). */
+    val startHour: Int = 0,
+    /** Фактическая температура в начале плана, °C; null — не было свежих данных. */
+    val startTemp: Double? = null,
 ) {
     /** Тот же план с обновлёнными настройками зоны (например, флагом «в общем расчёте»). */
     fun withZone(z: HeatZone) = ZonePlan(
         z, temps, heat, minTemps, setpoints, kwh, cost, baselineKwh, baselineCost, kwhByZone, shortSteps,
+        startHour, startTemp,
     )
 }
 
@@ -55,13 +60,28 @@ object HeatingPlanner {
      * @param onOff прибор умеет только «вкл/выкл» (Rubetek, Xiaomi): решение на целый час; включённый прибор
      *   греет на 100% до собственной уставки и держит её (энергия — только на потери)
      */
-    fun plan(zone: HeatZone, prices: HourPrices, outdoor: DoubleArray, step: Double = 0.5, peakBan: Boolean = false, onOff: Boolean = false): ZonePlan {
-        val price = DoubleArray(N) { prices.price[(it / STEPS_PER_HOUR) % 24] }
-        val tout = DoubleArray(N) { outdoor.getOrElse(it / STEPS_PER_HOUR) { outdoor.lastOrNull() ?: 0.0 } }
-        val peakStep = BooleanArray(N) { prices.peak[(it / STEPS_PER_HOUR) % 24] }
+    fun plan(
+        zone: HeatZone,
+        prices: HourPrices,
+        outdoor: DoubleArray,
+        step: Double = 0.5,
+        peakBan: Boolean = false,
+        onOff: Boolean = false,
+        startTemp: Double? = null,
+        startHour: Int = 0,
+    ): ZonePlan {
+        val start = Math.floorMod(startHour, 24)
+        fun clock(k: Int) = (start + k / STEPS_PER_HOUR) % 24
+        val out = if (outdoor.isEmpty()) doubleArrayOf(0.0) else outdoor
+        val price = DoubleArray(N) { prices.price[clock(it)] }
+        val tout = DoubleArray(N) {
+            val idx = (start * STEPS_PER_HOUR + it) % (out.size * STEPS_PER_HOUR)
+            out[idx / STEPS_PER_HOUR]
+        }
+        val peakStep = BooleanArray(N) { prices.peak[clock(it)] }
         // Граница комфорта в момент k (начало шага k): к началу часа комната уже должна быть нужной температуры
         val minT = DoubleArray(N + 1) { k ->
-            var h = (k / STEPS_PER_HOUR) % 24
+            var h = clock(k)
             // Без накопления тепла прогрев идёт «впритык»: в первые 15 минут окна комфорта ещё догреваемся
             if (zone.storeHeat == false && k % STEPS_PER_HOUR == 0 &&
                 zone.windows.any { it.covers(h) } && zone.windows.none { it.covers((h + 23) % 24) }
@@ -70,7 +90,7 @@ object HeatingPlanner {
         }
         // Без накопления тепла: вне окон комфорта не выше дежурной, прогрев только «впритык» перед окном
         val cap: DoubleArray? = if (zone.storeHeat == false) DoubleArray(N + 1) { k ->
-            val h = k / STEPS_PER_HOUR
+            val h = start + k / STEPS_PER_HOUR
             if (zone.windows.any { it.covers(h % 24) }) return@DoubleArray zone.maxTemp
             // Ближайший час окна комфорта впереди
             val next = (h + 1..h + 48).firstOrNull { hh -> zone.windows.any { it.covers(hh % 24) } }
@@ -85,15 +105,17 @@ object HeatingPlanner {
             val ramp = target + 1.0 - rate * hoursTo
             maxOf(base, ramp)
         } else null
-        val (temps, heat) = if (onOff) solveOnOff(zone, price, tout, minT, if (peakBan) peakStep else null)
-        else solve(zone, price, tout, minT, if (peakBan) peakStep else null, cap)
+        val (temps, heat) = if (onOff) solveOnOff(zone, price, tout, minT, if (peakBan) peakStep else null, startTemp)
+        else solve(zone, price, tout, minT, if (peakBan) peakStep else null, cap, startTemp)
 
         // Уставки с учётом гистерезиса термостата: при h > 0 он держит [S, S+h], при h < 0 — [S+h, S].
         // В часы нагрева верх полосы — температура, до которой греем; иначе низ полосы — граница комфорта.
         val up = maxOf(zone.hyst, 0.0)
         val down = minOf(zone.hyst, 0.0)
         val setpoints = DoubleArray(24) { hour ->
-            val ks = hour * STEPS_PER_HOUR until (hour + 1) * STEPS_PER_HOUR
+            // hour — час суток; в плане он может стоять не на своём относительном месте
+            val rel = Math.floorMod(hour - start, 24)
+            val ks = rel * STEPS_PER_HOUR until (rel + 1) * STEPS_PER_HOUR
             val heating = ks.any { heat[it] > 0 }
             if (heating) {
                 // До ближайшего шага термостата, но так, чтобы низ полосы был не ниже границы комфорта
@@ -108,8 +130,9 @@ object HeatingPlanner {
         var cost = 0.0
         val byZone = DoubleArray(3)
         var short = 0
-        // После запрещённого пика конвектор догревает комнату — пока догревает, нехваткой мощности не считаем
-        var recovering = false
+        // После запрещённого пика конвектор догревает комнату — пока догревает, нехваткой мощности не считаем.
+        // Если план стартует с фактической температуры ниже границы, первые шаги — тоже догрев, а не нехватка.
+        var recovering = temps[0] < minT[0] - 0.15
         for (k in 0 until steps) {
             val e = zone.powerKw * heat[k] * DT
             kwh += e
@@ -148,6 +171,8 @@ object HeatingPlanner {
             baselineCost = bCost,
             kwhByZone = byZone,
             shortSteps = short,
+            startHour = start,
+            startTemp = startTemp,
         )
     }
 
@@ -159,9 +184,10 @@ object HeatingPlanner {
         minT: DoubleArray,
         ban: BooleanArray? = null,
         cap: DoubleArray? = null,
+        startTemp: Double? = null,
     ): Pair<DoubleArray, DoubleArray> {
-        val lo = minOf(minT.min(), zone.baseTemp) - 3.0
-        val hi = maxOf(zone.maxTemp, minT.max())
+        val lo = minOf(minT.min(), zone.baseTemp, startTemp ?: 0.0) - 3.0
+        val hi = maxOf(zone.maxTemp, minT.max(), startTemp ?: 0.0)
         val states = ((hi - lo) / GRID).roundToInt() + 1
         val h = zone.heatRate
         val a = zone.lossRate
@@ -199,7 +225,7 @@ object HeatingPlanner {
         val steps = 24 * STEPS_PER_HOUR
         val temps = DoubleArray(steps + 1)
         val heat = DoubleArray(steps)
-        temps[0] = minT[0]
+        temps[0] = startTemp?.coerceIn(lo, hi) ?: minT[0]
         var t = temps[0]
         for (k in 0 until steps) {
             val i = ((t - lo) / GRID).roundToInt().coerceIn(0, states - 1)
@@ -221,9 +247,10 @@ object HeatingPlanner {
         tout: DoubleArray,
         minT: DoubleArray,
         ban: BooleanArray?,
+        startTemp: Double? = null,
     ): Pair<DoubleArray, DoubleArray> {
-        val lo = minOf(minT.min(), zone.baseTemp) - 3.0
-        val hi = maxOf(zone.maxTemp, minT.max())
+        val lo = minOf(minT.min(), zone.baseTemp, startTemp ?: 0.0) - 3.0
+        val hi = maxOf(zone.maxTemp, minT.max(), startTemp ?: 0.0)
         val states = ((hi - lo) / GRID).roundToInt() + 1
         val h = zone.heatRate
         val a = zone.lossRate
@@ -270,7 +297,7 @@ object HeatingPlanner {
         val steps = 24 * STEPS_PER_HOUR
         val temps = DoubleArray(steps + 1)
         val heat = DoubleArray(steps)
-        temps[0] = minT[0]
+        temps[0] = startTemp?.coerceIn(lo, hi) ?: minT[0]
         var t = temps[0]
         for (b in 0 until steps / STEPS_PER_HOUR) {
             val i = ((t - lo) / GRID).roundToInt().coerceIn(0, states - 1)

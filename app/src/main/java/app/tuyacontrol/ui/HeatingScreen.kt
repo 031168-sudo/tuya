@@ -72,10 +72,14 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import app.tuyacontrol.HeatingUiState
@@ -87,6 +91,7 @@ import app.tuyacontrol.heating.HeatingPlanner
 import app.tuyacontrol.heating.HourPrices
 import app.tuyacontrol.heating.ZonePlan
 import java.text.SimpleDateFormat
+import java.time.LocalTime
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
@@ -498,6 +503,8 @@ private fun ZoneCard(
 private fun PlanChart(plan: ZonePlan, prices: HourPrices) {
     val lineColor = MaterialTheme.colorScheme.primary
     val boundColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val factColor = Color(0xFFE65100)
+    val measurer = rememberTextMeasurer()
     var cursor by remember(plan) { mutableStateOf<Int?>(null) }
     val steps = plan.heat.size
     val yMin = kotlin.math.floor(minOf(plan.temps.min(), plan.minTemps.min()) - 0.5)
@@ -507,9 +514,10 @@ private fun PlanChart(plan: ZonePlan, prices: HourPrices) {
         val c = cursor
         Text(
             if (c == null) {
-                "Линия — температура по плану, пунктир — нижняя граница, внизу — нагрев. Коснитесь графика."
+                "План на 24 часа от текущего часа. Фиолетовая — расчётная температура, пунктир — нижняя граница, " +
+                    "оранжевая — фактическая сейчас, внизу — нагрев. Коснитесь графика."
             } else {
-                val hour = c / HeatingPlanner.STEPS_PER_HOUR
+                val hour = (plan.startHour + c / HeatingPlanner.STEPS_PER_HOUR) % 24
                 val minute = (c % HeatingPlanner.STEPS_PER_HOUR) * 15
                 "%02d:%02d · %s · нагрев %d%% · уставка %s · %s ₽/кВт·ч".format(
                     hour, minute, deg(Math.round(plan.temps[c] * 10) / 10.0), (plan.heat[c] * 100).toInt(),
@@ -549,10 +557,11 @@ private fun PlanChart(plan: ZonePlan, prices: HourPrices) {
                     fun x(k: Int) = k.toFloat() / steps * w
                     fun y(t: Double) = (top - (t - yMin) / (yMax - yMin) * top).toFloat()
 
-                    // Фон — зоны тарифа по часам
+                    // Фон — зоны тарифа по часам (окно плана от текущего часа)
                     for (hr in 0 until 24) {
+                        val clock = (plan.startHour + hr) % 24
                         drawRect(
-                            zoneColor(prices, hr).copy(alpha = 0.28f),
+                            zoneColor(prices, clock).copy(alpha = 0.28f),
                             topLeft = Offset(hr * w / 24f, 0f),
                             size = Size(w / 24f + 0.5f, h),
                         )
@@ -581,13 +590,32 @@ private fun PlanChart(plan: ZonePlan, prices: HourPrices) {
                         if (k == 0) line.moveTo(px, py) else line.lineTo(px, py)
                     }
                     drawPath(line, lineColor, style = Stroke(width = 2.5.dp.toPx()))
+                    // Фактическая температура сейчас: горизонтальная линия и точка в начале плана
+                    plan.startTemp?.let { t ->
+                        val py = y(t)
+                        drawLine(
+                            factColor, Offset(0f, py), Offset(w, py),
+                            strokeWidth = 1.5.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 5.dp.toPx())),
+                        )
+                        drawCircle(factColor, radius = 4.dp.toPx(), center = Offset(0f, py))
+                        drawText(
+                            measurer.measure(
+                                "факт %.1f°".format(Locale("ru"), t),
+                                TextStyle(fontSize = 9.sp, color = factColor),
+                            ),
+                            topLeft = Offset(4.dp.toPx(), py - 14.dp.toPx()),
+                        )
+                    }
                     cursor?.let { k ->
                         drawLine(lineColor.copy(alpha = 0.6f), Offset(x(k), 0f), Offset(x(k), h), strokeWidth = 1.dp.toPx())
                         drawCircle(lineColor, radius = 4.dp.toPx(), center = Offset(x(k), y(plan.temps[k])))
                     }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    listOf("0", "6", "12", "18", "24").forEach { Text(it, style = MaterialTheme.typography.labelSmall) }
+                    listOf("сейчас", "+6", "+12", "+18", "+24").forEach {
+                        Text(it, style = MaterialTheme.typography.labelSmall)
+                    }
                 }
             }
         }
@@ -597,12 +625,13 @@ private fun PlanChart(plan: ZonePlan, prices: HourPrices) {
 @Composable
 private fun HowItWorks() {
     Text(
-        "Как считается: для каждой комнаты приложение перебирает варианты нагрева на двое суток вперёд с шагом " +
-            "15 минут и выбирает самый дешёвый, при котором температура не опускается ниже заданной. Учитываются " +
+        "Как считается: для каждой комнаты приложение начинает с фактической температуры сейчас и перебирает " +
+            "варианты нагрева на двое суток вперёд с шагом 15 минут, выбирая самый дешёвый, при котором температура " +
+            "не опускается ниже заданной. Учитываются " +
             "тарифы из раздела «Тарифы» и прогноз уличной температуры. Где включено «Копить тепло заранее», " +
             "комната прогревается с запасом ночью и в полупик, а в пиковые часы отдаёт тепло. «Без оптимизации» — " +
             "тот же комфорт, но без запаса и без просадки в пик. Параметры (мощность, скорость нагрева, остывание) " +
-            "пока типовые — их можно уточнить в настройках зоны. План записывается прямо в устройства: в программу " +
+            "подбираются по истории; если подбор ненадёжен, остаются прежние. План записывается прямо в устройства: в программу " +
             "термостата или в таймеры модуля конвектора — работает без интернета и телефона.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -632,7 +661,7 @@ private fun LearnLine(zone: HeatZone, info: app.tuyacontrol.heating.LearnInfo?, 
             (info.note?.let { " — $it" } ?: "")
         info.problem == null -> "По истории за ${info.days} дн.: нагрев ${num(info.heatRate ?: 0.0)}°/ч, остывание " +
             "${num((info.lossRate ?: 0.0) * 100)}%/ч — не применено (подбор выключен в настройках зоны). Сейчас: $now"
-        info.applied -> "По истории ($date) подобрано частично: ${info.problem}. Сейчас: $now"
+        info.applied -> "По истории ($date) подобрано ненадёжно: ${info.problem} — не применено. Сейчас: $now"
         else -> "По истории пока не подобрать ($date): ${info.problem}. Сейчас: $now"
     }
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -854,7 +883,12 @@ private fun ModuleTimersBlock(
         )
     }
     val planned = app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan)
-    if (zone.control && matches && planned.sortedWith(compareBy({ it.first }, { it.second })) != written) {
+    // Первое событие текущего часа при записи сдвигается на следующую минуту, чтобы включиться
+    // сегодня, а не завтра. При сравнении «план изменился» этот сдвиг не считаем изменением.
+    fun withoutCurrentHour(e: List<Pair<Int, Boolean>>) =
+        e.filter { it.first / 60 != LocalTime.now().hour }
+            .sortedWith(compareBy({ it.first }, { it.second }))
+    if (zone.control && matches && withoutCurrentHour(planned) != withoutCurrentHour(written.orEmpty())) {
         Text(
             "План на сегодня изменился по погоде — новые таймеры запишутся ночью",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

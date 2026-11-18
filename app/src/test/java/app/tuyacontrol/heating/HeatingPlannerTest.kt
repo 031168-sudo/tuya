@@ -74,6 +74,21 @@ class HeatingPlannerTest {
     }
 
     @Test
+    fun coldRoomStartsHeatingFromActualTemperature() {
+        val kitchen = HeatZone(
+            "kitchen", "Кухня", baseTemp = 10.0, maxTemp = 11.0,
+            powerKw = 1.5, heatRate = 0.9, lossRate = 0.03,
+        )
+        val p = HeatingPlanner.plan(
+            kitchen, prices, DoubleArray(48) { 0.0 }, step = 1.0,
+            peakBan = true, onOff = true, startTemp = 6.0, startHour = 21,
+        )
+        assertEquals(6.0, p.temps[0], 0.001)
+        assertTrue("сразу включает нагрев", p.heat[0] > 0.0)
+        assertTrue("догревает до нижней границы", p.temps.any { it >= 10.0 - 1e-6 })
+    }
+
+    @Test
     fun comfortWindowAcrossMidnight() {
         val w = ComfortWindow(23, 11, 23.0)
         assertTrue(w.covers(23) && w.covers(0) && w.covers(10))

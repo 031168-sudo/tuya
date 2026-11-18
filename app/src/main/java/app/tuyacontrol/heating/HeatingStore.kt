@@ -37,11 +37,25 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
 
     private fun loadHome(): HeatingSettings {
         val text = prefs.getString(KEY_SETTINGS, null) ?: return HeatingSettings.defaults()
-        return try {
+        val s = try {
             parse(JSONObject(text))
         } catch (e: Exception) {
             HeatingSettings.defaults()
         }
+        return fixSuspiciousLoss(s, "loss_fix_home_v1")
+    }
+
+    /**
+     * Раньше подбор мог записать минимальное остывание 0,3 %/ч, хотя комната остывает в разы быстрее.
+     * Один раз при обновлении заменяем такое значение на типовое 3 %/ч; дальше пользователь может
+     * поставить своё. Иначе план думает, что тепло почти не уходит, и не греет.
+     */
+    private fun fixSuspiciousLoss(s: HeatingSettings, key: String): HeatingSettings {
+        if (prefs.getBoolean(key, false)) return s
+        prefs.edit().putBoolean(key, true).apply()
+        return s.copy(zones = s.zones.map { z ->
+            if (z.lossRate <= 0.0035) z.copy(lossRate = 0.03) else z
+        })
     }
 
     /** Профиль «Дежурство»: свои зоны (вначале пусто), место дома и уличный датчик — из «Отопления». */
@@ -49,9 +63,10 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
         val home = loadHome()
         val own = prefs.getString(KEY_DUTY, null)?.let { runCatching { parse(JSONObject(it)) }.getOrNull() }
             ?: HeatingSettings(zones = emptyList())
-        return own.copy(
+        val fixed = fixSuspiciousLoss(own, "loss_fix_duty_v1")
+        return fixed.copy(
             // Конвекторы Rubetek на дежурстве считаются стоящими на 12°, пока в зоне не задано другое
-            zones = own.zones.map { z ->
+            zones = fixed.zones.map { z ->
                 if (z.assumedSetpoint == null && z.deviceId?.let { RubetekMapper.isRubetek(it) } == true) z.copy(assumedSetpoint = DUTY_RUBETEK_SETPOINT) else z
             },
             latitude = home.latitude, longitude = home.longitude,

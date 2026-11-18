@@ -340,7 +340,9 @@ private fun ZoneHeatCard(zone: HeatZone, learned: LearnInfo?) {
                 Column(Modifier.weight(1f)) {
                     Text(zone.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(
-                        if (learned?.heatRate != null || learned?.lossRate != null) "по истории" else "предварительная оценка",
+                        if (learned?.problem == null && learned?.applied == true &&
+                            learned.heatRate != null && learned.lossRate != null
+                        ) "по истории" else "предварительная оценка",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

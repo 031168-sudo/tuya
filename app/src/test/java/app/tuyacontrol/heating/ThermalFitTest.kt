@@ -43,11 +43,12 @@ class ThermalFitTest {
     }
 
     @Test
-    fun almostZeroLossIsClampedNotRejected() {
+    fun almostZeroLossIsNotApplied() {
+        // Почти нулевое остывание — скорее всего, в «часы без нагрева» на самом деле грели.
+        // Такое значение нельзя применять: план перестанет греть.
         val r = ThermalFit.fit(List(20) { ThermalFit.Sample(0.01, 0.0, 15.0) } + List(6) { ThermalFit.Sample(1.0, 1.0, 15.0) })
-        assertEquals(ThermalFit.MIN_LOSS, r.lossRate!!, 1e-9)
-        assertNotNull(r.note)
-        assertNull(r.problem)
+        assertNull(r.lossRate)
+        assertNotNull(r.problem)
     }
 
     @Test
