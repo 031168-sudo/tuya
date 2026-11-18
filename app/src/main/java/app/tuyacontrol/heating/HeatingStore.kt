@@ -42,7 +42,7 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
         } catch (e: Exception) {
             HeatingSettings.defaults()
         }
-        return fixSuspiciousLoss(s, "loss_fix_home_v1")
+        return fixSuspiciousLoss(s, "loss_fix_home_v2", KEY_SETTINGS)
     }
 
     /**
@@ -50,12 +50,18 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
      * Один раз при обновлении заменяем такое значение на типовое 3 %/ч; дальше пользователь может
      * поставить своё. Иначе план думает, что тепло почти не уходит, и не греет.
      */
-    private fun fixSuspiciousLoss(s: HeatingSettings, key: String): HeatingSettings {
-        if (prefs.getBoolean(key, false)) return s
-        prefs.edit().putBoolean(key, true).apply()
-        return s.copy(zones = s.zones.map { z ->
+    private fun fixSuspiciousLoss(s: HeatingSettings, flag: String, settingsKey: String): HeatingSettings {
+        if (prefs.getBoolean(flag, false)) return s
+        val fixed = s.copy(zones = s.zones.map { z ->
             if (z.lossRate <= 0.0035) z.copy(lossRate = 0.03) else z
         })
+        // В сборке 170 флаг ставился, но исправленные настройки не сохранялись. Теперь сохраняем сразу,
+        // иначе после перечитывания настроек снова появляется 0,3 %/ч.
+        prefs.edit()
+            .putBoolean(flag, true)
+            .putString(settingsKey, toJson(fixed).toString())
+            .apply()
+        return fixed
     }
 
     /** Профиль «Дежурство»: свои зоны (вначале пусто), место дома и уличный датчик — из «Отопления». */
@@ -63,7 +69,7 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
         val home = loadHome()
         val own = prefs.getString(KEY_DUTY, null)?.let { runCatching { parse(JSONObject(it)) }.getOrNull() }
             ?: HeatingSettings(zones = emptyList())
-        val fixed = fixSuspiciousLoss(own, "loss_fix_duty_v1")
+        val fixed = fixSuspiciousLoss(own, "loss_fix_duty_v2", KEY_DUTY)
         return fixed.copy(
             // Конвекторы Rubetek на дежурстве считаются стоящими на 12°, пока в зоне не задано другое
             zones = fixed.zones.map { z ->
