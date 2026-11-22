@@ -15,15 +15,15 @@ Android-приложение (Kotlin + Jetpack Compose) для управлен�
 
 ## Сборка и доставка
 
-- Пуш в `main` → GitHub Actions собирает APK и публикует релиз `build-N`
-  с файлом `MoyDom-N.apk` (`versionCode` = номер прогона).
+- Работа и сборка — только через GitHub.
+- Пуш в `main` → GitHub Actions запускает unit-тесты, собирает APK и
+  публикует релиз `build-N` с файлом `MoyDom-N.apk`
+  (`versionCode` = номер прогона).
 - Прямая ссылка:
   `https://github.com/031168-sudo/tuya/releases/download/build-N/MoyDom-N.apk`
-  (последняя — `.../releases/latest/download/MoyDom-N.apk`).
-- Зеркало для телефона, если GitHub не открывается:
-  `https://diag.alfanomy.ru/apk/MoyDom-N.apk` (кладётся из релиза, не из
-  локальной сборки: у локальной `versionCode` 1 и она не встанет поверх).
-- Локально Gradle/JDK не ставим — на рабочей машине их нет.
+  (последний релиз — `https://github.com/031168-sudo/tuya/releases/latest`).
+- Ручной запуск: GitHub → Actions → Build APK → Run workflow.
+- Готовый APK — только из GitHub Releases.
 
 ## Устройство проекта
 
@@ -148,7 +148,8 @@ Android-приложение (Kotlin + Jetpack Compose) для управлен�
 
 - Обсуждаем до слова «делай»; мелкие однозначные просьбы — сразу.
 - Правки копим в `BACKLOG.md`, делаем пачкой по указанию.
-- После правки — сборка, ссылка на APK, запись в журнал выше.
+- После правки — push в GitHub; сборку и тесты выполняет Actions.
+- Готовый APK — из GitHub Releases; ссылку давать на релиз.
 - Новые версии ставятся поверх старых (общий debug-ключ `app/debug.keystore`).
 - Любое удаление в приложении сначала спрашивает «Вы уверены, что хотите
   удалить?».

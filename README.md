@@ -29,8 +29,14 @@ Android-приложение (Kotlin + Jetpack Compose) для просмотр�
 Все сборки подписаны одним debug-ключом (`app/debug.keystore`), поэтому новые версии ставятся поверх старых без потери настроек.
 
 ## Сборка
-Каждый push в `main` собирает APK в GitHub Actions и публикует его в Releases.
-Локально: `./gradlew assembleDebug`.
+Работа и сборка ведутся **только через GitHub**:
+
+- каждый push в `main` запускает unit-тесты и сборку APK в GitHub Actions;
+- готовая сборка публикуется в **Releases** как `MoyDom-N.apk`;
+- ручной запуск — GitHub → **Actions** → **Build APK** → **Run workflow**.
+
+`versionCode` равен номеру запуска Actions, поэтому новые APK ставятся
+поверх старых. Подробности переноса — в [`TRANSFER.md`](TRANSFER.md).
 
 ## Устройство проекта
 - `cloud/TuyaCloudClient.kt` — подпись HMAC-SHA256, токен, устройства, статус, спецификация, команды.
