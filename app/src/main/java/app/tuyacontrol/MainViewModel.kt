@@ -769,7 +769,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val customTemp = status.keys.any { it == "real_temp" || it == "set_temp" }
                         val specComplete = cachedSpec != null && (!useThingModel || !customTemp ||
                             cachedSpec.keys.any { it == "real_temp" || it == "set_temp" })
-                        val spec = if (specComplete) cachedSpec!! else runCatching {
+                        val loadedSpec = if (specComplete) cachedSpec!! else runCatching {
                             val base = runCatching { c.getSpecification(d.id) }.getOrDefault(emptyMap())
                             if (useThingModel) {
                                 val model = c.getThingModel(d.id)
@@ -782,6 +782,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             .getOrNull()
                             ?.also { specCache[d.id] = it }
                             .orEmpty()
+                        // Если модель не отдала real_temp/set_temp, всё равно показываем и управляем
+                        val spec = loadedSpec.toMutableMap()
+                        var specFixed = false
+                        if ("real_temp" in status && "real_temp" !in spec) {
+                            spec["real_temp"] = DpSpec("real_temp", "Integer", unit = "°C", scale = 1)
+                            specFixed = true
+                        }
+                        if ("set_temp" in status && "set_temp" !in spec) {
+                            spec["set_temp"] = DpSpec(
+                                "set_temp", "Integer", unit = "°C", scale = 1,
+                                min = 0, max = 1000, step = 5, writable = true,
+                            )
+                            specFixed = true
+                        }
+                        if (specFixed) specCache[d.id] = spec
                         DeviceUi(
                             id = d.id,
                             name = d.name,
