@@ -45,8 +45,8 @@ class DeviceUiThermostatTest {
     }
 
     @Test
-    fun sameDeviceWithHeatingOn() {
-        val d = thermostat(mapOf("switch_1" to true, "real_temp" to 186, "set_temp" to 135))
+    fun demandWhenFactBelowSetpoint() {
+        val d = thermostat(mapOf("switch_1" to false, "real_temp" to 186, "set_temp" to 200))
         assertEquals(true, d.heatingNow)
     }
 
@@ -61,10 +61,14 @@ class DeviceUiThermostatTest {
         val cooling = thermostat(modes + mapOf("heating" to false, "cooling" to true))
         assertEquals(false, cooling.heatingModeOn)
         assertEquals(true, cooling.coolingModeOn)
-        // реле выключено, но режим heating — кнопка должна быть включена
+        // факт выше уставки — не греет, даже если режим heating
         assertEquals(false, thermostat(modes).heatingNow)
-        // огонёк: реле switch_1 И режим heating
-        assertEquals(true, thermostat(modes + ("switch_1" to true)).heatingNow)
-        assertEquals(false, thermostat(modes + mapOf("switch_1" to true, "manual_off" to true)).heatingNow)
+        // факт ниже уставки — огонёк горит по режиму и температуре, switch_1 не нужен
+        assertEquals(true, thermostat(modes + mapOf("real_temp" to 200, "set_temp" to 215)).heatingNow)
+        // keep off — не горит, даже если факт ниже уставки
+        assertEquals(
+            false,
+            thermostat(modes + mapOf("real_temp" to 200, "set_temp" to 215, "manual_off" to true)).heatingNow,
+        )
     }
 }
