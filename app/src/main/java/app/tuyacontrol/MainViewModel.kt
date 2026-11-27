@@ -165,9 +165,19 @@ data class DeviceUi(
         get() {
             if (!online || isSensor) return null
             val main = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
-            // TC02W: огонёк = реле switch_1, но только когда выбран режим heating.
-            // В keep off/cooling нагрев не показываем, даже если реле почему-то включено.
-            if ("real_temp" in status) return if (heatingModeOn == false) false else main
+            // TC02W: switch_1 не отражает реальное реле (бывает false при heating).
+            // Показываем «греет», если выбран режим heating и факт ниже уставки.
+            if ("real_temp" in status) {
+                if (heatingModeOn == false) return false
+                fun temp(code: String): Double? {
+                    val v = status[code] as? Number ?: status[code]?.toString()?.toDoubleOrNull() ?: return null
+                    return v.toDouble() / Math.pow(10.0, (spec[code]?.scale ?: 0).toDouble())
+                }
+                val real = temp("real_temp")
+                val set = temp("set_temp")
+                if (real != null && set != null) return real < set - 0.1
+                return main
+            }
             status["work_state"]?.let { v ->
                 if (main == false) return false
                 return when (v.toString().lowercase()) {
