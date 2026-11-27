@@ -175,7 +175,14 @@ data class DeviceUi(
                 }
                 val real = temp("real_temp")
                 val set = temp("set_temp")
-                if (real != null && set != null) return real < set - 0.1
+                // positive_temp_range_C — гистерезис в десятых (°C): 5 = 0,5°.
+                // Греем, когда факт опустился до «уставка − гистерезис».
+                val rangeRaw = (status["positive_temp_range_C"] as? Number)?.toDouble()
+                    ?: status["positive_temp_range_C"]?.toString()?.toDoubleOrNull()
+                val range = rangeRaw
+                    ?.div(Math.pow(10.0, (spec["positive_temp_range_C"]?.scale ?: 1).toDouble()))
+                    ?.coerceAtLeast(0.0) ?: 0.1
+                if (real != null && set != null) return real <= set - range + 1e-6
                 return main
             }
             status["work_state"]?.let { v ->
