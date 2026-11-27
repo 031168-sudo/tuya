@@ -22,8 +22,10 @@ object DpLabels {
         "va_humidity" to "Влажность",
         "temp_current" to "Температура",
         "temp_value" to "Температура",
+        "real_temp" to "Температура",
         "humidity_value" to "Влажность",
         "temp_set" to "Уставка",
+        "set_temp" to "Уставка",
         "upper_temp" to "Макс. уставка",
         "lower_temp" to "Мин. уставка",
         "temp_correction" to "Коррекция темп.",
@@ -47,7 +49,7 @@ object DpLabels {
     private val primary = setOf(
         "cur_power", "cur_voltage", "cur_current", "add_ele", "total_forward_energy",
         "va_temperature", "va_humidity", "temp_current", "temp_value", "humidity_value",
-        "temp_set", "floor_temp", "mode", "work_state", "battery_percentage", "battery_state",
+        "real_temp", "temp_set", "set_temp", "floor_temp", "mode", "work_state", "battery_percentage", "battery_state",
     )
 
     /** Подписи, которые устройства сообщают сами (например, свойства Xiaomi MIoT). */

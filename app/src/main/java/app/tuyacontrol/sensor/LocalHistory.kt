@@ -75,6 +75,8 @@ object LocalHistory {
         raw["work_state"]?.let { return it.toString().lowercase() in setOf("1", "heating", "heat", "hot", "warming", "true", "open", "on") }
         raw["valve_state"]?.let { return it.toString().lowercase() in setOf("open", "1", "true", "on") }
         if ("heating_temp_start" in raw) return raw["switch"] as? Boolean
+        // TC02W: switch_1 — реле обогрева
+        if ("real_temp" in raw) return raw["switch_1"] as? Boolean ?: raw["switch"] as? Boolean
         return null
     }
 

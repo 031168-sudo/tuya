@@ -31,7 +31,7 @@ data class SensorDevice(
     val channels: List<SensorChannel> get() = listOfNotNull(temperature, humidity)
 
     companion object {
-        val TEMPERATURE_CODES = listOf("va_temperature", "temp_current", "temp_value", "temperature", "cur_temp")
+        val TEMPERATURE_CODES = listOf("va_temperature", "temp_current", "real_temp", "temp_value", "temperature", "cur_temp", "temp")
         val HUMIDITY_CODES = listOf("va_humidity", "humidity_value", "humidity", "cur_humidity")
     }
 }
