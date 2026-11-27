@@ -440,10 +440,18 @@ private fun ZoneCard(
             }
             Text(
                 zone.windows.joinToString("; ") { "${deg(it.temp)} ${it.text()}" } +
-                    (if (zone.windows.any { it.from == it.to }) "" else "; остальное время ${deg(zone.baseTemp)}"),
+                    (if (zone.windows.any { it.from == it.to }) "" else "; вне окон — не ниже ${deg(zone.baseTemp)}"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if ((zone.storeHeat ?: zone.isFloor) && zone.windows.isNotEmpty()) {
+                Text(
+                    "«Копить тепло» включено: вне окон план может держать теплее ${deg(zone.baseTemp)}, " +
+                        "если так дешевле. ${deg(zone.baseTemp)} — минимум, а не цель.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             PlanChart(plan, prices)
             LearnLine(zone, learned, learning, onLearn)
             if (HeatingPlanner.isSuspiciousHeat(zone)) {
@@ -644,7 +652,8 @@ private fun HowItWorks() {
         "Как считается: для каждой комнаты приложение начинает с фактической температуры сейчас и перебирает " +
             "варианты нагрева на двое суток вперёд с шагом 15 минут, выбирая самый дешёвый, при котором температура " +
             "не опускается ниже заданной. Учитываются " +
-            "тарифы из раздела «Тарифы» и прогноз уличной температуры. Где включено «Копить тепло заранее», " +
+            "тарифы из раздела «Тарифы» и прогноз уличной температуры. Дежурная температура — это минимум, " +
+            "а не цель: если выгоднее держать теплее, план так и сделает. Где включено «Копить тепло заранее», " +
             "комната прогревается с запасом ночью и в полупик, а в пиковые часы отдаёт тепло. «Без оптимизации» — " +
             "тот же комфорт, но без запаса и без просадки в пик. Параметры (мощность, скорость нагрева, остывание) " +
             "подбираются по истории; если подбор ненадёжен, остаются прежние. План записывается прямо в устройства: в программу " +
@@ -691,21 +700,69 @@ private fun LearnLine(zone: HeatZone, info: app.tuyacontrol.heating.LearnInfo?, 
     }
 }
 
-/** Ряд периодов программы, окрашенных по тарифу. */
+/**
+ * Почему период такой: окно комфорта, преднагрев перед ним, дорогой час или остывание.
+ * Считаем по часам, которые период покрывает; 20° — минимум, поэтому «дежурная» — это только низ.
+ */
+private fun periodReasons(
+    zone: HeatZone,
+    periods: List<app.tuyacontrol.heating.WeekProgram.Period>,
+    prices: HourPrices,
+): List<String> {
+    val sorted = periods.sortedBy { it.minutes }
+    if (sorted.isEmpty()) return emptyList()
+    fun required(h: Int) = zone.windows.any { it.covers(h) && it.temp > zone.baseTemp + 1e-9 }
+    return sorted.mapIndexed { i, p ->
+        val next = sorted[(i + 1) % sorted.size]
+        val len = ((next.minutes - p.minutes + 1440 - 1) % 1440) + 1
+        val startH = p.minutes / 60
+        val hours = (0 until (len + 59) / 60).map { Math.floorMod(startH + it, 24) }
+        val inWindow = hours.any { required(it) }
+        val peak = hours.count { prices.peak[it] }
+        val mostlyPeak = peak * 2 >= hours.size
+        val prevWindow = (1..2).any { required(Math.floorMod(startH - it, 24)) }
+        val nextWindow = (1..6).any { required(Math.floorMod(startH + it, 24)) }
+        val atBase = p.temp <= zone.baseTemp + 0.01
+        when {
+            inWindow && atBase -> "остывание в окне"
+            inWindow && mostlyPeak -> "окно + пик"
+            inWindow -> "окно комфорта"
+            atBase && prevWindow -> "остывание"
+            atBase -> "дежурная"
+            nextWindow -> "преднагрев"
+            else -> "запас тепла"
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PeriodChips(periods: List<app.tuyacontrol.heating.WeekProgram.Period>, prices: HourPrices, bold: Boolean) {
+private fun PeriodChips(
+    periods: List<app.tuyacontrol.heating.WeekProgram.Period>,
+    prices: HourPrices,
+    bold: Boolean,
+    zone: HeatZone? = null,
+) {
+    val sorted = periods.sortedBy { it.minutes }
+    val reasons = zone?.let { periodReasons(it, sorted, prices) }.orEmpty()
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        periods.sortedBy { it.minutes }.forEach { p ->
-            Text(
-                p.text(),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = if (bold) FontWeight.Bold else null,
+        sorted.forEachIndexed { i, p ->
+            Column(
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
                     .background(zoneColor(prices, p.minutes / 60).copy(alpha = if (bold) 0.6f else 0.45f))
                     .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    p.text(),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = if (bold) FontWeight.Bold else null,
+                )
+                reasons.getOrNull(i)?.let {
+                    Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
 }
@@ -732,7 +789,7 @@ private fun ProgramBlock(
     if (program.isEmpty()) {
         Text("Программа не прочитана", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     } else {
-        PeriodChips(program.take(app.tuyacontrol.heating.WeekProgram.PERIODS), prices, bold = true)
+        PeriodChips(program.take(app.tuyacontrol.heating.WeekProgram.PERIODS), prices, bold = true, zone = zone)
     }
     // Приложение пишет только расписание; вкл/выкл и режим — дело хозяина
     val matches = deployed != null && thermostat.programRaw == deployed
@@ -793,8 +850,24 @@ private fun ProgramBlock(
     val extraRub = (0 until 24).sumOf { h ->
         (hourly[h] - plan.setpoints[h]) * zone.lossRate / zone.heatRate * zone.powerKw * prices.price[h]
     }
-    Text("По плану на сегодня (${planned.size} периодов)", style = MaterialTheme.typography.labelMedium)
-    PeriodChips(planned, prices, bold = false)
+    Text(
+        "По плану на сегодня (${planned.size} периодов — предел термостата)",
+        style = MaterialTheme.typography.labelMedium,
+    )
+    PeriodChips(planned, prices, bold = false, zone = zone)
+    Text(
+        "«Преднагрев» — греть заранее перед окном; «пик» — держим тепло в дорогой час; " +
+            "«остывание» — не греем, пол отдаёт накопленное. " +
+            "${deg(zone.baseTemp)} вне окон — минимум, а не цель: теплее бывает, если так дешевле.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+        "Термостат хранит только 6 периодов в сутки, поэтому точные почасовые уставки " +
+            "сжимаются в ближайшую программу.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     if (extraRub >= 0.5) {
         Text(
             "Из-за ограничения в 6 периодов ≈ +${Math.round(extraRub)} ₽ в сутки к плану",
