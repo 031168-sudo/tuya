@@ -91,7 +91,6 @@ import app.tuyacontrol.heating.HeatingPlanner
 import app.tuyacontrol.heating.HourPrices
 import app.tuyacontrol.heating.ZonePlan
 import java.text.SimpleDateFormat
-import java.time.LocalTime
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
@@ -447,6 +446,14 @@ private fun ZoneCard(
             )
             PlanChart(plan, prices)
             LearnLine(zone, learned, learning, onLearn)
+            if (HeatingPlanner.isSuspiciousHeat(zone)) {
+                Text(
+                    "⚠ Нагрев ${num(zone.heatRate)}°/ч при мощности ${num(zone.powerKw)} кВт выглядит ошибкой — " +
+                        "проверьте параметры зоны. С таким значением план не сможет держать комфорт",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
             if (plan.shortSteps > 0) {
                 Text(
                     "Мощности не хватает, чтобы держать комфорт ≈ ${num(plan.shortSteps / 4.0)} ч в сутки — " +
@@ -455,11 +462,20 @@ private fun ZoneCard(
                     color = MaterialTheme.colorScheme.error,
                 )
             }
+            val devicePlan = HeatingPlanner.deployPlan(plan)
+            if (HeatingPlanner.isUnsafe(plan)) {
+                Text(
+                    "План не держит комфорт: в устройство будет записан аварийный график — греть в окнах комфорта",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
             if (zone.deviceId?.let { app.tuyacontrol.heating.HeatingEngine.isOnOff(it) } == true) {
-                ModuleTimersBlock(zone, thermostat, plan, prices, deployed, busy, onControl)
+                ModuleTimersBlock(zone, thermostat, devicePlan, prices, deployed, busy, onControl)
                 Text("По плану на сегодня", style = MaterialTheme.typography.labelMedium)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan).forEach { (m, on) ->
+                    app.tuyacontrol.heating.HeatingEngine.onOffEvents(devicePlan).forEach { (m, on) ->
                         Text(
                             "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл"),
                             style = MaterialTheme.typography.labelMedium,
@@ -471,7 +487,7 @@ private fun ZoneCard(
                     }
                 }
             } else if (thermostat?.programCode != null) {
-                ProgramBlock(zone, thermostat, plan, prices, deployedProgram, busy, onControl, onProgramMode)
+                ProgramBlock(zone, thermostat, devicePlan, prices, deployedProgram, busy, onControl, onProgramMode)
             } else {
             if (zone.control && thermostat?.powerOn == false) {
                 Text(
@@ -482,8 +498,8 @@ private fun ZoneCard(
             Text("Уставки термостата", style = MaterialTheme.typography.labelMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (h in 0 until 24) {
-                    val sp = plan.setpoints[h]
-                    if (h != 0 && sp == plan.setpoints[h - 1]) continue
+                    val sp = devicePlan.setpoints[h]
+                    if (h != 0 && sp == devicePlan.setpoints[h - 1]) continue
                     Text(
                         "${hh(h)} ${deg(sp)}",
                         style = MaterialTheme.typography.labelMedium,
@@ -883,12 +899,7 @@ private fun ModuleTimersBlock(
         )
     }
     val planned = app.tuyacontrol.heating.HeatingEngine.onOffEvents(plan)
-    // Первое событие текущего часа при записи сдвигается на следующую минуту, чтобы включиться
-    // сегодня, а не завтра. При сравнении «план изменился» этот сдвиг не считаем изменением.
-    fun withoutCurrentHour(e: List<Pair<Int, Boolean>>) =
-        e.filter { it.first / 60 != LocalTime.now().hour }
-            .sortedWith(compareBy({ it.first }, { it.second }))
-    if (zone.control && matches && withoutCurrentHour(planned) != withoutCurrentHour(written.orEmpty())) {
+    if (zone.control && matches && planned != written.orEmpty()) {
         Text(
             "План на сегодня изменился по погоде — новые таймеры запишутся ночью",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

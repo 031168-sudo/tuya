@@ -32,6 +32,12 @@ object ThermalFit {
      * применять такое значение нельзя, иначе план перестаёт греть.
      */
     const val MIN_LOSS = 0.005
+    /**
+     * Нижняя граница скорости нагрева для автоматического подбора: 0,5°/ч.
+     * Меньше у настоящего обогревателя — почти всегда ошибка истории (датчик, режим, окно),
+     * а не реальная мощность: с таким значением план перестаёт держать комфорт.
+     */
+    const val MIN_HEAT = 0.5
 
     /** Медиана с весами. */
     private fun weightedMedian(v: List<Pair<Double, Double>>): Double {
@@ -80,7 +86,12 @@ object ThermalFit {
             } else {
                 // dT/dt + a·diff = h·u  →  h = Σ u·(y + a·d) / Σ u²
                 val h = heat.sumOf { it.u * (it.dTdt + loss * it.diff) } / heat.sumOf { it.u * it.u }
-                if (h in 0.2..15.0) heatRate = h else problem = "нагрев вне разумных пределов (${"%.1f".format(h)}°/ч)"
+                when {
+                    h < MIN_HEAT -> problem = "нагрев слишком мал для надёжного расчёта " +
+                        "(${"%.1f".format(h)}°/ч) — проверьте параметры обогревателя"
+                    h > 15.0 -> problem = "нагрев вне разумных пределов (${"%.1f".format(h)}°/ч)"
+                    else -> heatRate = h
+                }
             }
         }
         return Result(heatRate, loss, cool.size, heat.size, problem, note)

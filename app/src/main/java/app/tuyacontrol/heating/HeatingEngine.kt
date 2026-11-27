@@ -132,18 +132,27 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
                         ?: throw IllegalStateException("обогреватель не найден в Mi Home")
                     val own = (d.status["temp_set"] as? Number)?.toDouble()?.let { it / 10.0.pow(d.spec["temp_set"]?.scale ?: 0) }
                         ?: throw IllegalStateException("неизвестна уставка обогревателя")
-                    val plan = HeatingPlanner.plan(
+                    val planned = HeatingPlanner.plan(
                         rubetekZone(zone, own), prices, forecast.temps, 1.0,
                         peakBan = !zone.peakHeat, onOff = true,
                         startTemp = currentTemp(zone), startHour = LocalTime.now().hour,
                     )
-                    val events = onOffEvents(plan, LocalTime.now().let { it.hour * 60 + it.minute })
+                    val plan = HeatingPlanner.deployPlan(planned)
+                    val nowMinute = LocalTime.now().let { it.hour * 60 + it.minute }
+                    val events = onOffEvents(plan)
                     val foreign = writeMiTimers(XiaomiCloud(XiaomiStore(app)), id, zone.name, events)
+                    // Текущее состояние — разовой командой; в ежедневные таймеры его не пишем
+                    val desired = desiredNow(plan, nowMinute)
+                    if (d.status["switch"] != desired) {
+                        runCatching { XiaomiHub(app).send(id, "switch", desired, ControlMode.AUTO) }
+                            .onFailure { AppLog.e("Отопление: ${zone.name} — не удалось переключить обогреватель сейчас", it) }
+                    }
                     schedules.remove(id)
                     lines += "${zone.name}: расписание Mi Home — " + events.joinToString(", ") { (m, on) ->
                         "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл")
                     } + " (температура ${own.toInt()}° с обогревателя)" +
-                        if (foreign > 0) "; удалено чужих таймеров: $foreign" else ""
+                        (if (foreign > 0) "; удалено чужих таймеров: $foreign" else "") +
+                        fallbackNote(planned)
                     ok++
                 } catch (e: Exception) {
                     AppLog.e("Отопление: ${zone.name} — Mi Home не ответил", e)
@@ -160,19 +169,25 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
                     // Дежурство: считаем, что на конвекторе стоит дежурная уставка (обычно 12°), а не домашняя
                     val own = zone.assumedSetpoint ?: real
                         ?: throw IllegalStateException("неизвестна уставка конвектора")
-                    val plan = HeatingPlanner.plan(
+                    val planned = HeatingPlanner.plan(
                         rubetekZone(zone, own), prices, forecast.temps, 1.0,
                         peakBan = !zone.peakHeat, onOff = true,
                         startTemp = currentTemp(zone), startHour = LocalTime.now().hour,
                     )
-                    val events = onOffEvents(plan, LocalTime.now().let { it.hour * 60 + it.minute })
+                    val plan = HeatingPlanner.deployPlan(planned)
+                    val nowMinute = LocalTime.now().let { it.hour * 60 + it.minute }
+                    val events = onOffEvents(plan)
                     writeRubetekTimers(rubetek, id, events)
+                    // Текущее состояние — разовой командой; в ежедневные таймеры его не пишем
+                    val desired = desiredNow(plan, nowMinute)
+                    runCatching { setRubetekNow(device, rubetek, desired) }
+                        .onFailure { AppLog.e("Отопление: ${zone.name} — не удалось переключить конвектор сейчас", it) }
                     schedules.remove(id)
                     lines += "${zone.name}: таймеры в модуле — " + events.joinToString(", ") { (m, on) ->
                         "%02d:%02d %s".format(m / 60, m % 60, if (on) "вкл" else "выкл")
-                    } + if (zone.assumedSetpoint != null) {
+                    } + (if (zone.assumedSetpoint != null) {
                         " (считается, что на конвекторе ${own.toInt()}°; сейчас на нём ${real?.let { "${it.toInt()}°" } ?: "неизвестно"})"
-                    } else " (температура ${own.toInt()}° с конвектора)"
+                    } else " (температура ${own.toInt()}° с конвектора)") + fallbackNote(planned)
                     ok++
                 } catch (e: Exception) {
                     AppLog.e("Отопление: ${zone.name} — Rubetek не ответил", e)
@@ -184,16 +199,17 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
                 val spec = specOf(client, id)
                 val stepSpec = spec[setpointCode(spec) ?: "heating_temp_stop"]
                 setpointCommands(spec, 20.0) ?: throw IllegalStateException("нет уставки температуры")
-                val plan = HeatingPlanner.plan(
+                val planned = HeatingPlanner.plan(
                     zone, prices, forecast.temps, stepOf(stepSpec),
                     startTemp = currentTemp(zone), startHour = LocalTime.now().hour,
                 )
+                val plan = HeatingPlanner.deployPlan(planned)
 
                 // Термостат с недельной программой на борту: пишем план прямо в него (работает без интернета)
                 val model = runCatching { client.getThingModel(id) }.getOrDefault(emptyMap())
                 val progCode = PROGRAM_CODES.firstOrNull { model[it]?.writable == true }
                 if (progCode != null) {
-                    lines += writeProgram(client, zone, id, progCode, plan, prices)
+                    lines += writeProgram(client, zone, id, progCode, plan, prices) + fallbackNote(planned)
                     ok++
                     continue
                 }
@@ -219,11 +235,11 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
                 runCatching { sendTuya(client, id, now) }
                     .onFailure { AppLog.e("Отопление: ${zone.name} — уставка сейчас не отправлена", it) }
 
-                lines += if (viaPhone) {
+                lines += (if (viaPhone) {
                     "${zone.name}: план в телефоне, переключений ${changes(plan.setpoints)}"
                 } else {
                     "${zone.name}: записано ${instructs.size} переключений"
-                }
+                }) + fallbackNote(planned)
                 ok++
             } catch (e: Exception) {
                 AppLog.e("Отопление: ${zone.name} — план не записан", e)
@@ -640,6 +656,25 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
 
     private fun changes(sp: DoubleArray) = (0 until 24).count { sp[it] != sp[(it + 23) % 24] }
 
+    /** Пометка к отчёту, если вместо оптимального плана записан аварийный график. */
+    private fun fallbackNote(planned: ZonePlan): String =
+        if (HeatingPlanner.isUnsafe(planned)) {
+            " (план не держит комфорт ${"%.1f".format(planned.shortSteps / 4.0)} ч/сутки — " +
+                "в устройство записан аварийный график «греть в окнах»)"
+        } else ""
+
+    /** Разово включить/выключить конвектор Rubetek (в таймеры это не пишем). */
+    private suspend fun setRubetekNow(device: app.tuyacontrol.DeviceUi, rubetek: RubetekClient, on: Boolean) {
+        val (house, id) = RubetekMapper.parseId(device.id) ?: return
+        val code = when {
+            "switch" in device.status -> "switch"
+            else -> device.status.keys.firstOrNull { it.matches(Regex("switch_\\d")) } ?: return
+        }
+        if (device.status[code] == on) return
+        val state = RubetekMapper.toState(code, on) ?: return
+        rubetek.setState(house, id, state)
+    }
+
     private suspend fun specOf(client: TuyaCloudClient, id: String): Map<String, DpSpec> {
         val spec = runCatching { client.getSpecification(id) }.getOrDefault(emptyMap())
         return if (setpointCode(spec) != null) spec else spec + runCatching { client.getThingModel(id) }.getOrDefault(emptyMap())
@@ -700,27 +735,10 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
         }
 
         /** Час включения/выключения по плану: в часы, где план греет, конвектор включён. (минуты, вкл?) */
-        fun onOffEvents(plan: ZonePlan, nowMinute: Int? = null): List<Pair<Int, Boolean>> {
-            val on = BooleanArray(24) { h -> (0 until HeatingPlanner.STEPS_PER_HOUR).any { plan.heat[h * HeatingPlanner.STEPS_PER_HOUR + it] > 0 } }
-            var rel = (0 until 24)
-                .filter { h -> on[h] != on[(h + 23) % 24] }
-                .map { h -> h * 60 to on[h] }
-                .sortedBy { it.first }
-            if (rel.isEmpty()) rel = listOf(0 to on[0])
-            if (nowMinute != null) {
-                // План начинается с текущего часа; если его первое событие уже прошло, включаем/выключаем
-                // со следующей минуты, иначе таймер сработает только завтра.
-                val elapsed = Math.floorMod(nowMinute - plan.startHour * 60, 1440)
-                val desired = rel.lastOrNull { it.first <= elapsed }?.second
-                    ?: rel.firstOrNull()?.let { !it.second } ?: false
-                val cutoff = (elapsed + 1).coerceAtMost(1439)
-                rel = rel.filter { it.first > cutoff } + (cutoff to desired)
-            }
-            val events = rel
-                .map { (m, state) -> ((plan.startHour * 60 + m) % 1440) to state }
-                .sortedWith(compareBy({ it.first }, { it.second }))
-            return events
-        }
+        fun onOffEvents(plan: ZonePlan): List<Pair<Int, Boolean>> = HeatingPlanner.onOffEvents(plan)
+
+        /** Нужно ли греть прямо сейчас — разовая команда, а не ежедневный таймер. */
+        fun desiredNow(plan: ZonePlan, nowMinute: Int): Boolean = HeatingPlanner.desiredOnNow(plan, nowMinute)
 
         /** DP недельной программы термостата (в порядке предпочтения). */
         val PROGRAM_CODES = listOf("week_program3", "week_program1")

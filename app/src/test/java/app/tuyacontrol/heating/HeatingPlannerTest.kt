@@ -89,6 +89,55 @@ class HeatingPlannerTest {
     }
 
     @Test
+    fun weakHeaterDoesNotGiveUpAtLowerBound() {
+        val kitchen = HeatZone(
+            "kitchen", "Кухня",
+            windows = listOf(ComfortWindow(10, 17, 22.0), ComfortWindow(21, 1, 22.0)),
+            baseTemp = 18.0, maxTemp = 25.0,
+            powerKw = 2.0, heatRate = 0.2, lossRate = 0.025,
+        )
+        val p = HeatingPlanner.plan(
+            kitchen, prices, DoubleArray(48) { -2.0 }, step = 1.0,
+            onOff = true, startTemp = 18.0, startHour = 17,
+        )
+        assertTrue("план не держит комфорт", HeatingPlanner.isUnsafe(p))
+        assertTrue("температура не залипает на нижней границе", p.temps.min() < 14.5)
+        fun rel(hour: Int) = Math.floorMod(hour - p.startHour, 24)
+        for (h in 10 until 17) {
+            assertTrue(
+                "$h:00 — нагрев в утреннем окне",
+                (0 until HeatingPlanner.STEPS_PER_HOUR).any { p.heat[rel(h) * 4 + it] > 0 },
+            )
+        }
+    }
+
+    @Test
+    fun unsafePlanFallsBackToComfortWindows() {
+        val kitchen = HeatZone(
+            "kitchen", "Кухня",
+            windows = listOf(ComfortWindow(10, 17, 22.0), ComfortWindow(21, 1, 22.0)),
+            baseTemp = 18.0, maxTemp = 25.0,
+            powerKw = 2.0, heatRate = 0.2, lossRate = 0.025,
+        )
+        val p = HeatingPlanner.plan(
+            kitchen, prices, DoubleArray(48) { -2.0 }, step = 1.0,
+            onOff = true, startTemp = 18.0, startHour = 17,
+        )
+        val safe = HeatingPlanner.deployPlan(p)
+        assertEquals(22.0, safe.setpoints[10], 0.001)
+        assertEquals(22.0, safe.setpoints[21], 0.001)
+        assertEquals(18.0, safe.setpoints[18], 0.001)
+        val events = HeatingPlanner.onOffEvents(safe)
+        assertTrue(events.contains(10 * 60 to true))
+        assertTrue(events.contains(17 * 60 to false))
+        assertTrue(events.contains(21 * 60 to true))
+        assertTrue(events.contains(1 * 60 to false))
+        // Разовая команда: в 17:13 греть не нужно, в 10:30 — нужно
+        assertTrue(!HeatingPlanner.desiredOnNow(safe, 17 * 60 + 13))
+        assertTrue(HeatingPlanner.desiredOnNow(safe, 10 * 60 + 30))
+    }
+
+    @Test
     fun comfortWindowAcrossMidnight() {
         val w = ComfortWindow(23, 11, 23.0)
         assertTrue(w.covers(23) && w.covers(0) && w.covers(10))
