@@ -51,6 +51,12 @@ object HeatingPlanner {
     /** Штраф за каждый градус ниже границы комфорта на шаге, ₽ — практически запрет. */
     private const val PENALTY = 1000.0
 
+    /** Больше этого числа шагов (2 часа) без комфорта — план считается небезопасным для записи. */
+    const val MAX_SHORT_STEPS = 2 * STEPS_PER_HOUR
+
+    /** Нагрев медленнее 0,5°/ч для настоящего обогревателя — почти наверняка ошибка подбора. */
+    const val MIN_HEAT_RATE = 0.5
+
     /**
      * @param prices цены по часам суток (повторяются на вторые сутки)
      * @param outdoor уличная температура по часам, 48 значений (если меньше — последний повторяется)
@@ -176,6 +182,73 @@ object HeatingPlanner {
         )
     }
 
+    /**
+     * План не держит комфорт дольше двух часов в сутки: писать его в приборы нельзя — оставшиеся
+     * окна комфорта окажутся без нагрева. Такой план заменяется аварийным «греть в окнах».
+     */
+    fun isUnsafe(plan: ZonePlan) = plan.shortSteps > MAX_SHORT_STEPS
+
+    /** Текущие параметры зоны выглядят ошибочными: мощный прибор не может греть так медленно. */
+    fun isSuspiciousHeat(zone: HeatZone) = zone.powerKw >= 1.0 && zone.heatRate < MIN_HEAT_RATE
+
+    /** Что писать в устройство: обычный план, а если он не держит комфорт — аварийный график. */
+    fun deployPlan(plan: ZonePlan): ZonePlan = if (isUnsafe(plan)) comfortFallback(plan) else plan
+
+    /**
+     * Аварийный график: держать уставку по окнам комфорта и дежурную вне них.
+     * Конвектор включается на часы окон; если окон нет (дежурство) — работает постоянно.
+     */
+    fun comfortFallback(plan: ZonePlan): ZonePlan {
+        val zone = plan.zone
+        val setpoints = DoubleArray(24) { zone.targetAt(it) }
+        val hasWindow = zone.windows.any { it.temp > zone.baseTemp + 1e-9 }
+        val heat = DoubleArray(24 * STEPS_PER_HOUR) { k ->
+            val h = (plan.startHour + k / STEPS_PER_HOUR) % 24
+            if (!hasWindow || zone.windows.any { it.covers(h) && it.temp > zone.baseTemp + 1e-9 }) 1.0 else 0.0
+        }
+        return ZonePlan(
+            zone = zone, temps = plan.temps, heat = heat, minTemps = plan.minTemps,
+            setpoints = setpoints, kwh = plan.kwh, cost = plan.cost,
+            baselineKwh = plan.baselineKwh, baselineCost = plan.baselineCost,
+            kwhByZone = plan.kwhByZone, shortSteps = plan.shortSteps,
+            startHour = plan.startHour, startTemp = plan.startTemp,
+        )
+    }
+
+    /** Часы, в которые план греет (относительно часа старта). */
+    private fun heatHours(plan: ZonePlan): BooleanArray = BooleanArray(24) { h ->
+        (0 until STEPS_PER_HOUR).any { plan.heat[h * STEPS_PER_HOUR + it] > 0 }
+    }
+
+    private fun transitions(plan: ZonePlan): List<Pair<Int, Boolean>> {
+        val on = heatHours(plan)
+        return (0 until 24)
+            .filter { h -> on[h] != on[(h + 23) % 24] }
+            .map { h -> h * 60 to on[h] }
+            .sortedBy { it.first }
+    }
+
+    /** Час включения/выключения по плану: в часы, где план греет, прибор включён. (минуты, вкл?) */
+    fun onOffEvents(plan: ZonePlan): List<Pair<Int, Boolean>> {
+        var rel = transitions(plan)
+        if (rel.isEmpty()) rel = listOf(0 to heatHours(plan)[0])
+        return rel
+            .map { (m, state) -> ((plan.startHour * 60 + m) % 1440) to state }
+            .sortedWith(compareBy({ it.first }, { it.second }))
+    }
+
+    /**
+     * Нужно ли греть прямо сейчас. Это разовая команда прибору, а не ежедневный таймер:
+     * иначе «поставить текущее состояние» останется в расписании навсегда.
+     */
+    fun desiredOnNow(plan: ZonePlan, nowMinute: Int): Boolean {
+        val rel = transitions(plan)
+        if (rel.isEmpty()) return heatHours(plan)[0]
+        val elapsed = Math.floorMod(nowMinute - plan.startHour * 60, 1440)
+        return rel.lastOrNull { it.first <= elapsed }?.second
+            ?: rel.firstOrNull()?.let { !it.second } ?: false
+    }
+
     /** Динамическое программирование: температуры (первые сутки, 97 точек) и доли нагрева (96). */
     private fun solve(
         zone: HeatZone,
@@ -205,7 +278,7 @@ object HeatingPlanner {
                 // Запрет на нагрев в пик, пока комната не остыла ниже дежурной
                 val levels = if (ban != null && ban[k] && t >= zone.baseTemp) 1 else LEVELS.size
                 for (u in 0 until levels) {
-                    val t2 = (t + DT * (h * LEVELS[u] - a * (t - tout[k]))).coerceIn(lo, hi)
+                    val t2 = (t + DT * (h * LEVELS[u] - a * (t - tout[k]))).coerceAtMost(hi)
                     // Выше потолка греть нельзя (без накопления тепла)
                     if (u > 0 && cap != null && t2 > cap[k + 1] + 1e-9) continue
                     val short = (minT[k + 1] - t2).coerceAtLeast(0.0)
@@ -231,7 +304,7 @@ object HeatingPlanner {
             val i = ((t - lo) / GRID).roundToInt().coerceIn(0, states - 1)
             val u = LEVELS[policy[k][i].toInt()]
             heat[k] = u
-            t = (t + DT * (h * u - a * (t - tout[k]))).coerceIn(lo, hi)
+            t = (t + DT * (h * u - a * (t - tout[k]))).coerceAtMost(hi)
             temps[k + 1] = t
         }
         return temps to heat
@@ -260,10 +333,10 @@ object HeatingPlanner {
 
         fun stepOf(k: Int, t: Double, on: Boolean): Pair<Double, Double> {
             val loss = a * (t - tout[k])
-            if (!on) return (t - DT * loss).coerceIn(lo, hi) to 0.0
+            if (!on) return (t - DT * loss).coerceAtMost(hi) to 0.0
             val raw = t + DT * (h - loss)
-            if (raw <= ceiling + 1e-9) return raw.coerceIn(lo, hi) to 1.0
-            if (t >= ceiling) return (t - DT * loss).coerceIn(lo, hi) to 0.0
+            if (raw <= ceiling + 1e-9) return raw.coerceAtMost(hi) to 1.0
+            if (t >= ceiling) return (t - DT * loss).coerceAtMost(hi) to 0.0
             return ceiling to (((ceiling - t) / DT + loss) / h).coerceIn(0.0, 1.0)
         }
 

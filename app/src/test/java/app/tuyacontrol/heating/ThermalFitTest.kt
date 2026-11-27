@@ -59,4 +59,14 @@ class ThermalFitTest {
         val r = ThermalFit.fit(good + bad + List(6) { ThermalFit.Sample(1.0, 1.0, 15.0) })
         assertEquals(0.01, r.lossRate!!, 0.001)
     }
+
+    @Test
+    fun tinyHeatRateIsNotApplied() {
+        // Остывание 1 %/ч, но «нагрев» в истории даёт всего 0,2°/ч — почти наверняка ошибка датчика/режима.
+        val samples = List(20) { ThermalFit.Sample(-0.15, 0.0, 15.0) } +
+            List(6) { ThermalFit.Sample(0.05, 1.0, 15.0) }
+        val r = ThermalFit.fit(samples)
+        assertNull(r.heatRate)
+        assertNotNull(r.problem)
+    }
 }
