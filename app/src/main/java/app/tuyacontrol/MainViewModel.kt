@@ -165,8 +165,9 @@ data class DeviceUi(
         get() {
             if (!online || isSensor) return null
             val main = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
-            // TC02W и подобные: switch_1 — это и есть нагрев
-            if ("real_temp" in status) return main
+            // TC02W: огонёк = реле switch_1, но только когда выбран режим heating.
+            // В keep off/cooling нагрев не показываем, даже если реле почему-то включено.
+            if ("real_temp" in status) return if (heatingModeOn == false) false else main
             status["work_state"]?.let { v ->
                 if (main == false) return false
                 return when (v.toString().lowercase()) {

@@ -63,5 +63,8 @@ class DeviceUiThermostatTest {
         assertEquals(true, cooling.coolingModeOn)
         // реле выключено, но режим heating — кнопка должна быть включена
         assertEquals(false, thermostat(modes).heatingNow)
+        // огонёк: реле switch_1 И режим heating
+        assertEquals(true, thermostat(modes + ("switch_1" to true)).heatingNow)
+        assertEquals(false, thermostat(modes + mapOf("switch_1" to true, "manual_off" to true)).heatingNow)
     }
 }
