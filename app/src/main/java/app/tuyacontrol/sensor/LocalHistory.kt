@@ -75,11 +75,12 @@ object LocalHistory {
         raw["work_state"]?.let { return it.toString().lowercase() in setOf("1", "heating", "heat", "hot", "warming", "true", "open", "on") }
         raw["valve_state"]?.let { return it.toString().lowercase() in setOf("open", "1", "true", "on") }
         if ("heating_temp_start" in raw) return raw["switch"] as? Boolean
-        // TC02W: отдельного реле нет; «греет» — режим heating и факт ниже уставки
+        // TC02W: отдельного реле нет; «греет» — режим heating и факт ниже уставки с гистерезисом
         if ("real_temp" in raw && "set_temp" in raw) {
             val real = (raw["real_temp"] as? Number)?.toDouble()
             val set = (raw["set_temp"] as? Number)?.toDouble()
-            if (real != null && set != null) return real < set - 1.0
+            val range = (raw["positive_temp_range_C"] as? Number)?.toDouble() ?: 1.0
+            if (real != null && set != null) return real <= set - range
         }
         return null
     }

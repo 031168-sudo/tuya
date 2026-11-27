@@ -71,4 +71,16 @@ class DeviceUiThermostatTest {
             thermostat(modes + mapOf("real_temp" to 200, "set_temp" to 215, "manual_off" to true)).heatingNow,
         )
     }
+
+    @Test
+    fun hysteresisFromPositiveTempRange() {
+        val base = mapOf(
+            "switch_1" to false, "heating" to true, "manual_off" to false, "cooling" to false,
+            "set_temp" to 215, "positive_temp_range_C" to 5,
+        )
+        // 21,1° при уставке 21,5° и гистерезисе 0,5° — ещё не включаем
+        assertEquals(false, thermostat(base + ("real_temp" to 211)).heatingNow)
+        // 20,9° — уже ниже порога 21,0° — включаем
+        assertEquals(true, thermostat(base + ("real_temp" to 209)).heatingNow)
+    }
 }
