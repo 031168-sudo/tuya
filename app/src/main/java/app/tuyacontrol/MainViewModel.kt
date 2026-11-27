@@ -77,9 +77,17 @@ data class DeviceUi(
     val mainSwitchOn: Boolean?
         get() = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
 
+    /** У TC02W и подобных switch_1 — это «обогрев», а не питание: так и подписываем. */
+    val heatingSwitchCode: String?
+        get() = if ("set_temp" in status || "real_temp" in status) {
+            MAIN_SWITCHES.firstOrNull { it in status }
+        } else null
+
     /** По умолчанию: у приборов с выключателем (полы, Xiaomi) температура верна только когда включены. */
     val defaultTempOnlyWhenOn: Boolean
         get() = !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) && !switchIsRelay && heatingPresetOn == null &&
+            // У TC02W real_temp — отдельный датчик комнаты, он работает и при выключенном обогреве
+            "real_temp" !in status &&
             mainSwitchOn != null
 
     /** Показанная температура устарела: нет связи или прибор выключен, а верна она только у включённого. */
@@ -98,7 +106,8 @@ data class DeviceUi(
      */
     val switchedOff: Boolean
         get() {
-            if (!online || isSensor || productName.contains(ALWAYS_ON_PRODUCT)) return false
+            // real_temp приходит и при выключенном обогреве — это не «устаревшее» показание
+            if (!online || isSensor || productName.contains(ALWAYS_ON_PRODUCT) || "real_temp" in status) return false
             val main = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
             return main == false
         }
@@ -111,6 +120,12 @@ data class DeviceUi(
         get() = category == SENSOR_CATEGORY ||
             SENSOR_HINTS.any { productName.contains(it, ignoreCase = true) || name.contains(it, ignoreCase = true) }
 
+    /** Канал текущей температуры, если у устройства есть такой DP (для мини-графика). */
+    val temperatureChannel: SensorChannel?
+        get() = SensorDevice.TEMPERATURE_CODES.firstOrNull { it in status }?.let { code ->
+            SensorChannel(code, spec[code]?.scale ?: 0, spec[code]?.unit.orEmpty())
+        }
+
     /** Температура/влажность для экрана истории датчика (null — у устройства таких DP нет). */
     val sensorDevice: SensorDevice?
         get() {
@@ -119,7 +134,7 @@ data class DeviceUi(
             }
             // Датчик Siren Temperature and Humidity не пишет журнал в облако — истории у него нет
             if (NO_HISTORY_PRODUCTS.any { productName.contains(it, ignoreCase = true) }) return null
-            val temperature = channel(SensorDevice.TEMPERATURE_CODES)
+            val temperature = temperatureChannel
             val humidity = channel(SensorDevice.HUMIDITY_CODES)
             if (temperature == null && humidity == null) return null
             return SensorDevice(
@@ -134,7 +149,8 @@ data class DeviceUi(
         get() = when {
             isSensor -> "sensors"
             hasEnergy -> "electric_meter"
-            "temp_set" in status || productName.contains("温控") -> "device_thermostat"
+            "temp_set" in status || "set_temp" in status || "real_temp" in status ||
+                productName.contains("温控") || productName.contains("thermostat", true) -> "device_thermostat"
             "switch_led" in status || category == "dj" -> "lightbulb"
             category == "rubetek" || category == "cz" || productName.contains("socket", true) || productName.contains("plug", true) -> "outlet"
             sensorDevice != null -> "thermostat"
@@ -149,6 +165,8 @@ data class DeviceUi(
         get() {
             if (!online || isSensor) return null
             val main = MAIN_SWITCHES.firstNotNullOfOrNull { status[it] as? Boolean }
+            // TC02W и подобные: switch_1 — это и есть нагрев
+            if ("real_temp" in status) return main
             status["work_state"]?.let { v ->
                 if (main == false) return false
                 return when (v.toString().lowercase()) {
@@ -224,6 +242,8 @@ data class DeviceUi(
     val setpointCode: String?
         get() {
             if ("temp_set" in status || "temp_set" in spec) return "temp_set"
+            // TC02W: уставка называется set_temp
+            if ("set_temp" in status || "set_temp" in spec) return "set_temp"
             // Терморегулятор S1TW (батарея в ванной): уставкой служит порог выключения нагрева
             if ("heating_temp_stop" in status && "heating_temp_start" in status) return "heating_temp_stop"
             return (status.keys + spec.keys).firstOrNull { c ->
@@ -712,22 +732,51 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 .getOrDefault(emptyMap())
                             if (shadow.isNotEmpty()) {
                                 if (!useThingModel) AppLog.i("${d.name}: использую Things Data Model (${shadow.size} DP)")
-                                status = shadow
+                                // При обновлении shadow может быть неполным — сохраняем и стандартные DP
+                                status = if (useThingModel && status.isNotEmpty()) status + shadow else shadow
                                 useThingModel = true
                                 thingModelDevices += d.id
                             }
                         }
 
-                        // Термостаты «Temp»: в стандартном статусе нет work_state (греет / не греет),
-                        // он есть только в shadow — дополняем недостающими DP
-                        if (!useThingModel && d.category == "wk" && "work_state" !in status) {
+                        // Термостаты (TC02W и подобные): в стандартном статусе только switch_1,
+                        // а текущая температура real_temp и уставка set_temp лежат в shadow.
+                        // И «Temp»-термостаты: work_state (греет / не греет) тоже только в shadow.
+                        val thermostatLike = d.category == "wk" ||
+                            d.productName.contains("thermostat", ignoreCase = true) ||
+                            d.productName.contains("TC02W", ignoreCase = true) ||
+                            d.productName.contains("温控") ||
+                            ("switch_1" in status && "temp_correction" in status)
+                        val needThermostatShadow = !useThingModel && (
+                            (thermostatLike && ("real_temp" !in status || "set_temp" !in status)) ||
+                                (d.category == "wk" && "work_state" !in status)
+                            )
+                        if (needThermostatShadow) {
                             val shadow = runCatching { c.getShadowProperties(d.id) }.getOrDefault(emptyMap())
                             val extra = shadow.filterKeys { it !in status }
-                            if (extra.isNotEmpty()) status = status + extra
+                            if (extra.isNotEmpty()) {
+                                status = status + extra
+                                if ("real_temp" in extra || "set_temp" in extra) {
+                                    // real_temp/set_temp — кастомные DP модели; команды и журнал — через v2
+                                    useThingModel = true
+                                    thingModelDevices += d.id
+                                    AppLog.i("${d.name}: температура и уставка из Things Data Model")
+                                }
+                            }
                         }
 
-                        val spec = specCache[d.id] ?: runCatching {
-                            if (useThingModel) c.getThingModel(d.id) else c.getSpecification(d.id)
+                        val cachedSpec = specCache[d.id]
+                        val customTemp = status.keys.any { it == "real_temp" || it == "set_temp" }
+                        val specComplete = cachedSpec != null && (!useThingModel || !customTemp ||
+                            cachedSpec.keys.any { it == "real_temp" || it == "set_temp" })
+                        val spec = if (specComplete) cachedSpec!! else runCatching {
+                            val base = runCatching { c.getSpecification(d.id) }.getOrDefault(emptyMap())
+                            if (useThingModel) {
+                                val model = c.getThingModel(d.id)
+                                if (model.isNotEmpty()) base + model else base
+                            } else {
+                                base
+                            }
                         }
                             .onFailure { AppLog.e("Спецификация ${d.name}", it) }
                             .getOrNull()
