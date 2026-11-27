@@ -49,4 +49,19 @@ class DeviceUiThermostatTest {
         val d = thermostat(mapOf("switch_1" to true, "real_temp" to 186, "set_temp" to 135))
         assertEquals(true, d.heatingNow)
     }
+
+    @Test
+    fun heatingModeIsSeparateFromRelay() {
+        val modes = mapOf(
+            "switch_1" to false, "real_temp" to 186, "set_temp" to 135,
+            "heating" to true, "manual_off" to false, "cooling" to false,
+        )
+        assertEquals(true, thermostat(modes).heatingModeOn)
+        assertEquals(false, thermostat(modes + ("manual_off" to true)).heatingModeOn)
+        val cooling = thermostat(modes + mapOf("heating" to false, "cooling" to true))
+        assertEquals(false, cooling.heatingModeOn)
+        assertEquals(true, cooling.coolingModeOn)
+        // реле выключено, но режим heating — кнопка должна быть включена
+        assertEquals(false, thermostat(modes).heatingNow)
+    }
 }

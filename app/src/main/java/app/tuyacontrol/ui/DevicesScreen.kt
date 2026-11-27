@@ -274,6 +274,9 @@ private fun DeviceCard(
     val entries = device.status.entries.toList().filter {
         !(device.isSensor && it.value is Boolean) &&
             !(device.switchIsRelay && it.key in DeviceUi.MAIN_SWITCHES) &&
+            // TC02W: switch_1 — реле, режим переключается отдельной кнопкой heating/keep off
+            !(device.heatingModeOn != null && it.key in DeviceUi.MAIN_SWITCHES) &&
+            !(device.heatingModeOn != null && it.key in setOf("heating", "cooling", "manual_off", "timer")) &&
             // Режим ручной/программа показан отдельным переключателем
             !(it.key == "mode" && (device.programModes != null || device.isThresholdHeater))
     }
@@ -441,6 +444,27 @@ private fun DeviceCard(
                         checked = on,
                         enabled = device.online && "heating_temp_stop" !in device.pending && "heating_temp_start" !in device.pending,
                         onCheckedChange = { onCommand(device.id, DeviceUi.HEATING_PRESET, it) },
+                    )
+                }
+            }
+            device.heatingModeOn?.let { on ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Обогрев", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            when {
+                                on -> "режим heating — греет по уставке"
+                                device.coolingModeOn -> "режим cooling"
+                                else -> "keep off — не греет"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = on,
+                        enabled = device.online && DeviceUi.HEATING_MODE !in device.pending,
+                        onCheckedChange = { onCommand(device.id, DeviceUi.HEATING_MODE, it) },
                     )
                 }
             }
