@@ -191,6 +191,23 @@ data class DeviceUi(
     val isThresholdHeater: Boolean
         get() = "heating_temp_start" in status && "heating_temp_stop" in status
 
+    /**
+     * TC02W: режим «heating» (не реле). true — греем по уставке, false — keep off / cooling.
+     * null — у устройства нет таких DP.
+     */
+    val heatingModeOn: Boolean?
+        get() {
+            if ("heating" !in status && "manual_off" !in status) return null
+            val heating = status["heating"] as? Boolean ?: return null
+            val manualOff = status["manual_off"] as? Boolean ?: false
+            val cooling = status["cooling"] as? Boolean ?: false
+            return heating && !manualOff && !cooling
+        }
+
+    /** TC02W в режиме охлаждения (для подписи под кнопкой). */
+    val coolingModeOn: Boolean
+        get() = status["cooling"] as? Boolean == true && heatingModeOn != null
+
     /** Пороги нагрева есть — можно «включить/выключить отопление» сменой порогов. null — не такое устройство. */
     val heatingPresetOn: Boolean?
         get() {
@@ -268,6 +285,8 @@ data class DeviceUi(
 
         /** Псевдокод команды «вкл/выкл отопление» для батареи с порогами нагрева. */
         const val HEATING_PRESET = "__heating_preset"
+        /** Псевдокод режима TC02W: heating ↔ keep off (настоящие DP — heating/manual_off). */
+        const val HEATING_MODE = "__heating_mode"
         /** Псевдокоманды расписания облака: показать (true) / скрыть (false); все таймеры вкл/выкл. */
         const val TIMERS_SHOW = "__timers_show"
         const val TIMERS_ALL = "__timers_all"
@@ -842,6 +861,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             setHeatingPreset(deviceId, value == true)
             return
         }
+        if (code == DeviceUi.HEATING_MODE) {
+            setHeatingMode(deviceId, value == true)
+            return
+        }
         if (code == DeviceUi.TIMERS_SHOW) {
             if (value == true) loadTimers(deviceId) else { timersCache.remove(deviceId); publish() }
             return
@@ -1037,6 +1060,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             order.forEachIndexed { i, (code, v) ->
                 if (i > 0) delay(2500)
                 sendCommand(deviceId, code, v)
+            }
+        }
+    }
+
+    /**
+     * TC02W: переключить режим heating ↔ keep off. Это не реле switch_1, а DP heating/manual_off;
+     * отправляем их одним пакетом и проверяем, что прибор сообщил новые значения.
+     */
+    private fun setHeatingMode(deviceId: String, on: Boolean) {
+        val d = _state.value.devices.find { it.id == deviceId } ?: return
+        val c = client
+        if (c == null) {
+            _state.update { it.copy(message = "${d.name}: нет ключей Tuya") }
+            return
+        }
+        if (!d.online) {
+            _state.update { it.copy(message = "${d.name}: не в сети") }
+            return
+        }
+        val wanted: List<Pair<String, Any?>> = if (on) {
+            listOf("heating" to true, "manual_off" to false, "cooling" to false, "timer" to false)
+        } else {
+            listOf("manual_off" to true, "heating" to false, "cooling" to false, "timer" to false)
+        }
+        // Не отправляем заведомо read-only DP: облако может отклонить весь пакет
+        val patch = wanted.filter { (code, _) -> d.spec[code]?.writable != false }.ifEmpty { wanted }
+        val old = d.status.filterKeys { key -> patch.any { it.first == key } }
+        AppLog.i("${d.name}: режим ${if (on) "heating" else "keep off"}: $patch")
+        updateDevice(deviceId) {
+            it.copy(status = it.status + patch, pending = it.pending + DeviceUi.HEATING_MODE)
+        }
+        viewModelScope.launch {
+            try {
+                if (d.thingModel) c.sendProperties(deviceId, patch) else c.sendCommands(deviceId, patch)
+                delay(1500)
+                val fresh = runCatching {
+                    if (d.thingModel) c.getShadowProperties(deviceId) else c.getStatus(deviceId)
+                }.getOrNull()?.takeIf { it.isNotEmpty() }
+                updateDevice(deviceId) {
+                    it.copy(
+                        status = if (fresh != null) it.status + fresh else it.status,
+                        pending = it.pending - DeviceUi.HEATING_MODE,
+                    )
+                }
+                val bad = fresh?.let { f -> patch.filter { (code, v) -> code in f && f[code] != v } }.orEmpty()
+                if (bad.isNotEmpty()) {
+                    val text = bad.joinToString { (code, v) -> "$code=${fresh?.get(code)} вместо $v" }
+                    AppLog.i("${d.name}: режим не подтверждён: $text")
+                    _state.update { it.copy(message = "${d.name}: режим не подтверждён — $text") }
+                }
+            } catch (e: Exception) {
+                AppLog.e("${d.name}: режим не переключён", e)
+                updateDevice(deviceId) {
+                    it.copy(status = it.status + old, pending = it.pending - DeviceUi.HEATING_MODE)
+                }
+                _state.update { it.copy(message = "${d.name}: ${describe(e)}") }
             }
         }
     }
