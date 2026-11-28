@@ -14,7 +14,7 @@ class ThermalFitTest {
 
     @Test
     fun recoversParametersFromHistory() {
-        val samples = (0 until 60).map { i ->
+        val samples = (0 until 120).map { i ->
             val u = if (i % 4 == 0) 0.0 else 1.0
             sample(u, 10.0 + i % 20)
         }
@@ -29,7 +29,7 @@ class ThermalFitTest {
     @Test
     fun worksWithOnlyFourCoolHours() {
         // Раньше требовалось 12 часов без нагрева; теперь хватает четырёх
-        val samples = (0 until 30).map { i -> sample(if (i < 4) 0.0 else 1.0, 15.0 + i % 10) }
+        val samples = (0 until 120).map { i -> sample(if (i < 16) 0.0 else 1.0, 15.0 + i % 10) }
         val r = ThermalFit.fit(samples)
         assertNull(r.problem)
         assertEquals(2.5, r.heatRate!!, 0.01)
@@ -52,7 +52,7 @@ class ThermalFitTest {
 
     @Test
     fun outliersDoNotBreakTheFit() {
-        val good = (0 until 60).map { i -> sample(if (i % 4 == 0) 0.0 else 1.0, 12.0 + i % 15) }
+        val good = (0 until 120).map { i -> sample(if (i % 4 == 0) 0.0 else 1.0, 12.0 + i % 15) }
         val bad = List(3) { ThermalFit.Sample(5.0, 1.0, 15.0) } +
             List(3) { ThermalFit.Sample(-5.0, 0.0, 15.0) }
         val r = ThermalFit.fit(good + bad)
@@ -63,7 +63,7 @@ class ThermalFitTest {
 
     @Test
     fun inferredHeatIsMarkedApproximate() {
-        val samples = (0 until 60).map { i ->
+        val samples = (0 until 120).map { i ->
             sample(if (i % 4 == 0) 0.0 else 1.0, 12.0 + i % 15, inferred = i % 2 == 0)
         }
         val r = ThermalFit.fit(samples)

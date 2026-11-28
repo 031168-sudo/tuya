@@ -48,10 +48,10 @@ class ZoneLearner(context: Context) {
         // Температура — с прибора для измерения, если он выбран; «греет» — всегда с нагревательного
         val tid = zone.tempDeviceId ?: id
         val tcode = tempCodes[tid] ?: "temp_current"
-        val temps = db.series(tid, tcode, from, now, HOUR).associate { it.time to it.avg }
-        if (temps.size < 24) return@withContext fail("мало истории температуры (${temps.size} ч)")
-        val outdoor = db.series(oid, ocode, from, now, HOUR).associate { it.time to it.avg }
-        if (outdoor.size < 24) return@withContext fail("мало истории уличного датчика (${outdoor.size} ч)")
+        val temps = db.series(tid, tcode, from, now, STEP).associate { it.time to it.avg }
+        if (temps.size < 24 * 4) return@withContext fail("мало истории температуры (${temps.size / 4} ч)")
+        val outdoor = db.series(oid, ocode, from, now, STEP).associate { it.time to it.avg }
+        if (outdoor.size < 24 * 4) return@withContext fail("мало истории уличного датчика (${outdoor.size / 4} ч)")
 
         fun stateAt(events: List<Pair<Long, Boolean>>, t: Long): Boolean? {
             var lo = 0
@@ -91,7 +91,7 @@ class ZoneLearner(context: Context) {
             db.series(id, "power_s", from, now, 60_000L).forEach { power += it.time to (it.avg >= 0.5) }
             power.sortBy { it.first }
             if (power.isEmpty()) return@withContext fail("нет истории вкл/выкл")
-            val setpoints = db.series(id, "setpoint", from, now, HOUR).associate { it.time to it.avg }
+            val setpoints = db.series(id, "setpoint", from, now, STEP).associate { it.time to it.avg }
             val assumed = zone.assumedSetpoint
             fun setAt(t: Long): Double? {
                 assumed?.let { return it }
@@ -100,14 +100,14 @@ class ZoneLearner(context: Context) {
             }
             for (k in hours) {
                 val t0 = temps[k] ?: continue
-                val t1 = temps[k + HOUR] ?: continue
-                val out = outdoor[k] ?: outdoor[k + HOUR] ?: outdoor[k - HOUR] ?: continue
-                val a = k + HOUR / 2
-                val b = k + HOUR + HOUR / 2
+                val t1 = temps[k + STEP] ?: continue
+                val out = outdoor[k] ?: outdoor[k + STEP] ?: outdoor[k - STEP] ?: continue
+                val a = k + STEP / 2
+                val b = k + STEP + STEP / 2
                 val powerOn = stateAt(power, a) ?: continue
                 val mid = (t0 + t1) / 2
                 val diff = mid - out
-                val rise = t1 - t0
+                val rise = (t1 - t0) * 4.0
                 val sample = if (!powerOn) {
                     if (rise > 0.05) null else ThermalFit.Sample(rise, 0.0, diff, inferred = false)
                 } else {
@@ -157,12 +157,12 @@ class ZoneLearner(context: Context) {
             if (events.isEmpty()) return@withContext fail("нет истории «греет / не греет»")
             for (k in hours) {
                 val t0 = temps[k] ?: continue
-                val t1 = temps[k + HOUR] ?: continue
-                val out = outdoor[k] ?: outdoor[k + HOUR] ?: outdoor[k - HOUR] ?: continue
-                val a = k + HOUR / 2
-                val b = k + HOUR + HOUR / 2
+                val t1 = temps[k + STEP] ?: continue
+                val out = outdoor[k] ?: outdoor[k + STEP] ?: outdoor[k - STEP] ?: continue
+                val a = k + STEP / 2
+                val b = k + STEP + STEP / 2
                 val u = uOver(events, a, b) ?: continue
-                val rise = t1 - t0
+                val rise = (t1 - t0) * 4.0
                 // «Включён, но температура стоит» — это цикл реле/уставка, а не полная мощность.
                 // Такие часы не должны занижать heatRate.
                 if (u >= 0.5 && rise < 0.05) continue
@@ -175,18 +175,19 @@ class ZoneLearner(context: Context) {
         val days = ((now - hours.first()) / DAY).toInt().coerceAtLeast(1)
         val r = ThermalFit.fit(samples)
         AppLog.i(
-            "Подбор «${zone.name}»: часов ${samples.size} (без нагрева ${r.coolHours}, с нагревом ${r.heatHours}), " +
+            "Подбор «${zone.name}»: точек ${samples.size} (без нагрева ${r.coolHours / 4} ч, с нагревом ${r.heatHours / 4} ч), " +
                 "нагрев ${r.heatRate?.let { "%.2f".format(it) }}°/ч, остывание ${r.lossRate?.let { "%.1f".format(it * 100) }}%/ч" +
                 (r.note?.let { " ($it)" } ?: "") + (r.problem?.let { " — $it" } ?: ""),
         )
         LearnInfo(
-            now, r.heatRate, r.lossRate, r.coolHours, r.heatHours, days, r.problem,
+            now, r.heatRate, r.lossRate, r.coolHours / 4, r.heatHours / 4, days, r.problem,
             approximate = r.approximate, note = r.note,
         )
     }
 
     private companion object {
         const val HOUR = 3600_000L
+        const val STEP = 15 * 60_000L
         const val DAY = 24 * HOUR
     }
 }

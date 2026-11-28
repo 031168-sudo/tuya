@@ -42,9 +42,10 @@ object ThermalFit {
         val mae: Double = 0.0,
     )
 
-    const val MIN_SAMPLES = 24
-    const val MIN_HEAT_HOURS = 6
-    const val MIN_COOL_HOURS = 4
+    // Считаем по 15-минутным точкам: 4 точки = час
+    const val MIN_SAMPLES = 24 * 4
+    const val MIN_HEAT_HOURS = 6 * 4
+    const val MIN_COOL_HOURS = 4 * 4
     const val MIN_HEAT_RATE = 0.1
     const val MAX_HEAT_RATE = 15.0
     const val MIN_LOSS = 0.002
@@ -63,13 +64,13 @@ object ThermalFit {
         val heatHours = samples.count { it.u >= 0.5 }
         val coolHours = samples.count { it.u <= 0.1 }
         if (samples.size < MIN_SAMPLES) {
-            return Result(null, null, coolHours, heatHours, "мало истории температуры (${samples.size} ч, нужно $MIN_SAMPLES)")
+            return Result(null, null, coolHours, heatHours, "мало истории температуры (${samples.size / 4} ч, нужно ${MIN_SAMPLES / 4})")
         }
         if (heatHours < MIN_HEAT_HOURS) {
-            return Result(null, null, coolHours, heatHours, "мало часов с нагревом ($heatHours из $MIN_HEAT_HOURS)")
+            return Result(null, null, coolHours, heatHours, "мало часов с нагревом (${heatHours / 4} из ${MIN_HEAT_HOURS / 4})")
         }
         if (coolHours < MIN_COOL_HOURS) {
-            return Result(null, null, coolHours, heatHours, "мало часов без нагрева ($coolHours из $MIN_COOL_HOURS)")
+            return Result(null, null, coolHours, heatHours, "мало часов без нагрева (${coolHours / 4} из ${MIN_COOL_HOURS / 4})")
         }
 
         var h = 2.0
