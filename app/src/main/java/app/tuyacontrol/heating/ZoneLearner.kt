@@ -109,7 +109,7 @@ class ZoneLearner(context: Context) {
                 val diff = mid - out
                 val rise = t1 - t0
                 val sample = if (!powerOn) {
-                    ThermalFit.Sample(rise, 0.0, diff, inferred = false)
+                    if (rise > 0.05) null else ThermalFit.Sample(rise, 0.0, diff, inferred = false)
                 } else {
                     val set = setAt(a)
                     when {
@@ -133,12 +133,15 @@ class ZoneLearner(context: Context) {
                     .onFailure { AppLog.e("Подбор «${zone.name}»: журнал нагрева не прочитан", it) }
                     .getOrDefault(emptyList())
                 val hasState = logs.any { it.code == "work_state" || it.code == "valve_state" }
+                val hasSwitch = logs.any { it.code == "switch" || it.code == "switch_1" }
+                // Для тёплого пола work_state часто означает режим, а не реле. Приоритет — switch.
+                val useSwitch = zone.isFloor && hasSwitch
                 for (e in logs) {
                     val v = e.value.lowercase()
                     val on = when {
-                        e.code == "work_state" -> v in setOf("1", "heating", "heat", "hot", "warming", "true", "open", "on")
-                        e.code == "valve_state" -> v in setOf("open", "1", "true", "on")
-                        (e.code == "switch" || e.code == "switch_1") && !hasState -> v == "true"
+                        e.code == "work_state" && !useSwitch -> v in setOf("1", "heating", "heat", "hot", "warming", "true", "open", "on")
+                        e.code == "valve_state" && !useSwitch -> v in setOf("open", "1", "true", "on")
+                        (e.code == "switch" || e.code == "switch_1") && (useSwitch || !hasState) -> v == "true"
                         else -> continue
                     }
                     events += e.time to on
@@ -153,7 +156,12 @@ class ZoneLearner(context: Context) {
                 val a = k + HOUR / 2
                 val b = k + HOUR + HOUR / 2
                 val u = uOver(events, a, b) ?: continue
-                samples += ThermalFit.Sample(t1 - t0, u, (t0 + t1) / 2 - out, inferred = false)
+                val rise = t1 - t0
+                // «Включён, но температура стоит» — это цикл реле/уставка, а не полная мощность.
+                // Такие часы не должны занижать heatRate.
+                if (u >= 0.5 && rise < 0.05) continue
+                if (u <= 0.1 && rise > 0.05) continue
+                samples += ThermalFit.Sample(rise, u, (t0 + t1) / 2 - out, inferred = false)
             }
         }
 
