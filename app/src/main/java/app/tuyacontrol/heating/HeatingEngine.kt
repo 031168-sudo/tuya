@@ -541,13 +541,15 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
             var info = runCatching { learner.learn(z, s, client, z.deviceId in relays) }
                 .getOrElse { LearnInfo(System.currentTimeMillis(), null, null, 0, 0, 0, it.message ?: it.javaClass.simpleName) }
             if (z.autoTune && info.problem == null && info.heatRate != null && info.lossRate != null) {
-                // Приблизительный подбор (Rubetek/Xiaomi, нагрев выведен косвенно) меняем осторожнее
-                fun limit(new: Double, old: Double) =
-                    if (info.approximate) new.coerceIn(old * 0.7, old * 1.3) else new.coerceIn(old / 2, old * 2)
-                val updated = z.copy(
-                    heatRate = limit(info.heatRate!!, z.heatRate),
-                    lossRate = limit(info.lossRate!!, z.lossRate),
-                )
+                // Измеренный подбор применяем сразу; приблизительный (Rubetek/Xiaomi) меняем осторожнее
+                val updated = if (info.approximate) {
+                    z.copy(
+                        heatRate = info.heatRate!!.coerceIn(z.heatRate * 0.7, z.heatRate * 1.3),
+                        lossRate = info.lossRate!!.coerceIn(z.lossRate * 0.7, z.lossRate * 1.3),
+                    )
+                } else {
+                    z.copy(heatRate = info.heatRate!!, lossRate = info.lossRate!!)
+                }
                 zones = zones.map { if (it.id == z.id) updated else it }
                 info = info.copy(applied = true)
             }
