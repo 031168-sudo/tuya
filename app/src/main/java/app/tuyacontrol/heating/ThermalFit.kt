@@ -58,7 +58,11 @@ object ThermalFit {
      * Совместный робастный подбор heatRate и lossRate.
      * @param all часы истории; [Sample.inferred] — нагрев не измерен, а выведен.
      */
-    fun fit(all: List<Sample>): Result {
+    fun fit(
+        all: List<Sample>,
+        minHeatHours: Int = 6,
+        minCoolHours: Int = 4,
+    ): Result {
         // Скачки (открыли окно, сбой датчика) и слишком маленькая разница с улицей не помогают
         val samples = all.filter { abs(it.dTdt) <= 6.0 && it.diff > 1.0 && it.u in 0.0..1.0 }
         val heatHours = samples.count { it.u >= 0.5 }
@@ -66,11 +70,11 @@ object ThermalFit {
         if (samples.size < MIN_SAMPLES) {
             return Result(null, null, coolHours, heatHours, "мало истории температуры (${samples.size / 4} ч, нужно ${MIN_SAMPLES / 4})")
         }
-        if (heatHours < MIN_HEAT_HOURS) {
-            return Result(null, null, coolHours, heatHours, "мало часов с нагревом (${heatHours / 4} из ${MIN_HEAT_HOURS / 4})")
+        if (heatHours < minHeatHours * 4) {
+            return Result(null, null, coolHours, heatHours, "мало часов с нагревом (${heatHours / 4} из $minHeatHours)")
         }
-        if (coolHours < MIN_COOL_HOURS) {
-            return Result(null, null, coolHours, heatHours, "мало часов без нагрева (${coolHours / 4} из ${MIN_COOL_HOURS / 4})")
+        if (coolHours < minCoolHours * 4) {
+            return Result(null, null, coolHours, heatHours, "мало часов без нагрева (${coolHours / 4} из $minCoolHours)")
         }
 
         var h = 2.0
@@ -109,6 +113,15 @@ object ThermalFit {
             return Result(null, null, coolHours, heatHours, "остывание вне разумных пределов (${"%.1f".format(a * 100)}%/ч)")
         }
 
+        // Планировщику нужна скорость на быстрых участках, а не средняя: короткий нагрев
+        // 20→23 за 30 минут не должен превращаться в 1,5°/ч. Берём 75-й процентиль.
+        val fast = samples.filter { it.u >= 0.5 && it.dTdt > 0.1 }
+            .map { (it.dTdt + a * it.diff) / it.u }
+            .sorted()
+        val fastH = if (fast.size >= 4) fast[(fast.size - 1) * 3 / 4] else h
+        val usedH = maxOf(h, fastH).coerceAtMost(MAX_HEAT_RATE)
+        val byFast = usedH > h * 1.05
+
         val mae = samples.map { abs(it.dTdt - (h * it.u - a * it.diff)) }.average()
         if (mae > MAX_MAE) {
             return Result(
@@ -121,7 +134,11 @@ object ThermalFit {
         val approximate = inferred > 0
         val note = buildString {
             if (inferred > 0) append("нагрев определён косвенно: $inferred ч")
+            if (byFast) {
+                if (isNotEmpty()) append("; ")
+                append("нагрев по быстрым участкам ${"%.1f".format(usedH)}°/ч")
+            }
         }.ifEmpty { null }
-        return Result(h, a, coolHours, heatHours, null, note, approximate, mae)
+        return Result(usedH, a, coolHours, heatHours, null, note, approximate, mae)
     }
 }
