@@ -117,13 +117,9 @@ object ThermalFit {
             )
         }
         val inferred = samples.count { it.inferred }
-        val approximate = inferred > 0 || heatHours < 8 || coolHours < 8
+        val approximate = inferred > 0
         val note = buildString {
             if (inferred > 0) append("нагрев определён косвенно: $inferred ч")
-            if (approximate) {
-                if (isNotEmpty()) append("; ")
-                append("подобрано приблизительно")
-            }
         }.ifEmpty { null }
         return Result(h, a, coolHours, heatHours, null, note, approximate, mae)
     }
