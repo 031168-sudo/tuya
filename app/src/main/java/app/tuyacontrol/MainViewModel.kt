@@ -72,6 +72,8 @@ data class DeviceUi(
     val miTimers: List<app.tuyacontrol.xiaomi.MiTimer>? = null,
     /** Текущая температура верна только когда прибор включён (из настроек устройства или по типу). */
     val tempOnlyWhenOn: Boolean = false,
+    /** TC02W: последнее состояние «греет» с учётом гистерезиса X ± range (считает MainViewModel). */
+    val heatingLatched: Boolean? = null,
 ) {
     /** Главный выключатель прибора: true/false, null — выключателя нет. */
     val mainSwitchOn: Boolean?
@@ -169,6 +171,7 @@ data class DeviceUi(
             // Показываем «греет», если выбран режим heating и факт ниже уставки.
             if ("real_temp" in status) {
                 if (heatingModeOn == false) return false
+                heatingLatched?.let { return it }
                 fun temp(code: String): Double? {
                     val v = status[code] as? Number ?: status[code]?.toString()?.toDoubleOrNull() ?: return null
                     return v.toDouble() / Math.pow(10.0, (spec[code]?.scale ?: 0).toDouble())
@@ -176,7 +179,7 @@ data class DeviceUi(
                 val real = temp("real_temp")
                 val set = temp("set_temp")
                 // positive_temp_range_C — гистерезис в десятых (°C): 5 = 0,5°.
-                // Греем, когда факт опустился до «уставка − гистерезис».
+                // Без сохранённого состояния греем, когда факт опустился до «уставка − гистерезис».
                 val rangeRaw = (status["positive_temp_range_C"] as? Number)?.toDouble()
                     ?: status["positive_temp_range_C"]?.toString()?.toDoubleOrNull()
                 val range = rangeRaw
@@ -397,6 +400,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = application.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
     private val localManager = LocalManager(viewModelScope)
     private val dpIdCache = java.util.concurrent.ConcurrentHashMap<String, Map<String, Int>>()
+    /** TC02W: последнее состояние «греет» с гистерезисом X ± positive_temp_range. */
+    private val heatingLatch = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
     /** Устройства по данным облака (или кэша); на экран идут с наложением локальных данных. */
     private var baseDevices: List<DeviceUi> = emptyList()
 
@@ -465,6 +470,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Список для экрана: данные облака + свежие данные по Wi-Fi. */
+    /**
+     * TC02W: пересчитать «греет» с гистерезисом. Реле включается при X − range и выключается
+     * при X + range; между порогами держим последнее состояние. switch_1 для этого не годится.
+     */
+    private fun withHeatingDemand(d: DeviceUi): DeviceUi {
+        if ("real_temp" !in d.status) return d
+        fun temp(code: String): Double? {
+            val v = d.status[code] as? Number ?: d.status[code]?.toString()?.toDoubleOrNull() ?: return null
+            return v.toDouble() / Math.pow(10.0, (d.spec[code]?.scale ?: 0).toDouble())
+        }
+        val rangeRaw = (d.status["positive_temp_range_C"] as? Number)?.toDouble()
+            ?: d.status["positive_temp_range_C"]?.toString()?.toDoubleOrNull()
+        val range = rangeRaw
+            ?.div(Math.pow(10.0, (d.spec["positive_temp_range_C"]?.scale ?: 1).toDouble()))
+            ?.coerceAtLeast(0.0) ?: 0.1
+        val real = temp("real_temp")
+        val set = temp("set_temp")
+        val next = when {
+            d.heatingModeOn == false -> false
+            real == null || set == null -> heatingLatch[d.id] ?: false
+            real <= set - range + 1e-6 -> true
+            real >= set + range - 1e-6 -> false
+            else -> heatingLatch[d.id] ?: (real < set)
+        }
+        heatingLatch[d.id] = next
+        return d.copy(heatingLatched = next)
+    }
+
     private fun publish() {
         val s = _state.value
         val shown = baseDevices.map { d ->
@@ -495,6 +528,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // Отчёт диагностики подмешиваем всем устройствам (Xiaomi и Rubetek идут мимо списка Tuya)
             .map { d -> if (d.diagnostics == null) diagCache[d.id]?.let { d.copy(diagnostics = it) } ?: d else d }
             .map { d -> miTimersCache[d.id]?.let { d.copy(miTimers = it) } ?: d }
+            .map { withHeatingDemand(it) }
         _state.update { it.copy(devices = all) }
     }
 

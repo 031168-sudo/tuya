@@ -83,4 +83,15 @@ class DeviceUiThermostatTest {
         // 20,9° — уже ниже порога 21,0° — включаем
         assertEquals(true, thermostat(base + ("real_temp" to 209)).heatingNow)
     }
+
+    @Test
+    fun latchedStateHoldsBetweenThresholds() {
+        val base = mapOf(
+            "switch_1" to false, "heating" to true, "manual_off" to false, "cooling" to false,
+            "set_temp" to 215, "positive_temp_range_C" to 5, "real_temp" to 211,
+        )
+        // 21,1° внутри полосы 21,0…22,0 — держим предыдущее состояние
+        assertEquals(true, thermostat(base).copy(heatingLatched = true).heatingNow)
+        assertEquals(false, thermostat(base).copy(heatingLatched = false).heatingNow)
+    }
 }
