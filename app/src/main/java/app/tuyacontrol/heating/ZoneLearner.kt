@@ -127,15 +127,19 @@ class ZoneLearner(context: Context) {
         } else {
             // Термостаты с фактическим состоянием: work_state / valve_state / реле
             val events = mutableListOf<Pair<Long, Boolean>>()
-            db.series(id, "heating", from, now, 60_000L).forEach { events += it.time to (it.avg >= 0.5) }
+            fun addLocalHeating() {
+                db.series(id, "heating", from, now, 60_000L).forEach { events += it.time to (it.avg >= 0.5) }
+            }
             if (client != null) {
                 val logs = runCatching { client.getDeviceLogs(id, "work_state,valve_state,switch,switch_1", from, now, maxPages = 60) }
                     .onFailure { AppLog.e("Подбор «${zone.name}»: журнал нагрева не прочитан", it) }
                     .getOrDefault(emptyList())
                 val hasState = logs.any { it.code == "work_state" || it.code == "valve_state" }
                 val hasSwitch = logs.any { it.code == "switch" || it.code == "switch_1" }
-                // Для тёплого пола work_state часто означает режим, а не реле. Приоритет — switch.
+                // Для тёплого пола work_state часто означает режим, а не реле. Приоритет — switch,
+                // и старые локальные точки «heating» (могли быть записаны по work_state) не подмешиваем.
                 val useSwitch = zone.isFloor && hasSwitch
+                if (!useSwitch) addLocalHeating()
                 for (e in logs) {
                     val v = e.value.lowercase()
                     val on = when {
@@ -146,6 +150,8 @@ class ZoneLearner(context: Context) {
                     }
                     events += e.time to on
                 }
+            } else {
+                addLocalHeating()
             }
             events.sortBy { it.first }
             if (events.isEmpty()) return@withContext fail("нет истории «греет / не греет»")
