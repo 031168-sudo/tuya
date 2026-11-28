@@ -20,17 +20,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.height
-import androidx.compose.runtime.produceState
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
-import app.tuyacontrol.sensor.SensorChannel
-import app.tuyacontrol.sensor.SensorDb
-import app.tuyacontrol.sensor.SeriesPoint
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
@@ -479,9 +468,6 @@ private fun DeviceCard(
             }
             device.moduleTimers?.let { RubetekTimersBlock(device, it, onCommand) }
 
-            device.temperatureChannel?.let { ch ->
-                MiniTemperatureChart(device.id, ch, device.lastDataTime)
-            }
             if (sensor != null) {
                 TextButton(onClick = { onOpenSensor(sensor) }, contentPadding = PaddingValues(0.dp)) {
                     Text(
@@ -562,61 +548,6 @@ private fun ProgramModeRow(
             )
         }
     }
-}
-
-/** Мини-график температуры за сутки по локальной истории (полный — на экране «История»). */
-@Composable
-private fun MiniTemperatureChart(deviceId: String, channel: SensorChannel, lastDataTime: Long) {
-    val context = LocalContext.current
-    val now = remember(lastDataTime) { System.currentTimeMillis() }
-    val points by produceState(initialValue = emptyList<SeriesPoint>(), deviceId, channel.code, lastDataTime) {
-        value = withContext(Dispatchers.IO) {
-            val db = SensorDb(context)
-            try {
-                db.series(deviceId, channel.code, now - 24 * 3600_000L, now, 15 * 60_000L)
-            } finally {
-                db.close()
-            }
-        }
-    }
-    if (points.size < 2) {
-        Text(
-            "График температуры за 24 ч появится, когда накопятся точки",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 4.dp),
-        )
-        return
-    }
-    val min = points.minOf { it.min }
-    val max = points.maxOf { it.max }
-    val span = (max - min).coerceAtLeast(0.5)
-    val from = now - 24 * 3600_000L
-    val spanMs = (now - from).toFloat()
-    val lineColor = MaterialTheme.colorScheme.primary
-    Canvas(
-        Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .padding(top = 4.dp),
-    ) {
-        val top = 2.dp.toPx()
-        val bottom = size.height - top
-        fun x(t: Long) = ((t - from).toFloat() / spanMs).coerceIn(0f, 1f) * size.width
-        fun y(v: Double) = bottom - ((v - min) / span).toFloat().coerceIn(0f, 1f) * (bottom - top)
-        val path = Path()
-        points.forEachIndexed { i, p ->
-            val px = x(p.time)
-            val py = y(p.avg)
-            if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
-        }
-        drawPath(path, lineColor, style = Stroke(width = 2.dp.toPx()))
-    }
-    Text(
-        "За 24 ч: %.1f…%.1f °C".format(min, max),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }
 
 /** Если спецификация не загрузилась, всё равно даём управлять switch-кодами. */
