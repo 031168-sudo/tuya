@@ -111,7 +111,7 @@ class ZoneLearner(context: Context) {
                 val sample = if (!powerOn) {
                     ThermalFit.Sample(rise, 0.0, diff, inferred = false)
                 } else {
-                    val set = setAt(mid)
+                    val set = setAt(a)
                     when {
                         // Ниже уставки — прибор должен греть, даже если реле внутри ещё не сработало
                         set != null && mid <= set - 0.8 -> ThermalFit.Sample(rise, 1.0, diff, inferred = true)
