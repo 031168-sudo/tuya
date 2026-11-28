@@ -37,10 +37,14 @@ object LocalHistory {
             // «Греет / не греет» и вкл/выкл тоже копим: по ним подбираются параметры зон и чистится график
             val t = at / 60_000 * 60_000
             val off = d.tempOnlyWhenOn && d.mainSwitchOn == false
+            // «Греет» пишем только там, где это фактическое состояние, а не команда вкл/выкл.
+            // Rubetek/Xiaomi/TC02W внутри сами включают и выключают нагрев — для них пишем команду и уставку.
+            val heating = if (d.heatingMeasured) d.heatingNow else null
             val readings = (if (off) emptyList() else readingsOf(sensor, d.status, at)) +
                 listOfNotNull(
-                    d.heatingNow?.let { Reading("heating", t, if (it) 1.0 else 0.0) },
+                    heating?.let { Reading("heating", t, if (it) 1.0 else 0.0) },
                     d.mainSwitchOn?.let { Reading(POWER_SAMPLE, t, if (it) 1.0 else 0.0) },
+                    d.setpointCurrent?.let { Reading("setpoint", t, it) },
                 )
             if (readings.isEmpty()) continue
             last[d.id] = now
@@ -75,13 +79,6 @@ object LocalHistory {
         raw["work_state"]?.let { return it.toString().lowercase() in setOf("1", "heating", "heat", "hot", "warming", "true", "open", "on") }
         raw["valve_state"]?.let { return it.toString().lowercase() in setOf("open", "1", "true", "on") }
         if ("heating_temp_start" in raw) return raw["switch"] as? Boolean
-        // TC02W: отдельного реле нет; «греет» — режим heating и факт ниже уставки с гистерезисом
-        if ("real_temp" in raw && "set_temp" in raw) {
-            val real = (raw["real_temp"] as? Number)?.toDouble()
-            val set = (raw["set_temp"] as? Number)?.toDouble()
-            val range = (raw["positive_temp_range_C"] as? Number)?.toDouble() ?: 1.0
-            if (real != null && set != null) return real <= set - range
-        }
         return null
     }
 

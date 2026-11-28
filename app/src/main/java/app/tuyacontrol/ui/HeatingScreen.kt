@@ -683,9 +683,11 @@ private fun LearnLine(zone: HeatZone, info: app.tuyacontrol.heating.LearnInfo?, 
     val text = when {
         info == null -> "Параметры ($now) типовые — подберутся по истории этой ночью"
         info.problem == null && info.applied -> "Параметры по истории за ${info.days} дн.: $now ($date)" +
+            (if (info.approximate) " — приблизительно" else "") +
             (info.note?.let { " — $it" } ?: "")
         info.problem == null -> "По истории за ${info.days} дн.: нагрев ${num(info.heatRate ?: 0.0)}°/ч, остывание " +
-            "${num((info.lossRate ?: 0.0) * 100)}%/ч — не применено (подбор выключен в настройках зоны). Сейчас: $now"
+            "${num((info.lossRate ?: 0.0) * 100)}%/ч${if (info.approximate) " (приблизительно)" else ""} — " +
+            "не применено (подбор выключен в настройках зоны). Сейчас: $now"
         info.applied -> "По истории ($date) подобрано ненадёжно: ${info.problem} — не применено. Сейчас: $now"
         else -> "По истории пока не подобрать ($date): ${info.problem}. Сейчас: $now"
     }

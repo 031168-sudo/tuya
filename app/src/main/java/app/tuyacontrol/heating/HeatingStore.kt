@@ -159,6 +159,7 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
                 days = j.optInt("days"),
                 problem = if (j.isNull("problem")) null else j.optString("problem"),
                 applied = j.optBoolean("applied"),
+                approximate = j.optBoolean("approx"),
                 note = if (j.isNull("note")) null else j.optString("note").ifEmpty { null },
             )
         }
@@ -171,7 +172,8 @@ class HeatingStore(context: Context, private val duty: Boolean = false) {
         m.forEach { (k, v) ->
             o.put(k, JSONObject().put("at", v.at).put("heat", v.heatRate ?: JSONObject.NULL).put("loss", v.lossRate ?: JSONObject.NULL)
                 .put("cool", v.coolHours).put("hot", v.heatHours).put("days", v.days)
-                .put("problem", v.problem ?: JSONObject.NULL).put("applied", v.applied).put("note", v.note ?: JSONObject.NULL))
+                .put("problem", v.problem ?: JSONObject.NULL).put("applied", v.applied)
+                .put("approx", v.approximate).put("note", v.note ?: JSONObject.NULL))
         }
         prefs.edit().putString("learned", o.toString()).apply()
     }

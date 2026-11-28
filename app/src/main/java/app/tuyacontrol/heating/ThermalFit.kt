@@ -1,99 +1,130 @@
 package app.tuyacontrol.heating
 
+import kotlin.math.abs
+
 /**
- * Подбор параметров зоны по истории. Модель та же, что в плане:
- *   dT/dt = heatRate·u − lossRate·(T − Tулица)
- * Сначала по часам без нагрева (u = 0) — остывание, затем по часам с нагревом — скорость нагрева.
+ * Подбор параметров зоны по истории.
+ *
+ * Модель: dT/dt = heatRate·u − lossRate·(T − Tулица).
+ * Оба параметра подбираются одновременно по всем участкам, где известно состояние нагрева.
+ * Не требуем «12 часов без нагрева»: короткие остывания тоже дают данные.
+ *
+ * u — доля времени, когда прибор реально грел:
+ *  1 — греет, 0 — не греет, 0..1 — частично (например, реле щёлкает).
+ * Для Rubetek/Xiaomi фактический нагрев внутри прибора неизвестен; такие точки помечаются
+ * [Sample.inferred] и результат считается приблизительным.
  */
 object ThermalFit {
 
     /**
-     * Один час истории: скорость изменения температуры (°/ч), доля нагрева 0..1, разница с улицей (°),
-     * сколько часов прошло с последнего нагрева (пол и конвектор ещё отдают тепло после выключения).
+     * Один час истории: скорость изменения температуры (°/ч), доля нагрева 0..1,
+     * разница с улицей (°) и признак «нагрев определён косвенно».
      */
-    data class Sample(val dTdt: Double, val u: Double, val diff: Double, val quiet: Double = Double.MAX_VALUE)
+    data class Sample(
+        val dTdt: Double,
+        val u: Double,
+        val diff: Double,
+        val inferred: Boolean = false,
+    )
 
     data class Result(
         val heatRate: Double?,
         val lossRate: Double?,
         val coolHours: Int,
         val heatHours: Int,
-        /** Почему что-то не подобрано (null — всё подобрано). */
+        /** Почему не подобрано (null — подобрано). */
         val problem: String?,
-        /** Подобрано, но с оговоркой (например, потери очень малы). */
+        /** Оговорка: например, нагрев определён косвенно. */
         val note: String? = null,
+        /** Параметры приблизительные: часть данных выведена, а не измерена. */
+        val approximate: Boolean = false,
+        /** Средняя ошибка модели по истории, °/ч. */
+        val mae: Double = 0.0,
     )
 
-    const val MIN_COOL_HOURS = 12
-    const val MIN_HEAT_HOURS = 4
+    const val MIN_SAMPLES = 24
+    const val MIN_HEAT_HOURS = 6
+    const val MIN_COOL_HOURS = 4
+    const val MIN_HEAT_RATE = 0.1
+    const val MAX_HEAT_RATE = 15.0
+    const val MIN_LOSS = 0.002
+    const val MAX_LOSS = 0.3
+
+    /** Средняя ошибка модели выше этого — истории нельзя доверять. */
+    private const val MAX_MAE = 1.5
+
     /**
-     * Нижняя граница остывания для автоматического подбора: 0,5 %/ч.
-     * Меньше — это шум датчика или неверно определённые «часы без нагрева»;
-     * применять такое значение нельзя, иначе план перестаёт греть.
+     * Совместный робастный подбор heatRate и lossRate.
+     * @param all часы истории; [Sample.inferred] — нагрев не измерен, а выведен.
      */
-    const val MIN_LOSS = 0.005
-    /**
-     * Нижняя граница скорости нагрева для автоматического подбора: 0,5°/ч.
-     * Меньше у настоящего обогревателя — почти всегда ошибка истории (датчик, режим, окно),
-     * а не реальная мощность: с таким значением план перестаёт держать комфорт.
-     */
-    const val MIN_HEAT = 0.5
-
-    /** Медиана с весами. */
-    private fun weightedMedian(v: List<Pair<Double, Double>>): Double {
-        val sorted = v.sortedBy { it.first }
-        val half = sorted.sumOf { it.second } / 2
-        var acc = 0.0
-        for ((x, w) in sorted) {
-            acc += w
-            if (acc >= half) return x
+    fun fit(all: List<Sample>): Result {
+        // Скачки (открыли окно, сбой датчика) и слишком маленькая разница с улицей не помогают
+        val samples = all.filter { abs(it.dTdt) <= 6.0 && it.diff > 1.0 && it.u in 0.0..1.0 }
+        val heatHours = samples.count { it.u >= 0.5 }
+        val coolHours = samples.count { it.u <= 0.1 }
+        if (samples.size < MIN_SAMPLES) {
+            return Result(null, null, coolHours, heatHours, "мало истории температуры (${samples.size} ч, нужно $MIN_SAMPLES)")
         }
-        return sorted.last().first
-    }
+        if (heatHours < MIN_HEAT_HOURS) {
+            return Result(null, null, coolHours, heatHours, "мало часов с нагревом ($heatHours из $MIN_HEAT_HOURS)")
+        }
+        if (coolHours < MIN_COOL_HOURS) {
+            return Result(null, null, coolHours, heatHours, "мало часов без нагрева ($coolHours из $MIN_COOL_HOURS)")
+        }
 
-    /** [settle] — сколько часов после нагрева не считать «остыванием» (тёплый пол отдаёт тепло ещё несколько часов). */
-    fun fit(all: List<Sample>, settle: Double = 0.0): Result {
-        // Скачки (открыли окно, сбой датчика) не учитываем
-        val samples = all.filter { kotlin.math.abs(it.dTdt) <= 6.0 }
-        val cool = samples.filter { it.u == 0.0 && it.diff > 1.0 && it.quiet >= settle }
-        val heat = samples.filter { it.u >= 0.5 }
-
-        var loss: Double? = null
-        var problem: String? = null
-        var note: String? = null
-        if (cool.size < MIN_COOL_HOURS) {
-            problem = "мало часов без нагрева (${cool.size} из $MIN_COOL_HOURS)"
-        } else {
-            // dT/dt = −a·diff: каждый час даёт своё a = −dT/dt / diff; берём взвешенную медиану (вес diff²),
-            // чтобы несколько часов с неверной отметкой «не греет» не ломали оценку
-            val a = weightedMedian(cool.map { -it.dTdt / it.diff to it.diff * it.diff })
-            when {
-                a in MIN_LOSS..0.5 -> loss = a
-                // Остывание около нуля: это либо очень хорошая изоляция, либо в «часы без нагрева»
-                // на самом деле грели. Для плана такое значение опасно — оно занижает нагрев,
-                // поэтому не применяем его автоматически.
-                a < MIN_LOSS -> {
-                    problem = "остывание слишком мало для надёжного расчёта (${"%.2f".format(a * 100)} %/ч)"
-                }
-                else -> problem = "остывание вне разумных пределов (${"%.1f".format(a * 100)}%/ч)"
+        var h = 2.0
+        var a = 0.03
+        repeat(10) {
+            var s11 = 0.0
+            var s12 = 0.0
+            var s22 = 0.0
+            var b1 = 0.0
+            var b2 = 0.0
+            for (s in samples) {
+                // Ошибка модели -> вес: большие выбросы почти не влияют
+                val r = s.dTdt - (h * s.u - a * s.diff)
+                val w = 1.0 / maxOf(1.0, abs(r) / 0.75)
+                val x1 = s.u
+                val x2 = -s.diff
+                val y = s.dTdt
+                s11 += w * x1 * x1
+                s12 += w * x1 * x2
+                s22 += w * x2 * x2
+                b1 += w * x1 * y
+                b2 += w * x2 * y
             }
+            val det = s11 * s22 - s12 * s12
+            if (det < 1e-9) {
+                return Result(null, null, coolHours, heatHours, "недостаточно разнообразия в истории нагрева")
+            }
+            h = (b1 * s22 - b2 * s12) / det
+            a = (s11 * b2 - b1 * s12) / det
         }
 
-        var heatRate: Double? = null
-        if (loss != null) {
-            if (heat.size < MIN_HEAT_HOURS) {
-                problem = "мало часов с нагревом (${heat.size} из $MIN_HEAT_HOURS)"
-            } else {
-                // dT/dt + a·diff = h·u  →  h = Σ u·(y + a·d) / Σ u²
-                val h = heat.sumOf { it.u * (it.dTdt + loss * it.diff) } / heat.sumOf { it.u * it.u }
-                when {
-                    h < MIN_HEAT -> problem = "нагрев слишком мал для надёжного расчёта " +
-                        "(${"%.1f".format(h)}°/ч) — проверьте параметры обогревателя"
-                    h > 15.0 -> problem = "нагрев вне разумных пределов (${"%.1f".format(h)}°/ч)"
-                    else -> heatRate = h
-                }
-            }
+        if (h !in MIN_HEAT_RATE..MAX_HEAT_RATE) {
+            return Result(null, null, coolHours, heatHours, "нагрев вне разумных пределов (${"%.1f".format(h)}°/ч)")
         }
-        return Result(heatRate, loss, cool.size, heat.size, problem, note)
+        if (a !in MIN_LOSS..MAX_LOSS) {
+            return Result(null, null, coolHours, heatHours, "остывание вне разумных пределов (${"%.1f".format(a * 100)}%/ч)")
+        }
+
+        val mae = samples.map { abs(it.dTdt - (h * it.u - a * it.diff)) }.average()
+        if (mae > MAX_MAE) {
+            return Result(
+                null, null, coolHours, heatHours,
+                "история противоречива: ошибка модели ${"%.1f".format(mae)}°/ч",
+                mae = mae,
+            )
+        }
+        val inferred = samples.count { it.inferred }
+        val approximate = inferred > 0 || heatHours < 8 || coolHours < 8
+        val note = buildString {
+            if (inferred > 0) append("нагрев определён косвенно: $inferred ч")
+            if (approximate) {
+                if (isNotEmpty()) append("; ")
+                append("подобрано приблизительно")
+            }
+        }.ifEmpty { null }
+        return Result(h, a, coolHours, heatHours, null, note, approximate, mae)
     }
 }

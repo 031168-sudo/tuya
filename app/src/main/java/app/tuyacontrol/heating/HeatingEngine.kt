@@ -541,7 +541,9 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
             var info = runCatching { learner.learn(z, s, client, z.deviceId in relays) }
                 .getOrElse { LearnInfo(System.currentTimeMillis(), null, null, 0, 0, 0, it.message ?: it.javaClass.simpleName) }
             if (z.autoTune && info.problem == null && info.heatRate != null && info.lossRate != null) {
-                fun limit(new: Double, old: Double) = new.coerceIn(old / 2, old * 2)
+                // Приблизительный подбор (Rubetek/Xiaomi, нагрев выведен косвенно) меняем осторожнее
+                fun limit(new: Double, old: Double) =
+                    if (info.approximate) new.coerceIn(old * 0.7, old * 1.3) else new.coerceIn(old / 2, old * 2)
                 val updated = z.copy(
                     heatRate = limit(info.heatRate!!, z.heatRate),
                     lossRate = limit(info.lossRate!!, z.lossRate),
@@ -550,7 +552,8 @@ class HeatingEngine(context: Context, private val duty: Boolean = false) {
                 info = info.copy(applied = true)
             }
             results[z.id] = info
-            lines += "${z.name}: " + (info.problem ?: "нагрев %.1f°/ч, остывание %.1f%%/ч".format(info.heatRate, (info.lossRate ?: 0.0) * 100))
+            lines += "${z.name}: " + (info.problem ?: "нагрев %.1f°/ч, остывание %.1f%%/ч".format(info.heatRate, (info.lossRate ?: 0.0) * 100)) +
+                (if (info.approximate) " (приблизительно)" else "")
         }
         if (zones != s.zones) store.save(s.copy(zones = zones))
         store.saveLearned(results)

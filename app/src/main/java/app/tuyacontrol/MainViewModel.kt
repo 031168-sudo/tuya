@@ -200,6 +200,10 @@ data class DeviceUi(
                 if (main == false) return false
                 return v == true || v.toString().lowercase() in setOf("open", "1", "true", "on")
             }
+            // Обычный термостат с реле switch/switch_1: это фактический нагрев
+            if ("real_temp" !in status && main != null &&
+                ("temp_set" in status || category == "wk" || productName.contains("thermostat", true))
+            ) return main
             if (productName.contains(ALWAYS_ON_PRODUCT) || "heating_temp_start" in status) return main
             // Конвекторы Rubetek: отдельного признака «греет сейчас» модуль не даёт — показываем вкл/выкл
             if (category == app.tuyacontrol.rubetek.RubetekMapper.CATEGORY && "temp_set" in status) return main
@@ -289,6 +293,26 @@ data class DeviceUi(
                 s != null && s.writable && s.type == "Integer" && "temp" in c && "set" in c
             }
         }
+
+    /** Текущая уставка с учётом множителя; null — нет уставки. */
+    val setpointCurrent: Double?
+        get() {
+            val code = setpointCode ?: return null
+            val v = status[code] as? Number ?: status[code]?.toString()?.toDoubleOrNull() ?: return null
+            return v.toDouble() / Math.pow(10.0, (spec[code]?.scale ?: 0).toDouble())
+        }
+
+    /**
+     * Можно ли доверять «греет / не греет» как фактическому состоянию нагрева.
+     * У Rubetek/Xiaomi и TC02W внутри свой термостат — там это только команда/режим.
+     */
+    val heatingMeasured: Boolean
+        get() = !app.tuyacontrol.rubetek.RubetekMapper.isRubetek(id) &&
+            !app.tuyacontrol.xiaomi.XiaomiMapper.isXiaomi(id) &&
+            (status["work_state"] != null || status["valve_state"] != null ||
+                switchIsRelay || heatingPresetOn != null ||
+                ("real_temp" !in status && ("switch" in status || "switch_1" in status) &&
+                    ("temp_set" in status || category == "wk" || productName.contains("thermostat", true))))
 
     /** Счётчик для расчёта расходов: только выключатели-электросчётчики «智美WiFi开关电表». */
     val hasEnergy: Boolean

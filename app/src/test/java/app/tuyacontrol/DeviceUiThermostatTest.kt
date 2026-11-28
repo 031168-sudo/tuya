@@ -33,6 +33,7 @@ class DeviceUiThermostatTest {
         assertFalse("прибор не считается выключенным для показаний", d.switchedOff)
         assertEquals("real_temp", d.sensorDevice?.temperature?.code)
         assertEquals(1, d.sensorDevice?.temperature?.scale)
+        assertFalse("TC02W не даёт фактическое состояние реле", d.heatingMeasured)
     }
 
     @Test
