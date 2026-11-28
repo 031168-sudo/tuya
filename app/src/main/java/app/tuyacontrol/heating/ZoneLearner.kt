@@ -173,7 +173,7 @@ class ZoneLearner(context: Context) {
 
         if (samples.isEmpty()) return@withContext fail("нет данных для подбора")
         val days = ((now - hours.first()) / DAY).toInt().coerceAtLeast(1)
-        val r = ThermalFit.fit(samples)
+        val r = ThermalFit.fit(samples, if (onOff) 3 else 6, if (onOff) 2 else 4)
         AppLog.i(
             "Подбор «${zone.name}»: точек ${samples.size} (без нагрева ${r.coolHours / 4} ч, с нагревом ${r.heatHours / 4} ч), " +
                 "нагрев ${r.heatRate?.let { "%.2f".format(it) }}°/ч, остывание ${r.lossRate?.let { "%.1f".format(it * 100) }}%/ч" +
