@@ -83,7 +83,7 @@ object ThermalFit {
             for (s in samples) {
                 // Ошибка модели -> вес: большие выбросы почти не влияют
                 val r = s.dTdt - (h * s.u - a * s.diff)
-                val w = 1.0 / maxOf(1.0, abs(r) / 0.75)
+                val w = 1.0 / maxOf(1.0, abs(r) / 0.3)
                 val x1 = s.u
                 val x2 = -s.diff
                 val y = s.dTdt
